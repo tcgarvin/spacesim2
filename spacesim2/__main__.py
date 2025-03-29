@@ -11,21 +11,19 @@ def main() -> None:
         description="SpaceSim2 - A turn-based economic simulation"
     )
     parser.add_argument(
-        "--headless",
-        action="store_true",
-        help="Run in headless mode (no UI)"
+        "--headless", action="store_true", help="Run in headless mode (no UI)"
     )
     parser.add_argument(
         "--turns",
         type=int,
         default=10,
-        help="Number of turns to simulate in headless mode"
+        help="Number of turns to simulate in headless mode",
     )
     parser.add_argument(
         "--auto-turns",
         type=int,
         default=0,
-        help="Number of turns to automatically run in UI mode before pausing"
+        help="Number of turns to automatically run in UI mode before pausing",
     )
     args = parser.parse_args()
 

@@ -2,6 +2,7 @@ from typing import Optional
 
 try:
     import pygame
+
     PYGAME_AVAILABLE = True
 except ImportError:
     PYGAME_AVAILABLE = False
@@ -62,11 +63,21 @@ class PygameUI:
 
         # Draw actor information
         y_pos = 50
-        for i, actor in enumerate(self.simulation.actors):
-            actor_text = self.font.render(
-                f"{actor.name}: {actor.money} credits", True, (255, 255, 255)
+        actor_count = 0
+
+        for planet in self.simulation.planets:
+            planet_label = self.font.render(
+                f"Planet: {planet.name}", True, (200, 200, 200)
             )
-            self.screen.blit(actor_text, (10, y_pos + i * 30))
+            self.screen.blit(planet_label, (10, y_pos + actor_count * 25))
+            actor_count += 1
+
+            for actor in planet.actors:
+                actor_text = self.font.render(
+                    f"  {actor.name}: {actor.money} credits", True, (255, 255, 255)
+                )
+                self.screen.blit(actor_text, (10, y_pos + actor_count * 25))
+                actor_count += 1
 
         # Draw planet
         if self.simulation.planets:

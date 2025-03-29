@@ -1,4 +1,3 @@
-
 from spacesim2.core.actor import Actor
 from spacesim2.core.planet import Planet
 from spacesim2.core.simulation import Simulation
@@ -29,8 +28,17 @@ def test_simulation_setup() -> None:
     sim.setup_simple()
 
     assert len(sim.planets) == 1
-    assert len(sim.actors) == 1
-    assert sim.actors[0].planet == sim.planets[0]
+    assert len(sim.actors) == 5  # Now should have 5 actors
+
+    # All actors should be assigned to the planet
+    for actor in sim.actors:
+        assert actor.planet == sim.planets[0]
+
+    # The planet should have all actors in its list
+    assert len(sim.planets[0].actors) == 5
+
+    # The planet should have a market
+    assert sim.planets[0].market is not None
 
 
 def test_simulation_run_turn() -> None:
@@ -39,9 +47,12 @@ def test_simulation_run_turn() -> None:
     sim.setup_simple()
 
     initial_turn = sim.current_turn
-    initial_money = sim.actors[0].money
+    initial_money = {actor.name: actor.money for actor in sim.actors}
 
     sim.run_turn()
 
     assert sim.current_turn == initial_turn + 1
-    assert sim.actors[0].money > initial_money
+
+    # All actors should have earned money
+    for actor in sim.actors:
+        assert actor.money > initial_money[actor.name]
