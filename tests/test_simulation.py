@@ -13,7 +13,7 @@ def test_actor_government_work() -> None:
     initial_money = actor.money
     
     # Direct call to government work rather than take_turn
-    actor._do_government_work()
+    actor.brain._do_government_work()
     assert actor.money > initial_money
 
 
@@ -84,8 +84,8 @@ class SimulationTestHelper:
         
         # Override the should_produce_food method to always return False
         # so the actor will always do government work in tests
-        original_should_produce = actor._should_produce_food
-        actor._should_produce_food = lambda: False
+        original_should_produce = actor.brain.should_produce_food
+        actor.brain.should_produce_food = lambda: False
         
         sim.actors.append(actor)
         planet.add_actor(actor)

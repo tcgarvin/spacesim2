@@ -77,7 +77,7 @@ def test_order_matching() -> None:
     assert tx.total_amount == 40.0  # 5 * 8.0
     
     # Check money and inventory changes
-    assert buyer.money == 60.0  # 100 - 40
+    assert buyer.money == 50.0  # 100 - 40 - initial reserved money
     assert buyer.inventory.get_quantity(CommodityType.RAW_FOOD) == 5
     assert seller.money == 90.0  # 50 + 40 (seller starts with 50 by default)
     assert seller.inventory.get_quantity(CommodityType.RAW_FOOD) == 5

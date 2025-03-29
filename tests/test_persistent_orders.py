@@ -212,7 +212,7 @@ def test_market_maker_strategy() -> None:
     market.volume_history[CommodityType.RAW_FOOD] = [5, 6, 4, 7, 8]
     
     # First turn - should place initial orders
-    market_maker._do_market_maker_actions()
+    market_maker.brain.decide_market_actions()
     
     # Check that orders were placed
     mm_orders = market.get_actor_orders(market_maker)
@@ -228,7 +228,7 @@ def test_market_maker_strategy() -> None:
     
     # Advance turn - no market changes, shouldn't cancel orders
     market.current_turn += 1
-    market_maker._do_market_maker_actions()
+    market_maker.brain.decide_market_actions()
     
     # Check that orders persisted
     mm_orders = market.get_actor_orders(market_maker)
@@ -247,7 +247,7 @@ def test_market_maker_strategy() -> None:
     market.current_turn += 5  # Advance 5 turns to trigger age-based cancellation
     
     # Run market maker actions
-    market_maker._do_market_maker_actions()
+    market_maker.brain.decide_market_actions()
     
     # Check that orders were adjusted
     mm_orders = market.get_actor_orders(market_maker)
@@ -272,7 +272,7 @@ def test_regular_actor_strategy() -> None:
     actor.inventory.add_commodity(CommodityType.RAW_FOOD, 3)  # Below threshold of 5
     
     # Should place a buy order
-    actor._do_regular_market_actions()
+    actor.brain.decide_market_actions()
     
     # Check that a buy order was placed
     actor_orders = market.get_actor_orders(actor)
@@ -283,7 +283,7 @@ def test_regular_actor_strategy() -> None:
     actor.inventory.add_commodity(CommodityType.RAW_FOOD, 10)  # Now has 13
     
     # Should cancel buy order and place a sell order
-    actor._do_regular_market_actions()
+    actor.brain.decide_market_actions()
     
     # Check that buy order was canceled and sell order placed
     actor_orders = market.get_actor_orders(actor)
