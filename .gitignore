@@ -1,3 +1,6 @@
+# examples dir is just for augmenting prompts
+examples/
+
 # Python
 __pycache__/
 *.py[cod]
