@@ -32,6 +32,8 @@ class Actor:
         self.production_efficiency = production_efficiency  # Multiplier for production output
         self.market_history: List[Dict] = []  # Track this actor's market activity
         self.food_consumed_this_turn = False  # Track if actor has consumed food this turn
+        self.last_action = "None"  # Track the last action performed
+        self.last_market_action = "None"  # Track the last market action
         
         # Market maker settings
         if actor_type == ActorType.MARKET_MAKER:
@@ -109,11 +111,17 @@ class Actor:
         
         # Add produced food to inventory
         self.inventory.add_commodity(CommodityType.RAW_FOOD, actual_output)
+        
+        # Record action
+        self.last_action = f"Produced {actual_output} food"
 
     def _do_government_work(self) -> None:
         """Perform government work to earn a fixed wage."""
         wage = 10  # Fixed wage for government work (integer)
         self.money += wage
+        
+        # Record action
+        self.last_action = f"Government work for {wage} credits"
         
     def _do_market_actions(self) -> None:
         """Perform market actions for this turn."""
@@ -150,6 +158,7 @@ class Actor:
             
             # Place buy order
             market.place_buy_order(self, CommodityType.RAW_FOOD, quantity_to_buy, buy_price)
+            self.last_market_action = f"Tried to buy {quantity_to_buy} food at {buy_price} credits each"
         
         # Sell excess food (more than 8 units)
         if food_quantity > 8:
@@ -162,6 +171,7 @@ class Actor:
             
             # Place sell order
             market.place_sell_order(self, CommodityType.RAW_FOOD, quantity_to_sell, sell_price)
+            self.last_market_action = f"Tried to sell {quantity_to_sell} food at {sell_price} credits each"
 
     def _do_market_maker_actions(self) -> None:
         """Market makers provide liquidity by placing both buy and sell orders."""
@@ -188,6 +198,9 @@ class Actor:
         if food_quantity < 5:
             buy_quantity = 10  # Buy more when inventory is low
         
+        # Initialize sell_quantity to 0
+        sell_quantity = 0
+        
         # Sell order: only sell what we have, but be more aggressive
         # Always keep at least 1 food for own consumption
         if food_quantity > 1:
@@ -200,3 +213,4 @@ class Actor:
         
         # Always place buy orders
         market.place_buy_order(self, CommodityType.RAW_FOOD, buy_quantity, buy_price)
+        self.last_market_action = f"Market maker: buy {buy_quantity} @ {buy_price}, sell {sell_quantity} @ {sell_price}"
