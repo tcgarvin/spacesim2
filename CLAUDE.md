@@ -1,7 +1,7 @@
 # CLAUDE.md - Agent Instructions
 
 ## Project: SpaceSim2
-A turn-based economic simulation modeling interplanetary trade with actors, markets, and ships.
+A turn-based economic simulation modeling interplanetary trade with actors, markets, and ships.  Design documents can be found in the docs/ directory.
 
 ## Build & Run Commands
 - **Install**: `pip install -e .`
@@ -24,6 +24,7 @@ A turn-based economic simulation modeling interplanetary trade with actors, mark
 - **Error Handling**: Use explicit exception handling with appropriate specificity
 - **Documentation**: Docstrings for all public functions, classes, and modules
 - **Architecture**: Follow domain-driven design with simulation entities as core abstractions
+- **Code structure**: While inheritence certainly makes sense sometimes, algorithms that can be stateless are prefered to be pure functions, whenever suitable.
 
 ## Development Process
 - Implement small, focused changes that maintain a working simulation

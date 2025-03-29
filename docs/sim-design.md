@@ -53,7 +53,7 @@ The MVP aims to validate core economic actions, simple commodity markets, and in
 
 ### 2.2 Market
 - Each planet has its own **Market** object.  
-- **Order-Matching**: Limit orders are matched if bid ≥ ask, with immediate execution. Unmatched orders persist until the turn ends or are canceled.  
+- **Order-Matching**: Limit orders are matched if bid ≥ ask, with immediate execution. Unmatched orders persist across turns until filled or cancelled
 - Execution results (money or goods) are only usable from the next turn onward.
 
 ### 2.3 Planets

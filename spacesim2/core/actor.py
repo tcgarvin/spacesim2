@@ -104,21 +104,12 @@ class ColonistBrain(ActorBrain):
         food_quantity = self.actor.inventory.get_quantity(commodity_type)
         available_inventory = self.actor.inventory.get_available_quantity(commodity_type)
         
-        # Get current market price for reference
-        food_price = market.get_avg_price(commodity_type)
-        
-        # Cancel existing buy orders if we have enough food now
-        total_existing_buy_quantity = sum(order.quantity for order in buy_orders)
-        if food_quantity + total_existing_buy_quantity >= 5 and buy_orders:
-            for order in buy_orders:
-                market.cancel_order(order.order_id)
-            self.actor.last_market_action = f"Canceled {len(buy_orders)} buy orders, now have enough food"
+        # Cancel existing buy orders
+        for order in buy_orders:
+            market.cancel_order(order.order_id)
             
-        # Cancel existing sell orders if we need the food now
-        if food_quantity < 5 and sell_orders:
-            for order in sell_orders:
-                market.cancel_order(order.order_id)
-            self.actor.last_market_action = f"Canceled {len(sell_orders)} sell orders, need the food"
+        for order in sell_orders:
+            market.cancel_order(order.order_id)
             
         # Refresh inventory and orders after cancellations
         available_inventory = self.actor.inventory.get_available_quantity(commodity_type)
@@ -127,7 +118,7 @@ class ColonistBrain(ActorBrain):
         sell_orders = existing_orders["sell"]
         
         # Check if we need to buy food (less than 6 units)
-        if food_quantity < 6 and not buy_orders:
+        if food_quantity < 30:
             # Calculate how much food we need
             quantity_to_buy = 6 - food_quantity
             
@@ -157,32 +148,14 @@ class ColonistBrain(ActorBrain):
                         self.actor.active_orders[order_id] = f"buy {commodity_type.name}"
                         self.actor.last_market_action = f"Matched sell order price: buying {max_affordable_quantity} food at {best_sell_order.price} credits each"
                 else:
-                    # We can't afford any food at current prices - place a lower buy order
-                    # Calculate a price we can afford
-                    affordable_price = self.actor.money // quantity_to_buy if quantity_to_buy > 0 else 0
-                    
-                    if affordable_price > 0:
-                        order_id = market.place_buy_order(self.actor, commodity_type, quantity_to_buy, affordable_price)
-                        if order_id:
-                            self.actor.active_orders[order_id] = f"buy {commodity_type.name}"
-                            self.actor.last_market_action = f"Can't afford market price, placed buy order: {quantity_to_buy} food at {affordable_price} credits each"
+                    # If we can't afford the market price, we don't place any order
+                    self.actor.last_market_action = f"Can't afford market price of {best_sell_order.price}, no buy order placed"
             else:
-                # No sell orders to match, place our own buy order
-                # Calculate a reasonable price based on the last traded price or base price
-                if self.actor.money >= quantity_to_buy:
-                    buy_price = max(int(food_price * 1.05), quantity_to_buy * 2)  # Slightly above market price
-                    
-                    # Make sure we don't spend all our money
-                    max_affordable_quantity = min(quantity_to_buy, self.actor.money // buy_price)
-                    
-                    if max_affordable_quantity > 0:
-                        order_id = market.place_buy_order(self.actor, commodity_type, max_affordable_quantity, buy_price)
-                        if order_id:
-                            self.actor.active_orders[order_id] = f"buy {commodity_type.name}"
-                            self.actor.last_market_action = f"No matching sell orders, placed buy order: {max_affordable_quantity} food at {buy_price} credits each"
+                # No sell orders to match, we don't place any order until someone is selling
+                self.actor.last_market_action = f"No sell orders available, waiting for market offers"
         
         # Check if we should sell excess food (more than 6 units)
-        if available_inventory > 6 and not sell_orders:
+        if available_inventory > 30:
             # Calculate how much food we can sell
             quantity_to_sell = available_inventory - 6
             
@@ -197,36 +170,17 @@ class ColonistBrain(ActorBrain):
                 # Start with the highest price buy order
                 best_buy_order = market_buy_orders[0]
                 
-                # Calculate a reasonable minimum sell price
-                min_sell_price = max(int(food_price * 0.9), 7)  # At least 90% of average price
-                
-                # Check if the best buy price is acceptable
-                if best_buy_order.price >= min_sell_price:
-                    # Place a matching sell order at exactly the buyer's price
-                    order_id = market.place_sell_order(
-                        self.actor, commodity_type, quantity_to_sell, best_buy_order.price
-                    )
-                    if order_id:
-                        self.actor.active_orders[order_id] = f"sell {commodity_type.name}"
-                        self.actor.last_market_action = f"Matched buy order price: selling {quantity_to_sell} food at {best_buy_order.price} credits each"
-                else:
-                    # The best buy price is too low for us
-                    # Place a sell order slightly below market price but above our minimum
-                    sell_price = max(int(food_price * 0.95), min_sell_price)  # 95% of market price
-                    
-                    order_id = market.place_sell_order(self.actor, commodity_type, quantity_to_sell, sell_price)
-                    if order_id:
-                        self.actor.active_orders[order_id] = f"sell {commodity_type.name}"
-                        self.actor.last_market_action = f"Buy prices too low, placed sell order: {quantity_to_sell} food at {sell_price} credits each"
-            else:
-                # No buy orders to match, place our own sell order
-                # Calculate a reasonable price based on the last traded price or base price
-                sell_price = max(int(food_price * 0.95), 8)  # Slightly below market price
-                
-                order_id = market.place_sell_order(self.actor, commodity_type, quantity_to_sell, sell_price)
+                # Accept any price - regular actors are price takers
+                # Place a matching sell order at exactly the buyer's price
+                order_id = market.place_sell_order(
+                    self.actor, commodity_type, quantity_to_sell, best_buy_order.price
+                )
                 if order_id:
                     self.actor.active_orders[order_id] = f"sell {commodity_type.name}"
-                    self.actor.last_market_action = f"No matching buy orders, placed sell order: {quantity_to_sell} food at {sell_price} credits each"
+                    self.actor.last_market_action = f"Matched buy order price: selling {quantity_to_sell} food at {best_buy_order.price} credits each"
+            else:
+                # No buy orders to match, we don't place any order until someone is buying
+                self.actor.last_market_action = f"No buy orders available, waiting for market offers"
 
 
 class MarketMakerBrain(ActorBrain):
@@ -257,214 +211,122 @@ class MarketMakerBrain(ActorBrain):
         """Market makers provide liquidity by placing both buy and sell orders based on inventory and market conditions."""
         if not self.actor.planet or not self.actor.planet.market:
             return
-        
+
         market = self.actor.planet.market
-        commodity_type = CommodityType.RAW_FOOD
-        
-        # Get market statistics
-        avg_price = market.get_avg_price(commodity_type)
-        current_inventory = self.actor.inventory.get_quantity(commodity_type)
-        available_inventory = self.actor.inventory.get_available_quantity(commodity_type)
-        
-        # Calculate available funds (money minus what's already reserved)
-        available_funds = self.actor.money
-        
-        # Get existing orders
+        commodity_type = CommodityType.RAW_FOOD  # adjust as needed
+
+        # Cancel all existing orders before creating new ones
         existing_orders = market.get_actor_orders(self.actor)
-        buy_orders = existing_orders["buy"]
-        sell_orders = existing_orders["sell"]
-        
-        # Initialize market action tracking
+        for order in existing_orders["buy"] + existing_orders["sell"]:
+            market.cancel_order(order.order_id)
+            
+        # Get market statistics (30-day moving averages)
+        average_volume = market.get_30_day_average_volume(commodity_type)
+        average_price = market.get_30_day_average_price(commodity_type)
+        price_sigma = max(market.get_30_day_standard_deviation(commodity_type), 1.0)
+
+        # Determine target inventory (30 days of volume + 1) and current inventory ratio
+        current_inventory = self.actor.inventory.get_quantity(commodity_type)
+        target_inventory = average_volume * 30 + 1
+        inventory_ratio = current_inventory / target_inventory
+
+        # Calculate curve percentile as in Kotlin:
+        # curvePercentile = max(0.01, min(0.99, 1 - (0.5 * (current_inventory / target_inventory))))
+
+        curve_percentile = max(0.2, min(0.8, 1 - (0.5 * inventory_ratio)))
+
+        from math import ceil, floor
+        from scipy.stats import norm
+
+        # Compute target prices using the inverse cumulative distribution (similar to priceDist.inverseCumulativeProbability)
+        target_sell_price = ceil(norm.ppf(curve_percentile, loc=average_price, scale=price_sigma))
+        target_buy_price = floor(norm.ppf(curve_percentile, loc=average_price, scale=price_sigma))
+        if target_buy_price <= 0:
+            target_buy_price = 1
+        if target_buy_price <= target_sell_price:
+            target_sell_price = target_buy_price + 1
+
         buy_actions = []
         sell_actions = []
-        
-        # Determine if we have sufficient market history to make informed decisions
+
         if market.has_history(commodity_type):
-            # Implement sophisticated market making based on Kotlin example
-            
-            # 1. Calculate target inventory based on recent volume
-            # Target = 30 days of average volume + 1 (like in Kotlin version)
-            average_volume = market.get_30_day_average_volume(commodity_type)
-            target_inventory = int(average_volume * 30) + 1
-            
-            # 2. Calculate inventory ratio (current vs target)
-            inventory_ratio = current_inventory / target_inventory if target_inventory > 0 else 0
-            
-            # 3. Calculate price adjustment based on inventory
-            # Use a curve where we sell at higher prices when inventory is high
-            # and buy at higher prices when inventory is low
-            
-            # Adjust curve percentile based on inventory ratio (similar to Kotlin's logic)
-            # Lower curve_percentile = higher buy prices, lower sell prices
-            # Higher curve_percentile = lower buy prices, higher sell prices
-            curve_percentile = max(0.1, min(0.9, 1 - (0.5 * inventory_ratio)))
-            
-            # Get price statistics from market history (like in Kotlin)
-            average_price = market.get_30_day_average_price(commodity_type)
-            price_sigma = max(market.get_30_day_standard_deviation(commodity_type), 1.0)
-            
-            # Calculate price points using price_sigma as a measure of volatility
-            # Higher sigma = wider spread, lower sigma = tighter spread
-            # This approximates the normal distribution approach in Kotlin
-            target_buy_price = int(average_price - ((1 - curve_percentile) * price_sigma))
-            target_sell_price = int(average_price + (curve_percentile * price_sigma))
-            
-            # Make sure buy and sell prices are distinct
-            if target_buy_price >= target_sell_price:
-                target_sell_price = target_buy_price + 1
-                
-            # Manage existing buy orders - cancel any that are too far from current market
-            for order in buy_orders:
-                # If the order is older than 5 turns or the price is significantly wrong, cancel it
-                age = market.current_turn - order.created_turn
-                price_diff_percent = abs(order.price - target_buy_price) / target_buy_price if target_buy_price > 0 else 0
-                
-                if age > 5 or price_diff_percent > 0.3:  # 30% price difference
-                    market.cancel_order(order.order_id)
-                    buy_actions.append(f"Canceled {order.quantity}@{order.price}")
-            
-            # Manage existing sell orders - cancel any that are too far from current market
-            for order in sell_orders:
-                # If the order is older than 5 turns or the price is significantly wrong, cancel it
-                age = market.current_turn - order.created_turn
-                price_diff_percent = abs(order.price - target_sell_price) / target_sell_price if target_sell_price > 0 else 0
-                
-                if age > 5 or price_diff_percent > 0.3:  # 30% price difference
-                    market.cancel_order(order.order_id)
-                    sell_actions.append(f"Canceled {order.quantity}@{order.price}")
-                    
-            # Refresh order lists after cancellations
-            existing_orders = market.get_actor_orders(self.actor)
-            buy_orders = existing_orders["buy"]
-            sell_orders = existing_orders["sell"]
-            
-            # Update available funds and inventory after cancellations
-            available_funds = self.actor.money
-            available_inventory = self.actor.inventory.get_available_quantity(commodity_type)
-            
-            # Calculate allocated funds for new orders (30% of available money)
-            allocated_funds = int(available_funds * 0.3)
-            
-            # Create multiple buy orders at different price points
-            if allocated_funds > 0:
-                MAX_BUY_ORDERS = 5  # Like in Kotlin (simplified from 10)
-                curve_percentile_step = curve_percentile / MAX_BUY_ORDERS
-                
-                buy_percentiles = [curve_percentile - (i * curve_percentile_step) for i in range(MAX_BUY_ORDERS)]
-                buy_prices = [max(1, int(average_price - ((1 - p) * price_sigma))) for p in buy_percentiles]
-                
-                # Group prices to combine orders at the same price point
-                buy_price_counts = {}
-                for price in buy_prices:
-                    buy_price_counts[price] = buy_price_counts.get(price, 0) + 1
-                
-                # Calculate order size based on allocated funds
-                target_order_size = int(allocated_funds / sum(buy_price_counts.keys())) if buy_price_counts else 0
-                
-                # Place orders
-                funds_remaining = allocated_funds
-                for price, count in sorted(buy_price_counts.items(), key=lambda x: -x[0]):  # Higher prices first
-                    if funds_remaining <= 0:
-                        break
-                        
-                    # Skip if we already have an order at this price point
-                    if any(o.price == price for o in buy_orders):
-                        continue
-                        
-                    # Order size is proportional to the number of price points at this price
-                    quantity = min(int(funds_remaining / price), target_order_size * count)
-                    
-                    if quantity > 0:
-                        order_id = market.place_buy_order(self.actor, commodity_type, quantity, price)
-                        if order_id:  # Only track if order was actually placed
-                            funds_remaining -= quantity * price
-                            buy_actions.append(f"New {quantity}@{price}")
-                            self.actor.active_orders[order_id] = f"buy {commodity_type.name}"
-            
-            # Create multiple sell orders at different price points
-            # Keep at least 3 units for own consumption for a few turns
-            if available_inventory > 3:  
-                MAX_SELL_ORDERS = 5  # Like in Kotlin (simplified from 10)
-                sellable_inventory = available_inventory - 3
-                
+            # --- Sell Orders ---
+            # Only place sell orders if we have any inventory
+            if current_inventory > 0:
+                MAX_SELL_ORDERS = 10
                 curve_percentile_step = (1 - curve_percentile) / MAX_SELL_ORDERS
-                sell_percentiles = [curve_percentile + (i * curve_percentile_step) for i in range(MAX_SELL_ORDERS)]
-                sell_prices = [max(2, int(average_price + (p * price_sigma))) for p in sell_percentiles]
-                
-                # Group prices to combine orders at the same price point
+                sell_percentiles = [curve_percentile + i * curve_percentile_step for i in range(MAX_SELL_ORDERS)]
+                # For each percentile, determine a price using the normal distribution inverse, ensuring a minimum price of 2.
+                sell_prices = [max(int(norm.ppf(p, loc=average_price, scale=price_sigma)) + 1, 2) for p in sell_percentiles]
+                target_order_size = ceil(current_inventory / MAX_SELL_ORDERS)
+
+                # Group orders by identical price (combine orders at the same price)
                 sell_price_counts = {}
                 for price in sell_prices:
                     sell_price_counts[price] = sell_price_counts.get(price, 0) + 1
-                
-                # Calculate order size based on available inventory
-                target_order_size = int(sellable_inventory / len(sell_price_counts)) if sell_price_counts else 0
-                
-                # Place orders
-                inventory_remaining = sellable_inventory
-                for price, count in sorted(sell_price_counts.items()):  # Lower prices first
-                    if inventory_remaining <= 0:
+
+                amount_remaining = current_inventory
+                for price, count in sell_price_counts.items():
+                    if amount_remaining <= 0:
                         break
-                        
-                    # Skip if we already have an order at this price point
-                    if any(o.price == price for o in sell_orders):
-                        continue
-                        
-                    # Order size is proportional to the number of price points at this price
-                    quantity = min(inventory_remaining, target_order_size * count)
-                    
-                    if quantity > 0:
-                        order_id = market.place_sell_order(self.actor, commodity_type, quantity, price)
-                        if order_id:  # Only track if order was actually placed
-                            inventory_remaining -= quantity
-                            sell_actions.append(f"New {quantity}@{price}")
-                            self.actor.active_orders[order_id] = f"sell {commodity_type.name}"
-        else:
-            # Bootstrapping mode - cancel existing orders first and start fresh
-            for order in buy_orders + sell_orders:
-                market.cancel_order(order.order_id)
-                
-            # Update available funds and inventory after cancellations
-            available_funds = self.actor.money
-            available_inventory = self.actor.inventory.get_available_quantity(commodity_type)
-            
-            # Calculate allocated funds for new orders (30% of available money)
-            allocated_funds = int(available_funds * 0.3)
-            
-            # Simple buy orders at different price points
-            base_price = CommodityType.get_base_price(commodity_type)
-            
-            # Place buy orders at 90%, 80%, 70% of base price
-            for factor in [0.9, 0.8, 0.7]:
-                buy_price = max(1, int(base_price * factor))
-                buy_quantity = max(1, int(allocated_funds / (3 * buy_price)))
-                
-                if buy_quantity > 0:
-                    order_id = market.place_buy_order(self.actor, commodity_type, buy_quantity, buy_price)
+                    order_size = min(amount_remaining, target_order_size * count)
+                    amount_remaining -= order_size
+                    order_id = market.place_sell_order(self.actor, commodity_type, order_size, price)
                     if order_id:
-                        buy_actions.append(f"New {buy_quantity}@{buy_price}")
-                        self.actor.active_orders[order_id] = f"buy {commodity_type.name}"
-            
-            # Place sell orders if we have inventory
-            if available_inventory > 3:
-                # Place sell orders at 110%, 120%, 130% of base price
-                for factor in [1.1, 1.2, 1.3]:
-                    sell_price = max(1, int(base_price * factor))
-                    sell_quantity = max(1, int((available_inventory - 3) / 3))
-                    
-                    if sell_quantity > 0:
-                        order_id = market.place_sell_order(self.actor, commodity_type, sell_quantity, sell_price)
+                        sell_actions.append(f"New {order_size}@{price}")
+                        self.actor.active_orders[order_id] = f"sell {commodity_type.name}"
+
+            # --- Buy Orders ---
+            # In Kotlin, funds are allocated separately. Here, we use 30% of available funds.
+            allocated_funds = int(self.actor.money * 0.3)
+            if allocated_funds > 0:
+                MAX_BUY_ORDERS = 10
+                curve_percentile_step = curve_percentile / MAX_BUY_ORDERS
+                buy_percentiles = [curve_percentile - i * curve_percentile_step for i in range(MAX_BUY_ORDERS)]
+                # For each percentile, compute a price ensuring a minimum price of 1.
+                buy_prices = [max(int(norm.ppf(p, loc=average_price, scale=price_sigma)), 1) for p in buy_percentiles]
+                target_order_size = ceil(allocated_funds / target_buy_price)
+
+                # Group orders by identical price.
+                buy_price_counts = {}
+                for price in buy_prices:
+                    buy_price_counts[price] = buy_price_counts.get(price, 0) + 1
+
+                funds_remaining = allocated_funds
+                for price, count in buy_price_counts.items():
+                    if funds_remaining <= 0:
+                        break
+                    order_size = min(funds_remaining // price, target_order_size * count)
+                    if order_size > 0:
+                        funds_remaining -= order_size * price
+                        order_id = market.place_buy_order(self.actor, commodity_type, order_size, price)
                         if order_id:
-                            sell_actions.append(f"New {sell_quantity}@{sell_price}")
-                            self.actor.active_orders[order_id] = f"sell {commodity_type.name}"
-        
-        # Update last market action
-        # Count existing orders
-        existing_buy_count = len(existing_orders["buy"])
-        existing_sell_count = len(existing_orders["sell"])
-        
-        buy_str = ", ".join(buy_actions) if buy_actions else "none"
-        sell_str = ", ".join(sell_actions) if sell_actions else "none"
-        self.actor.last_market_action = f"Market maker: {existing_buy_count} buy orders, {existing_sell_count} sell orders - Buy [{buy_str}], Sell [{sell_str}]"
+                            buy_actions.append(f"New {order_size}@{price}")
+                            self.actor.active_orders[order_id] = f"buy {commodity_type.name}"
+        else:
+            # --- Bootstrapping Orders ---
+            # In bootstrapping mode (market has no history), mimic Kotlin's bootstrappingOrders:
+            # Only buy orders are placed at prices determined by dividing allocated funds by 1, 2, and 4.
+            allocated_funds = int(self.actor.money * 0.3)
+            # Note: We don't need to cancel orders here as they're already canceled at the beginning
+            buy_actions = []
+            for i in [1, 2, 4]:
+                if allocated_funds // i > 0:
+                    order_id = market.place_buy_order(self.actor, commodity_type, 1, allocated_funds // i)
+                    if order_id:
+                        buy_actions.append(f"New 1@{allocated_funds // i}")
+                        self.actor.active_orders[order_id] = f"buy {commodity_type.name}"
+
+        # Update the actor's last market action summary.
+        existing_orders = market.get_actor_orders(self.actor)
+        buy_count = len(existing_orders["buy"])
+        sell_count = len(existing_orders["sell"])
+        buy_summary = ", ".join(buy_actions) if buy_actions else "none"
+        sell_summary = ", ".join(sell_actions) if sell_actions else "none"
+        self.actor.last_market_action = (
+            f"Market maker: {buy_count} buy orders, {sell_count} sell orders - Buy [{buy_summary}], Sell [{sell_summary}]"
+        )
+
 
 
 class Actor:

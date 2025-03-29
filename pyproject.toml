@@ -5,7 +5,9 @@ description = "A turn-based economic simulation modeling interplanetary trade"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "matplotlib>=3.10.1",
     "pygame>=2.5.0; platform_system != 'Windows' or python_version < '3.12'",
+    "scipy>=1.15.2",
 ]
 
 [project.optional-dependencies]
