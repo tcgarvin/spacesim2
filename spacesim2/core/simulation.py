@@ -150,14 +150,14 @@ class Simulation:
             # Calculate market statistics if available
             if planet.market:
                 food_price = planet.market.get_avg_price(CommodityType.RAW_FOOD)
-                print(f"  Market: Raw Food Price: {food_price:.2f}")
+                print(f"  Market: Raw Food Price: {food_price}")
                 
                 # Print transactions
                 if planet.market.transaction_history:
                     latest_transactions = planet.market.transaction_history[-min(3, len(planet.market.transaction_history)):]
                     print(f"  Recent Transactions:")
                     for tx in latest_transactions:
-                        print(f"    {tx.buyer.name} bought {tx.quantity} {tx.commodity_type.name} from {tx.seller.name} @ {tx.price:.2f}")
+                        print(f"    {tx.buyer.name} bought {tx.quantity} {tx.commodity_type.name} from {tx.seller.name} @ {tx.price}")
                 else:
                     print("  No transactions yet")
             
@@ -168,9 +168,9 @@ class Simulation:
                 
                 # Show market maker status differently
                 if actor.actor_type == ActorType.MARKET_MAKER:
-                    print(f"  [MM] {actor.name}: {actor.money:.1f} credits, {food_qty} food {food_status}")
+                    print(f"  [MM] {actor.name}: {actor.money} credits, {food_qty} food {food_status}")
                 else:
-                    print(f"  {actor.name}: {actor.money:.1f} credits, {food_qty} food {food_status}")
+                    print(f"  {actor.name}: {actor.money} credits, {food_qty} food {food_status}")
                 
             # Count hunger
             hungry_count = sum(1 for a in planet.actors if not a.food_consumed_this_turn)

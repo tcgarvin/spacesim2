@@ -22,7 +22,7 @@ class Actor:
         planet: Optional[Planet] = None,
         actor_type: ActorType = ActorType.REGULAR,
         production_efficiency: float = 1.0,
-        initial_money: float = 50.0
+        initial_money: int = 50
     ) -> None:
         self.name = name
         self.money = initial_money
@@ -35,7 +35,7 @@ class Actor:
         
         # Market maker settings
         if actor_type == ActorType.MARKET_MAKER:
-            self.money = 200.0  # Market makers start with more capital
+            self.money = 200  # Market makers start with more capital (integer)
             self.spread_percentage = random.uniform(0.1, 0.3)  # 10-30% spread
 
     def take_turn(self) -> None:
@@ -66,11 +66,9 @@ class Actor:
 
     def _do_economic_action(self) -> None:
         """Perform a single economic action for this turn."""
-        # Market makers don't produce, they only trade
+        # Market makers don't produce, they only work for the man
         if self.actor_type == ActorType.MARKET_MAKER:
-            # But in tests, market makers might need money for assertions
-            if self.money == 0.0:
-                self._do_government_work()
+            self._do_government_work()
             return
         
         # Regular actors decide whether to produce food or do government work
@@ -114,7 +112,7 @@ class Actor:
 
     def _do_government_work(self) -> None:
         """Perform government work to earn a fixed wage."""
-        wage = 10.0  # Fixed wage for government work
+        wage = 10  # Fixed wage for government work (integer)
         self.money += wage
         
     def _do_market_actions(self) -> None:
@@ -148,7 +146,7 @@ class Actor:
             # Set buy price aggressively above market price to increase chance of execution
             # Higher priority to buy when lower on food
             price_factor = 1.1 + (0.05 * (5 - food_quantity))  # 1.1 to 1.3 based on need
-            buy_price = food_price * price_factor
+            buy_price = int(food_price * price_factor)
             
             # Place buy order
             market.place_buy_order(self, CommodityType.RAW_FOOD, quantity_to_buy, buy_price)
@@ -160,7 +158,7 @@ class Actor:
             
             # Set sell price based on quantity (more aggressive with more excess)
             price_factor = 0.95 - (0.01 * min(5, (food_quantity - 8)))  # 0.95 down to 0.9
-            sell_price = food_price * price_factor
+            sell_price = int(food_price * price_factor)
             
             # Place sell order
             market.place_sell_order(self, CommodityType.RAW_FOOD, quantity_to_sell, sell_price)
@@ -179,8 +177,8 @@ class Actor:
         spread = food_price * self.spread_percentage * 0.5  # Half the normal spread
         
         # Set buy and sell prices to encourage trading
-        buy_price = food_price * 0.95  # Buy at 5% below market price
-        sell_price = food_price * 1.05  # Sell at 5% above market price
+        buy_price = int(food_price * 0.95)  # Buy at 5% below market price
+        sell_price = int(food_price * 1.05)  # Sell at 5% above market price
         
         # Determine quantities based on inventory and money
         food_quantity = self.inventory.get_quantity(CommodityType.RAW_FOOD)

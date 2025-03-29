@@ -14,7 +14,7 @@ class Order:
     actor: Actor
     commodity_type: CommodityType
     quantity: int
-    price: float
+    price: int
     is_buy: bool  # True for buy order, False for sell order
     timestamp: int = 0  # For ordering when prices are the same
 
@@ -27,8 +27,8 @@ class Transaction:
     seller: Actor
     commodity_type: CommodityType
     quantity: int
-    price: float
-    total_amount: float
+    price: int
+    total_amount: int
 
 
 class Market:
@@ -46,12 +46,14 @@ class Market:
         self.current_turn = 0
         
         # Track market statistics
-        self.last_traded_prices: Dict[CommodityType, List[float]] = defaultdict(list)
+        self.last_traded_prices: Dict[CommodityType, List[int]] = defaultdict(list)
 
     def place_buy_order(
-        self, actor: Actor, commodity_type: CommodityType, quantity: int, price: float
+        self, actor: Actor, commodity_type: CommodityType, quantity: int, price: int
     ) -> None:
         """Place a buy order (bid) in the market."""
+        # Price is already an integer
+        
         # Verify the actor has enough money to cover the potential transaction
         total_cost = quantity * price
         if actor.money < total_cost:
@@ -72,9 +74,11 @@ class Market:
         self.buy_orders[commodity_type].append(order)
 
     def place_sell_order(
-        self, actor: Actor, commodity_type: CommodityType, quantity: int, price: float
+        self, actor: Actor, commodity_type: CommodityType, quantity: int, price: int
     ) -> None:
         """Place a sell order (ask) in the market."""
+        # Price is already an integer
+        
         # Verify the actor has enough of the commodity to sell
         available_quantity = actor.inventory.get_quantity(commodity_type)
         if available_quantity < quantity:
@@ -170,7 +174,7 @@ class Market:
 
     def _execute_transaction(
         self, buyer: Actor, seller: Actor, commodity_type: CommodityType, 
-        quantity: int, price: float
+        quantity: int, price: int
     ) -> None:
         """Execute a transaction between two actors."""
         total_amount = quantity * price
@@ -194,15 +198,15 @@ class Market:
         )
         self.transaction_history.append(transaction)
 
-    def get_avg_price(self, commodity_type: CommodityType) -> Optional[float]:
+    def get_avg_price(self, commodity_type: CommodityType) -> int:
         """Get the average price for a commodity based on recent transactions."""
         prices = self.last_traded_prices.get(commodity_type, [])
         if not prices:
             # If no recent trades, use the base price as a fallback
             return CommodityType.get_base_price(commodity_type)
-        return statistics.mean(prices)
+        return int(statistics.mean(prices))
     
-    def get_bid_ask_spread(self, commodity_type: CommodityType) -> Tuple[Optional[float], Optional[float]]:
+    def get_bid_ask_spread(self, commodity_type: CommodityType) -> Tuple[Optional[int], Optional[int]]:
         """Get the current highest bid and lowest ask for a commodity."""
         buy_orders = self.buy_orders.get(commodity_type, [])
         sell_orders = self.sell_orders.get(commodity_type, [])

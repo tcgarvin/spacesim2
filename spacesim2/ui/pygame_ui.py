@@ -66,10 +66,10 @@ class PygameUI:
         # Draw market information if available
         if self.simulation.planets and self.simulation.planets[0].market:
             market = self.simulation.planets[0].market
-            food_price = market.get_avg_price(market.CommodityType.RAW_FOOD)
+            food_price = market.get_avg_price(CommodityType.RAW_FOOD)
             
             market_text = self.font.render(
-                f"Market: Raw Food Price: {food_price:.2f}", True, (150, 220, 150)
+                f"Market: Raw Food Price: {food_price}", True, (150, 220, 150)
             )
             self.screen.blit(market_text, (250, 10))
 
@@ -92,12 +92,12 @@ class PygameUI:
                 # Format based on actor type
                 if hasattr(actor, "actor_type") and actor.actor_type == ActorType.MARKET_MAKER:
                     actor_text = self.font.render(
-                        f"  [MM] {actor.name}: {actor.money:.1f} credits, {food_qty} food {food_status}", 
+                        f"  [MM] {actor.name}: {actor.money} credits, {food_qty} food {food_status}", 
                         True, (220, 180, 50)  # Gold for market makers
                     )
                 else:
                     actor_text = self.font.render(
-                        f"  {actor.name}: {actor.money:.1f} credits, {food_qty} food {food_status}", 
+                        f"  {actor.name}: {actor.money} credits, {food_qty} food {food_status}", 
                         True, (255, 255, 255)
                     )
                     

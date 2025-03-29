@@ -9,20 +9,20 @@ class CommodityType(Enum):
     RAW_FOOD = auto()
 
     @classmethod
-    def get_base_price(cls, commodity_type: "CommodityType") -> float:
+    def get_base_price(cls, commodity_type: "CommodityType") -> int:
         """Get the base price for a commodity type."""
         base_prices = {
-            CommodityType.RAW_FOOD: 10.0,  # Base price for food
+            CommodityType.RAW_FOOD: 10,  # Base price for food
         }
-        return base_prices.get(commodity_type, 0.0)
+        return base_prices.get(commodity_type, 0)
     
     @classmethod
-    def get_production_cost(cls, commodity_type: "CommodityType") -> float:
+    def get_production_cost(cls, commodity_type: "CommodityType") -> int:
         """Get the cost to produce one unit of a commodity."""
         production_costs = {
-            CommodityType.RAW_FOOD: 5.0,  # Cost in labor/time to produce
+            CommodityType.RAW_FOOD: 5,  # Cost in labor/time to produce
         }
-        return production_costs.get(commodity_type, 0.0)
+        return production_costs.get(commodity_type, 0)
     
     @classmethod
     def get_production_quantity(cls, commodity_type: "CommodityType") -> int:
