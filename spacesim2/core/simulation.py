@@ -100,8 +100,7 @@ class Simulation:
                 # Record market statistics
                 self._record_market_stats(planet)
                 
-                # Clear orders at the end of the turn
-                planet.market.clear_orders()
+                # Note: Orders are now persistent across turns
 
     def _record_market_stats(self, planet: Planet) -> None:
         """Record market statistics for analysis."""

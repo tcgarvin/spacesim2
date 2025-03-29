@@ -51,6 +51,7 @@ class Inventory:
 
     def __init__(self) -> None:
         self.commodities: Dict[CommodityType, int] = {}
+        self.reserved_commodities: Dict[CommodityType, int] = {}  # For market orders
 
     def add_commodity(self, commodity_type: CommodityType, quantity: int) -> None:
         """Add a quantity of a commodity to the inventory."""
@@ -84,11 +85,69 @@ class Inventory:
             del self.commodities[commodity_type]
             
         return True
+        
+    def reserve_commodity(self, commodity_type: CommodityType, quantity: int) -> bool:
+        """Reserve a quantity of a commodity for a market order.
+        
+        Returns:
+            bool: True if reservation was successful, False if not enough available.
+        """
+        available = self.get_available_quantity(commodity_type)
+        
+        if available < quantity:
+            return False
+            
+        # Update actual inventory
+        self.commodities[commodity_type] -= quantity
+        
+        # Update reservation
+        current_reserved = self.reserved_commodities.get(commodity_type, 0)
+        self.reserved_commodities[commodity_type] = current_reserved + quantity
+        
+        # Clean up if inventory is zero
+        if self.commodities.get(commodity_type, 0) == 0:
+            del self.commodities[commodity_type]
+            
+        return True
+        
+    def unreserve_commodity(self, commodity_type: CommodityType, quantity: int) -> None:
+        """Return a reserved commodity to available inventory."""
+        if quantity <= 0:
+            return
+            
+        current_reserved = self.reserved_commodities.get(commodity_type, 0)
+        
+        # Ensure we don't unreserve more than is reserved
+        quantity_to_unreserve = min(quantity, current_reserved)
+        
+        if quantity_to_unreserve <= 0:
+            return
+            
+        # Update reservation
+        self.reserved_commodities[commodity_type] = current_reserved - quantity_to_unreserve
+        
+        # Add back to available inventory
+        current_quantity = self.commodities.get(commodity_type, 0)
+        self.commodities[commodity_type] = current_quantity + quantity_to_unreserve
+        
+        # Clean up if reserved is zero
+        if self.reserved_commodities[commodity_type] == 0:
+            del self.reserved_commodities[commodity_type]
 
     def get_quantity(self, commodity_type: CommodityType) -> int:
-        """Get the current quantity of a commodity in the inventory."""
+        """Get the total quantity of a commodity in the inventory (available + reserved)."""
+        available = self.commodities.get(commodity_type, 0)
+        reserved = self.reserved_commodities.get(commodity_type, 0)
+        return available + reserved
+        
+    def get_available_quantity(self, commodity_type: CommodityType) -> int:
+        """Get the available (unreserved) quantity of a commodity in the inventory."""
         return self.commodities.get(commodity_type, 0)
+        
+    def get_reserved_quantity(self, commodity_type: CommodityType) -> int:
+        """Get the quantity of a commodity that is reserved for market orders."""
+        return self.reserved_commodities.get(commodity_type, 0)
 
     def has_quantity(self, commodity_type: CommodityType, quantity: int) -> bool:
-        """Check if the inventory has at least the specified quantity of a commodity."""
-        return self.get_quantity(commodity_type) >= quantity
+        """Check if the inventory has at least the specified quantity of a commodity (available only)."""
+        return self.get_available_quantity(commodity_type) >= quantity
