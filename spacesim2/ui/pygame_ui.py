@@ -8,6 +8,8 @@ except ImportError:
     PYGAME_AVAILABLE = False
     print("Warning: pygame not installed. Only headless mode available.")
 
+from spacesim2.core.actor import ActorType
+from spacesim2.core.commodity import CommodityType
 from spacesim2.core.simulation import Simulation
 
 
@@ -60,6 +62,16 @@ class PygameUI:
             f"Turn: {self.simulation.current_turn}", True, (255, 255, 255)
         )
         self.screen.blit(turn_text, (10, 10))
+        
+        # Draw market information if available
+        if self.simulation.planets and self.simulation.planets[0].market:
+            market = self.simulation.planets[0].market
+            food_price = market.get_avg_price(market.CommodityType.RAW_FOOD)
+            
+            market_text = self.font.render(
+                f"Market: Raw Food Price: {food_price:.2f}", True, (150, 220, 150)
+            )
+            self.screen.blit(market_text, (250, 10))
 
         # Draw actor information
         y_pos = 50
@@ -73,9 +85,22 @@ class PygameUI:
             actor_count += 1
 
             for actor in planet.actors:
-                actor_text = self.font.render(
-                    f"  {actor.name}: {actor.money} credits", True, (255, 255, 255)
-                )
+                food_qty = actor.inventory.get_quantity(CommodityType.RAW_FOOD) if hasattr(actor, "inventory") else 0
+                
+                food_status = "✓" if hasattr(actor, "food_consumed_this_turn") and actor.food_consumed_this_turn else "✗"
+                
+                # Format based on actor type
+                if hasattr(actor, "actor_type") and actor.actor_type == ActorType.MARKET_MAKER:
+                    actor_text = self.font.render(
+                        f"  [MM] {actor.name}: {actor.money:.1f} credits, {food_qty} food {food_status}", 
+                        True, (220, 180, 50)  # Gold for market makers
+                    )
+                else:
+                    actor_text = self.font.render(
+                        f"  {actor.name}: {actor.money:.1f} credits, {food_qty} food {food_status}", 
+                        True, (255, 255, 255)
+                    )
+                    
                 self.screen.blit(actor_text, (10, y_pos + actor_count * 25))
                 actor_count += 1
 
