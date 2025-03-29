@@ -39,6 +39,7 @@ class PygameUI:
         self.active_pane = 1  # 0=left, 1=center, 2=right
         self.selected_planet: Optional[Planet] = None
         self.selected_actor: Optional[Actor] = None
+        self.selected_commodity: Optional[CommodityType] = None
         
         # Colors
         self.colors = {
@@ -273,6 +274,40 @@ class PygameUI:
                 elif key == pygame.K_RETURN:
                     # Focus on left pane to select an actor
                     self.active_pane = 0
+        
+        elif self.active_pane == 2:  # Right pane (detail view)
+            # When in planet details, allow commodity selection
+            if self.selected_planet and self.selected_planet.market:
+                # Get list of available commodities
+                commodity_types = list(CommodityType)
+                
+                if not commodity_types:
+                    return
+                    
+                current_index = commodity_types.index(self.selected_commodity) if self.selected_commodity in commodity_types else -1
+                
+                if key == pygame.K_UP:
+                    # Select previous commodity
+                    if current_index > 0:
+                        self.selected_commodity = commodity_types[current_index - 1]
+                    elif current_index == -1:
+                        # No commodity selected, select the last one
+                        self.selected_commodity = commodity_types[-1]
+                
+                elif key == pygame.K_DOWN:
+                    # Select next commodity
+                    if current_index < len(commodity_types) - 1:
+                        self.selected_commodity = commodity_types[current_index + 1]
+                    elif current_index == -1:
+                        # No commodity selected, select the first one
+                        self.selected_commodity = commodity_types[0]
+                
+                elif key == pygame.K_RETURN:
+                    # Toggle commodity selection
+                    if self.selected_commodity:
+                        self.selected_commodity = None
+                    elif commodity_types:
+                        self.selected_commodity = commodity_types[0]
     
     def _handle_actor_pane_click(self, x: int, y: int) -> None:
         """Handle clicks in the actor pane."""
@@ -307,8 +342,36 @@ class PygameUI:
     
     def _handle_detail_pane_click(self, x: int, y: int) -> None:
         """Handle clicks in the detail pane."""
-        # Currently no interactive elements in detail pane
-        pass
+        # Check if we're in planet details with a market
+        if self.selected_planet and self.selected_planet.market:
+            # Calculate the commodity list area
+            panel_rect = Rect(
+                self.left_pane_width + self.center_pane_width + 20,
+                80,
+                self.right_pane_width - 40,
+                self.height - 150
+            )
+            x_relative = x - panel_rect.x
+            y_relative = y - panel_rect.y
+            
+            # Check if click is in the commodity list area
+            if 0 <= x_relative <= panel_rect.width:
+                # Start position of commodity list (header + instruction)
+                commodity_start_y = 60  
+                line_height = 30
+                
+                # Calculate which commodity was clicked (rough estimate)
+                if y_relative >= commodity_start_y:
+                    commodity_index = (y_relative - commodity_start_y) // line_height
+                    
+                    # Select the commodity if valid
+                    commodity_types = list(CommodityType)
+                    if 0 <= commodity_index < len(commodity_types):
+                        # If already selected, deselect it
+                        if self.selected_commodity == commodity_types[commodity_index]:
+                            self.selected_commodity = None
+                        else:
+                            self.selected_commodity = commodity_types[commodity_index]
 
     def render(self) -> None:
         """Render the current state of the simulation."""
@@ -690,16 +753,47 @@ class PygameUI:
             self.screen.blit(market_title, (x, y))
             y += line_height
             
+            instruction_text = self.fonts["small"].render(
+                "Select a commodity to view orders (Enter to select)", 
+                True, 
+                self.colors["text"]["normal"]
+            )
+            self.screen.blit(instruction_text, (x + 10, y))
+            y += line_height
+            
             # List commodity prices
             for commodity_type in CommodityType:
                 avg_price = planet.market.get_avg_price(commodity_type)
+                highest_bid, lowest_ask = planet.market.get_bid_ask_spread(commodity_type)
+                bid_ask_str = ""
+                if highest_bid is not None and lowest_ask is not None:
+                    bid_ask_str = f" (Bid: ${highest_bid}, Ask: ${lowest_ask})"
+                
+                # Highlight selected commodity
+                if commodity_type == self.selected_commodity:
+                    # Draw selection background
+                    pygame.draw.rect(
+                        self.screen,
+                        self.colors["ui_elements"]["button_hover"],
+                        (x, y, panel_rect.width - 40, line_height),
+                        border_radius=3
+                    )
+                    text_color = self.colors["text"]["highlight"]
+                else:
+                    text_color = self.colors["text"]["normal"]
+                
                 price_text = self.fonts["normal"].render(
-                    f"• {commodity_type.value}: ${avg_price:.2f}", 
+                    f"• {commodity_type.value}: ${avg_price:.2f}{bid_ask_str}", 
                     True, 
-                    self.colors["text"]["normal"]
+                    text_color
                 )
                 self.screen.blit(price_text, (x + 10, y))
                 y += line_height
+            
+            # If a commodity is selected, show orders
+            if self.selected_commodity and planet.market:
+                y += line_height
+                self._render_commodity_orders(panel_rect, x, y)
         else:
             no_market_text = self.fonts["normal"].render(
                 "No market on this planet", 
@@ -707,6 +801,134 @@ class PygameUI:
                 self.colors["text"]["error"]
             )
             self.screen.blit(no_market_text, (x, y))
+    
+    def _render_commodity_orders(self, panel_rect: Rect, x: int, y: int) -> None:
+        """Render order book and transaction history for selected commodity."""
+        if not self.selected_planet or not self.selected_planet.market or not self.selected_commodity:
+            return
+            
+        market = self.selected_planet.market
+        commodity = self.selected_commodity
+        line_height = 25  # Smaller line height for orders
+        
+        # Draw section headers
+        orders_title = self.fonts["normal"].render(
+            f"Order Book - {commodity.value}", True, self.colors["text"]["header"]
+        )
+        self.screen.blit(orders_title, (x, y))
+        y += line_height * 1.2
+        
+        # Get buy and sell orders
+        buy_orders = sorted(
+            market.buy_orders.get(commodity, []),
+            key=lambda o: (-o.price, o.timestamp)  # Highest price first
+        )
+        sell_orders = sorted(
+            market.sell_orders.get(commodity, []),
+            key=lambda o: (o.price, o.timestamp)   # Lowest price first
+        )
+        
+        # Get recent transactions for this commodity
+        recent_transactions = [tx for tx in market.transaction_history 
+                               if tx.commodity_type == commodity][-10:]  # Last 10 transactions
+        
+        # Draw column headers
+        col_width = (panel_rect.width - 40) // 2
+        buy_header_x = x
+        sell_header_x = x + col_width
+        
+        # Buy orders header
+        buy_header = self.fonts["small"].render(
+            "BUY ORDERS (Price | Quantity | Actor)", 
+            True, 
+            (150, 255, 150)  # Green for buy
+        )
+        self.screen.blit(buy_header, (buy_header_x, y))
+        
+        # Sell orders header
+        sell_header = self.fonts["small"].render(
+            "SELL ORDERS (Price | Quantity | Actor)", 
+            True, 
+            (255, 150, 150)  # Red for sell
+        )
+        self.screen.blit(sell_header, (sell_header_x, y))
+        
+        y += line_height
+        
+        # Draw divider line
+        pygame.draw.line(
+            self.screen, 
+            self.colors["pane_divider"], 
+            (x, y - 5), 
+            (panel_rect.x + panel_rect.width - 20, y - 5), 
+            1
+        )
+        
+        # Determine how many orders to show
+        max_orders = 8
+        visible_buy_orders = buy_orders[:max_orders]
+        visible_sell_orders = sell_orders[:max_orders]
+        
+        # Draw buy orders
+        order_y = y
+        for i, order in enumerate(visible_buy_orders):
+            order_text = self.fonts["small"].render(
+                f"${order.price} | {order.quantity} | {order.actor.name[:10]}", 
+                True, 
+                (150, 255, 150)  # Green for buy
+            )
+            self.screen.blit(order_text, (buy_header_x + 10, order_y))
+            order_y += line_height
+        
+        # Draw sell orders
+        order_y = y
+        for i, order in enumerate(visible_sell_orders):
+            order_text = self.fonts["small"].render(
+                f"${order.price} | {order.quantity} | {order.actor.name[:10]}", 
+                True, 
+                (255, 150, 150)  # Red for sell
+            )
+            self.screen.blit(order_text, (sell_header_x + 10, order_y))
+            order_y += line_height
+        
+        # Update y position for transaction history
+        y += max(len(visible_buy_orders), len(visible_sell_orders)) * line_height + line_height
+        
+        # Transaction history
+        if recent_transactions:
+            history_title = self.fonts["normal"].render(
+                "Recent Transactions", True, self.colors["text"]["header"]
+            )
+            self.screen.blit(history_title, (x, y))
+            y += line_height
+            
+            # Draw column headers
+            history_header = self.fonts["small"].render(
+                "Price | Quantity | Buyer | Seller", 
+                True, 
+                self.colors["text"]["normal"]
+            )
+            self.screen.blit(history_header, (x + 10, y))
+            y += line_height
+            
+            # Draw divider line
+            pygame.draw.line(
+                self.screen, 
+                self.colors["pane_divider"], 
+                (x, y - 5), 
+                (panel_rect.x + panel_rect.width - 20, y - 5), 
+                1
+            )
+            
+            # Draw transactions in reverse chronological order (newest first)
+            for tx in reversed(recent_transactions):
+                tx_text = self.fonts["small"].render(
+                    f"${tx.price} | {tx.quantity} | {tx.buyer.name[:8]} | {tx.seller.name[:8]}", 
+                    True, 
+                    self.colors["text"]["normal"]
+                )
+                self.screen.blit(tx_text, (x + 10, y))
+                y += line_height
         
     def _render_simulation_details(self, panel_rect: Rect) -> None:
         """Render simulation-wide information."""
