@@ -136,14 +136,14 @@ class Actor:
             self._do_regular_market_actions()
 
     def _do_regular_market_actions(self) -> None:
-        """Regular actors buy what they need and sell excess."""
+        """Regular actors buy what they need and sell excess, matching existing orders when possible."""
         if not self.planet or not self.planet.market:
             return
         
         market = self.planet.market
         commodity_type = CommodityType.RAW_FOOD
         
-        # Get existing orders
+        # Get existing actor's orders
         existing_orders = market.get_actor_orders(self)
         buy_orders = existing_orders["buy"]
         sell_orders = existing_orders["sell"]
@@ -152,7 +152,7 @@ class Actor:
         food_quantity = self.inventory.get_quantity(commodity_type)
         available_inventory = self.inventory.get_available_quantity(commodity_type)
         
-        # Get current market price
+        # Get current market price for reference
         food_price = market.get_avg_price(commodity_type)
         
         # Cancel existing buy orders if we have enough food now
@@ -174,58 +174,107 @@ class Actor:
         buy_orders = existing_orders["buy"]
         sell_orders = existing_orders["sell"]
         
-        # Buy food if we don't have enough (less than 6 units including what we'll consume)
-        # and don't have existing buy orders
+        # Check if we need to buy food (less than 6 units)
         if food_quantity < 6 and not buy_orders:
-            # Buy enough to have at least 6 units
+            # Calculate how much food we need
             quantity_to_buy = 6 - food_quantity
             
-            # Set buy price aggressively above market price to increase chance of execution
-            # Higher priority to buy when lower on food
-            price_factor = 1.1 + (0.05 * (5 - food_quantity))  # 1.1 to 1.3 based on need
-            buy_price = int(food_price * price_factor)
+            # Get existing sell orders in the market (excluding our own)
+            market_sell_orders = sorted(
+                [o for o in market.sell_orders.get(commodity_type, []) if o.actor != self],
+                key=lambda o: (o.price, o.timestamp)  # Sort by price (lowest first)
+            )
             
-            # Place buy order
-            order_id = market.place_buy_order(self, commodity_type, quantity_to_buy, buy_price)
-            if order_id:
-                self.active_orders[order_id] = f"buy {commodity_type.name}"
-                self.last_market_action = f"Placed order to buy {quantity_to_buy} food at {buy_price} credits each"
+            # Check if there are any sell orders available
+            if market_sell_orders:
+                # Start with the lowest price sell order
+                best_sell_order = market_sell_orders[0]
+                
+                # Check if we can afford it
+                max_affordable_quantity = min(
+                    quantity_to_buy,
+                    self.money // best_sell_order.price
+                )
+                
+                if max_affordable_quantity > 0:
+                    # Place a matching buy order at exactly the seller's price
+                    order_id = market.place_buy_order(
+                        self, commodity_type, max_affordable_quantity, best_sell_order.price
+                    )
+                    if order_id:
+                        self.active_orders[order_id] = f"buy {commodity_type.name}"
+                        self.last_market_action = f"Matched sell order price: buying {max_affordable_quantity} food at {best_sell_order.price} credits each"
+                else:
+                    # We can't afford any food at current prices - place a lower buy order
+                    # Calculate a price we can afford
+                    affordable_price = self.money // quantity_to_buy if quantity_to_buy > 0 else 0
+                    
+                    if affordable_price > 0:
+                        order_id = market.place_buy_order(self, commodity_type, quantity_to_buy, affordable_price)
+                        if order_id:
+                            self.active_orders[order_id] = f"buy {commodity_type.name}"
+                            self.last_market_action = f"Can't afford market price, placed buy order: {quantity_to_buy} food at {affordable_price} credits each"
+            else:
+                # No sell orders to match, place our own buy order
+                # Calculate a reasonable price based on the last traded price or base price
+                if self.money >= quantity_to_buy:
+                    buy_price = max(int(food_price * 1.05), quantity_to_buy * 2)  # Slightly above market price
+                    
+                    # Make sure we don't spend all our money
+                    max_affordable_quantity = min(quantity_to_buy, self.money // buy_price)
+                    
+                    if max_affordable_quantity > 0:
+                        order_id = market.place_buy_order(self, commodity_type, max_affordable_quantity, buy_price)
+                        if order_id:
+                            self.active_orders[order_id] = f"buy {commodity_type.name}"
+                            self.last_market_action = f"No matching sell orders, placed buy order: {max_affordable_quantity} food at {buy_price} credits each"
         
-        # Sell excess food (more than 6 units) if we don't have existing sell orders
-        # Check available inventory to avoid double-counting already reserved food
+        # Check if we should sell excess food (more than 6 units)
         if available_inventory > 6 and not sell_orders:
-            # Sell more aggressively when we have a lot
+            # Calculate how much food we can sell
             quantity_to_sell = available_inventory - 6
             
-            # Set sell price based on quantity (more aggressive with more excess)
-            # Lower minimum price to encourage selling
-            price_factor = 0.98 - (0.02 * min(5, (available_inventory - 6)))  # 0.98 down to 0.88
-            sell_price = max(int(food_price * price_factor), 9)  # Ensure minimum sell price
+            # Get existing buy orders in the market (excluding our own)
+            market_buy_orders = sorted(
+                [o for o in market.buy_orders.get(commodity_type, []) if o.actor != self],
+                key=lambda o: (-o.price, o.timestamp)  # Sort by price (highest first)
+            )
             
-            # Place sell order
-            order_id = market.place_sell_order(self, commodity_type, quantity_to_sell, sell_price)
-            if order_id:
-                self.active_orders[order_id] = f"sell {commodity_type.name}"
-                self.last_market_action = f"Placed order to sell {quantity_to_sell} food at {sell_price} credits each"
-        
-        # If we have existing orders but the price is very outdated, update them
-        for order in buy_orders:
-            current_ideal_buy_price = int(food_price * (1.1 + (0.05 * (5 - food_quantity))))
-            price_diff_percent = abs(order.price - current_ideal_buy_price) / current_ideal_buy_price
-            
-            # If price is more than 20% off from what we would place now, update it
-            if price_diff_percent > 0.2:
-                market.modify_order(order.order_id, current_ideal_buy_price)
-                self.last_market_action = f"Updated buy order: {order.quantity} @ {order.price} → {current_ideal_buy_price}"
+            # Check if there are any buy orders available
+            if market_buy_orders:
+                # Start with the highest price buy order
+                best_buy_order = market_buy_orders[0]
                 
-        for order in sell_orders:
-            current_ideal_sell_price = max(int(food_price * (0.98 - (0.02 * min(5, (food_quantity - 6))))), 9)
-            price_diff_percent = abs(order.price - current_ideal_sell_price) / current_ideal_sell_price
-            
-            # If price is more than 20% off from what we would place now, update it
-            if price_diff_percent > 0.2:
-                market.modify_order(order.order_id, current_ideal_sell_price)
-                self.last_market_action = f"Updated sell order: {order.quantity} @ {order.price} → {current_ideal_sell_price}"
+                # Calculate a reasonable minimum sell price
+                min_sell_price = max(int(food_price * 0.9), 7)  # At least 90% of average price
+                
+                # Check if the best buy price is acceptable
+                if best_buy_order.price >= min_sell_price:
+                    # Place a matching sell order at exactly the buyer's price
+                    order_id = market.place_sell_order(
+                        self, commodity_type, quantity_to_sell, best_buy_order.price
+                    )
+                    if order_id:
+                        self.active_orders[order_id] = f"sell {commodity_type.name}"
+                        self.last_market_action = f"Matched buy order price: selling {quantity_to_sell} food at {best_buy_order.price} credits each"
+                else:
+                    # The best buy price is too low for us
+                    # Place a sell order slightly below market price but above our minimum
+                    sell_price = max(int(food_price * 0.95), min_sell_price)  # 95% of market price
+                    
+                    order_id = market.place_sell_order(self, commodity_type, quantity_to_sell, sell_price)
+                    if order_id:
+                        self.active_orders[order_id] = f"sell {commodity_type.name}"
+                        self.last_market_action = f"Buy prices too low, placed sell order: {quantity_to_sell} food at {sell_price} credits each"
+            else:
+                # No buy orders to match, place our own sell order
+                # Calculate a reasonable price based on the last traded price or base price
+                sell_price = max(int(food_price * 0.95), 8)  # Slightly below market price
+                
+                order_id = market.place_sell_order(self, commodity_type, quantity_to_sell, sell_price)
+                if order_id:
+                    self.active_orders[order_id] = f"sell {commodity_type.name}"
+                    self.last_market_action = f"No matching buy orders, placed sell order: {quantity_to_sell} food at {sell_price} credits each"
 
     def _do_market_maker_actions(self) -> None:
         """Market makers provide liquidity by placing both buy and sell orders based on inventory and market conditions."""
