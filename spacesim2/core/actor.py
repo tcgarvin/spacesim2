@@ -61,10 +61,26 @@ class Actor:
 
     def _consume_food(self) -> None:
         """Consume 1 unit of food per turn if available."""
-        if self.inventory.has_quantity(CommodityType.RAW_FOOD, 1):
-            self.inventory.remove_commodity(CommodityType.RAW_FOOD, 1)
+        food_type = CommodityType.RAW_FOOD
+        
+        # Check if enough food is available (not reserved)
+        if self.inventory.has_quantity(food_type, 1):
+            self.inventory.remove_commodity(food_type, 1)
             self.food_consumed_this_turn = True
         else:
+            # If not enough available food but there's reserved food
+            reserved_food = self.inventory.get_reserved_quantity(food_type)
+            if reserved_food > 0:
+                # Unreserve 1 unit of food and consume it
+                self.inventory.unreserve_commodity(food_type, 1)
+                
+                # Now the food should be available to consume
+                if self.inventory.has_quantity(food_type, 1):
+                    self.inventory.remove_commodity(food_type, 1)
+                    self.food_consumed_this_turn = True
+                    return
+            
+            # If we get here, there's not enough food
             self.food_consumed_this_turn = False
             # In future tasks, we'll add consequences for not consuming food
 
@@ -405,9 +421,10 @@ class Actor:
                             self.active_orders[order_id] = f"buy {commodity_type.name}"
             
             # Create multiple sell orders at different price points
-            if available_inventory > 1:  # Keep at least 1 for own consumption
+            # Keep at least 3 units for own consumption for a few turns
+            if available_inventory > 3:  
                 MAX_SELL_ORDERS = 5  # Like in Kotlin (simplified from 10)
-                sellable_inventory = available_inventory - 1
+                sellable_inventory = available_inventory - 3
                 
                 curve_percentile_step = (1 - curve_percentile) / MAX_SELL_ORDERS
                 sell_percentiles = [curve_percentile + (i * curve_percentile_step) for i in range(MAX_SELL_ORDERS)]
@@ -467,11 +484,11 @@ class Actor:
                         self.active_orders[order_id] = f"buy {commodity_type.name}"
             
             # Place sell orders if we have inventory
-            if available_inventory > 1:
+            if available_inventory > 3:
                 # Place sell orders at 110%, 120%, 130% of base price
                 for factor in [1.1, 1.2, 1.3]:
                     sell_price = max(1, int(base_price * factor))
-                    sell_quantity = max(1, int((available_inventory - 1) / 3))
+                    sell_quantity = max(1, int((available_inventory - 3) / 3))
                     
                     if sell_quantity > 0:
                         order_id = market.place_sell_order(self, commodity_type, sell_quantity, sell_price)
