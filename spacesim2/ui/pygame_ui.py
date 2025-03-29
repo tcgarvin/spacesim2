@@ -828,9 +828,9 @@ class PygameUI:
             key=lambda o: (o.price, o.timestamp)   # Lowest price first
         )
         
-        # Get recent transactions for this commodity
-        recent_transactions = [tx for tx in market.transaction_history 
-                               if tx.commodity_type == commodity][-10:]  # Last 10 transactions
+        # Get only current turn's transactions for this commodity
+        current_transactions = [tx for tx in market.transaction_history 
+                              if tx.commodity_type == commodity and tx.turn == self.simulation.current_turn]
         
         # Draw column headers
         col_width = (panel_rect.width - 40) // 2
@@ -894,10 +894,10 @@ class PygameUI:
         # Update y position for transaction history
         y += max(len(visible_buy_orders), len(visible_sell_orders)) * line_height + line_height
         
-        # Transaction history
-        if recent_transactions:
+        # Transaction history for current turn only
+        if current_transactions:
             history_title = self.fonts["normal"].render(
-                "Recent Transactions", True, self.colors["text"]["header"]
+                "This Turn's Transactions", True, self.colors["text"]["header"]
             )
             self.screen.blit(history_title, (x, y))
             y += line_height
@@ -921,7 +921,7 @@ class PygameUI:
             )
             
             # Draw transactions in reverse chronological order (newest first)
-            for tx in reversed(recent_transactions):
+            for tx in reversed(current_transactions):
                 tx_text = self.fonts["small"].render(
                     f"${tx.price} | {tx.quantity} | {tx.buyer.name[:8]} | {tx.seller.name[:8]}", 
                     True, 

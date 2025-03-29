@@ -151,12 +151,17 @@ class Simulation:
                 food_price = planet.market.get_avg_price(CommodityType.RAW_FOOD)
                 print(f"  Market: Raw Food Price: {food_price}")
                 
-                # Print transactions
+                # Print current turn's transactions only
                 if planet.market.transaction_history:
-                    latest_transactions = planet.market.transaction_history[-min(3, len(planet.market.transaction_history)):]
-                    print(f"  Recent Transactions:")
-                    for tx in latest_transactions:
-                        print(f"    {tx.buyer.name} bought {tx.quantity} {tx.commodity_type.name} from {tx.seller.name} @ {tx.price}")
+                    # Filter transactions from current turn only
+                    current_turn_transactions = [tx for tx in planet.market.transaction_history if getattr(tx, 'turn', 0) == self.current_turn]
+                    
+                    if current_turn_transactions:
+                        print(f"  Transactions this turn:")
+                        for tx in current_turn_transactions:
+                            print(f"    {tx.buyer.name} bought {tx.quantity} {tx.commodity_type.name} from {tx.seller.name} @ {tx.price}")
+                    else:
+                        print("  No transactions this turn")
                 else:
                     print("  No transactions yet")
             

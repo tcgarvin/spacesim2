@@ -37,6 +37,7 @@ class Transaction:
     quantity: int
     price: int
     total_amount: int
+    turn: int = 0  # The turn when this transaction occurred
 
 
 class Market:
@@ -333,7 +334,8 @@ class Market:
             commodity_type=commodity_type,
             quantity=quantity,
             price=price,
-            total_amount=total_amount
+            total_amount=total_amount,
+            turn=self.current_turn
         )
         self.transaction_history.append(transaction)
         
