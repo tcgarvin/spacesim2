@@ -15,6 +15,7 @@ from spacesim2.core.actor import ActorType, Actor
 from spacesim2.core.commodity import CommodityType
 from spacesim2.core.simulation import Simulation
 from spacesim2.core.planet import Planet
+from spacesim2.core.ship import Ship, ShipStatus
 
 
 # UI screen modes
@@ -39,7 +40,9 @@ class PygameUI:
         self.active_pane = 1  # 0=left, 1=center, 2=right
         self.selected_planet: Optional[Planet] = None
         self.selected_actor: Optional[Actor] = None
+        self.selected_ship: Optional[Ship] = None
         self.selected_commodity: Optional[CommodityType] = None
+        self.view_ships = False  # Toggle between viewing actors and ships in the left pane
         
         # Initialize random seed for consistent colors
         random.seed(42)
@@ -73,6 +76,12 @@ class PygameUI:
                 "selected": (255, 255, 255),
                 "market_maker": (220, 180, 50),
             },
+            "ship": {
+                "default": (180, 150, 255),
+                "selected": (255, 200, 255),
+                "in_transit": (150, 100, 200),
+                "needs_maintenance": (255, 100, 100),
+            },
             "ui_elements": {
                 "button": (70, 70, 90),
                 "button_hover": (90, 90, 120),
@@ -91,10 +100,17 @@ class PygameUI:
         self.planet_colors: Dict[Planet, Tuple[int, int, int]] = {}
         self.planet_radius = 15  # Smaller radius for star-like appearance
         
-        # Actor visualization
+        # Actor and ship visualization
         self.actor_list_item_height = 40
         self.actor_list_scroll_offset = 0
         self.actor_list_visible_items = 20
+        
+        # Ship visualization
+        self.ship_list_item_height = 40
+        self.ship_list_scroll_offset = 0
+        self.ship_list_visible_items = 20
+        self.ship_orbit_radius = 30  # Distance from planet center when in orbit
+        self.ship_size = 5  # Size of ships on screen
         
         # Help text
         self.help_text = [
@@ -102,6 +118,7 @@ class PygameUI:
             "Tab: Switch panes",
             "Arrow keys: Navigate",
             "Enter: Select item",
+            "S: Toggle Ships/Actors",
             "Esc: Quit",
         ]
 
@@ -223,6 +240,13 @@ class PygameUI:
                 elif event.key == pygame.K_RIGHT:
                     # Move to right pane
                     self.active_pane = min(2, self.active_pane + 1)
+                elif event.key == pygame.K_s:
+                    # Toggle between viewing actors and ships
+                    self.view_ships = not self.view_ships
+                    if self.view_ships:
+                        self.selected_actor = None
+                    else:
+                        self.selected_ship = None
                     
                 # Handle navigation within active pane
                 self._handle_navigation_keys(event.key)
@@ -232,8 +256,11 @@ class PygameUI:
                 x, y = event.pos
                 if x < self.left_pane_width:
                     self.active_pane = 0
-                    # Handle actor selection in left pane
-                    self._handle_actor_pane_click(x, y)
+                    # Handle actor/ship selection in left pane
+                    if self.view_ships:
+                        self._handle_ship_pane_click(x, y)
+                    else:
+                        self._handle_actor_pane_click(x, y)
                 elif x < self.left_pane_width + self.center_pane_width:
                     self.active_pane = 1
                     # Handle planet selection in center pane
@@ -245,44 +272,79 @@ class PygameUI:
                     
                 # Handle scroll wheel
                 if event.button == 4:  # Scroll up
-                    if self.active_pane == 0:  # Left pane (actor list)
-                        self.actor_list_scroll_offset = max(0, self.actor_list_scroll_offset - 3)
+                    if self.active_pane == 0:  # Left pane
+                        if self.view_ships:
+                            self.ship_list_scroll_offset = max(0, self.ship_list_scroll_offset - 3)
+                        else:
+                            self.actor_list_scroll_offset = max(0, self.actor_list_scroll_offset - 3)
                 elif event.button == 5:  # Scroll down
-                    if self.active_pane == 0:  # Left pane (actor list)
-                        max_offset = max(0, len(self.selected_planet.actors) - self.actor_list_visible_items) if self.selected_planet else 0
-                        self.actor_list_scroll_offset = min(max_offset, self.actor_list_scroll_offset + 3)
+                    if self.active_pane == 0:  # Left pane
+                        if self.view_ships:
+                            max_offset = max(0, len(self.selected_planet.ships) - self.ship_list_visible_items) if self.selected_planet else 0
+                            self.ship_list_scroll_offset = min(max_offset, self.ship_list_scroll_offset + 3)
+                        else:
+                            max_offset = max(0, len(self.selected_planet.actors) - self.actor_list_visible_items) if self.selected_planet else 0
+                            self.actor_list_scroll_offset = min(max_offset, self.actor_list_scroll_offset + 3)
                 
         return True
         
     def _handle_navigation_keys(self, key: int) -> None:
         """Handle navigation keys within the active pane."""
-        if self.active_pane == 0:  # Left pane (actor list)
-            if self.selected_planet and self.selected_planet.actors:
-                if key == pygame.K_UP:
-                    # Select previous actor or scroll up
-                    if self.selected_actor in self.selected_planet.actors:
-                        current_index = self.selected_planet.actors.index(self.selected_actor)
-                        if current_index > 0:
-                            self.selected_actor = self.selected_planet.actors[current_index - 1]
-                            # Adjust scroll if needed
-                            if current_index - 1 < self.actor_list_scroll_offset:
-                                self.actor_list_scroll_offset = current_index - 1
-                    else:
-                        # No actor selected, select the last one
-                        self.selected_actor = self.selected_planet.actors[-1]
-                
-                elif key == pygame.K_DOWN:
-                    # Select next actor or scroll down
-                    if self.selected_actor in self.selected_planet.actors:
-                        current_index = self.selected_planet.actors.index(self.selected_actor)
-                        if current_index < len(self.selected_planet.actors) - 1:
-                            self.selected_actor = self.selected_planet.actors[current_index + 1]
-                            # Adjust scroll if needed
-                            if current_index + 1 >= self.actor_list_scroll_offset + self.actor_list_visible_items:
-                                self.actor_list_scroll_offset = current_index + 1 - self.actor_list_visible_items + 1
-                    else:
-                        # No actor selected, select the first one
-                        self.selected_actor = self.selected_planet.actors[0]
+        if self.active_pane == 0:  # Left pane (actor/ship list)
+            if self.view_ships:  # Ship list
+                if self.selected_planet and self.selected_planet.ships:
+                    if key == pygame.K_UP:
+                        # Select previous ship or scroll up
+                        if self.selected_ship in self.selected_planet.ships:
+                            current_index = self.selected_planet.ships.index(self.selected_ship)
+                            if current_index > 0:
+                                self.selected_ship = self.selected_planet.ships[current_index - 1]
+                                # Adjust scroll if needed
+                                if current_index - 1 < self.ship_list_scroll_offset:
+                                    self.ship_list_scroll_offset = current_index - 1
+                        else:
+                            # No ship selected, select the last one
+                            self.selected_ship = self.selected_planet.ships[-1]
+                    
+                    elif key == pygame.K_DOWN:
+                        # Select next ship or scroll down
+                        if self.selected_ship in self.selected_planet.ships:
+                            current_index = self.selected_planet.ships.index(self.selected_ship)
+                            if current_index < len(self.selected_planet.ships) - 1:
+                                self.selected_ship = self.selected_planet.ships[current_index + 1]
+                                # Adjust scroll if needed
+                                if current_index + 1 >= self.ship_list_scroll_offset + self.ship_list_visible_items:
+                                    self.ship_list_scroll_offset = current_index + 1 - self.ship_list_visible_items + 1
+                        else:
+                            # No ship selected, select the first one
+                            self.selected_ship = self.selected_planet.ships[0]
+            else:  # Actor list
+                if self.selected_planet and self.selected_planet.actors:
+                    if key == pygame.K_UP:
+                        # Select previous actor or scroll up
+                        if self.selected_actor in self.selected_planet.actors:
+                            current_index = self.selected_planet.actors.index(self.selected_actor)
+                            if current_index > 0:
+                                self.selected_actor = self.selected_planet.actors[current_index - 1]
+                                # Adjust scroll if needed
+                                if current_index - 1 < self.actor_list_scroll_offset:
+                                    self.actor_list_scroll_offset = current_index - 1
+                        else:
+                            # No actor selected, select the last one
+                            self.selected_actor = self.selected_planet.actors[-1]
+                    
+                    elif key == pygame.K_DOWN:
+                        # Select next actor or scroll down
+                        if self.selected_actor in self.selected_planet.actors:
+                            current_index = self.selected_planet.actors.index(self.selected_actor)
+                            if current_index < len(self.selected_planet.actors) - 1:
+                                self.selected_actor = self.selected_planet.actors[current_index + 1]
+                                # Adjust scroll if needed
+                                if current_index + 1 >= self.actor_list_scroll_offset + self.actor_list_visible_items:
+                                    self.actor_list_scroll_offset = current_index + 1 - self.actor_list_visible_items + 1
+                        else:
+                            # No actor selected, select the first one
+                            self.selected_actor = self.selected_planet.actors[0]
         
         elif self.active_pane == 1:  # Center pane (planet grid)
             # Basic navigation through planets
@@ -358,6 +420,24 @@ class PygameUI:
             # Select the actor if valid
             if 0 <= index < len(self.selected_planet.actors):
                 self.selected_actor = self.selected_planet.actors[index]
+                
+    def _handle_ship_pane_click(self, x: int, y: int) -> None:
+        """Handle clicks in the ship pane."""
+        if not self.selected_planet:
+            return
+            
+        # Calculate list boundaries
+        list_start_y = 80  # Start position of the ship list
+        
+        # Check if click is in the ship list area
+        if y >= list_start_y:
+            # Calculate which ship was clicked
+            relative_y = y - list_start_y
+            index = self.ship_list_scroll_offset + (relative_y // self.ship_list_item_height)
+            
+            # Select the ship if valid
+            if 0 <= index < len(self.selected_planet.ships):
+                self.selected_ship = self.selected_planet.ships[index]
     
     def _handle_planet_pane_click(self, x: int, y: int) -> None:
         """Handle clicks in the planet pane."""
@@ -426,6 +506,25 @@ class PygameUI:
         
         # Draw a thin outline for better definition
         pygame.draw.polygon(self.screen, (min(255, color[0]+30), min(255, color[1]+30), min(255, color[2]+30)), star_points, 1)
+        
+    def _draw_ship(self, x: int, y: int, color: Tuple[int, int, int]) -> None:
+        """Draw a ship at the given coordinates with the given color."""
+        # Create a small diamond shape (rotated square)
+        size = self.ship_size
+        
+        # Four points of a diamond
+        diamond_points = [
+            (x, y - size),       # Top
+            (x + size, y),       # Right
+            (x, y + size),       # Bottom
+            (x - size, y)        # Left
+        ]
+        
+        # Draw the diamond
+        pygame.draw.polygon(self.screen, color, diamond_points)
+        
+        # Draw a thin outline for better definition
+        pygame.draw.polygon(self.screen, (min(255, color[0]+30), min(255, color[1]+30), min(255, color[2]+30)), diamond_points, 1)
 
     def _handle_detail_pane_click(self, x: int, y: int) -> None:
         """Handle clicks in the detail pane."""
@@ -517,12 +616,34 @@ class PygameUI:
         pygame.display.flip()
         
     def _render_actor_pane(self) -> None:
-        """Render the left pane with the actor list."""
-        # Title
-        if self.selected_planet:
-            title = f"Actors on {self.selected_planet.name}"
+        """Render the left pane with the actor or ship list."""
+        # Title depends on view mode
+        if self.view_ships:
+            if self.selected_planet:
+                title = f"Ships at {self.selected_planet.name}"
+                item_count = len(self.selected_planet.ships) if self.selected_planet else 0
+                subtitle = f"{item_count} ships"
+            else:
+                title = "No Planet Selected"
+                subtitle = "0 ships"
+                
+            # Toggle button for view mode
+            toggle_text = self.fonts["small"].render(
+                "[S] Show Actors", True, self.colors["text"]["normal"]
+            )
         else:
-            title = "No Planet Selected"
+            if self.selected_planet:
+                title = f"Actors on {self.selected_planet.name}"
+                item_count = len(self.selected_planet.actors) if self.selected_planet else 0
+                subtitle = f"{item_count} actors"
+            else:
+                title = "No Planet Selected"
+                subtitle = "0 actors"
+                
+            # Toggle button for view mode
+            toggle_text = self.fonts["small"].render(
+                "[S] Show Ships", True, self.colors["text"]["normal"]
+            )
             
         title_text = self.fonts["large"].render(
             title, True, self.colors["text"]["header"]
@@ -530,14 +651,15 @@ class PygameUI:
         self.screen.blit(title_text, (20, 20))
         
         # Subtitle with count
-        actor_count = len(self.selected_planet.actors) if self.selected_planet else 0
-        subtitle = f"{actor_count} actors"
         subtitle_text = self.fonts["normal"].render(
             subtitle, True, self.colors["text"]["normal"]
         )
         self.screen.blit(subtitle_text, (20, 50))
         
-        # Draw actor list header
+        # Add toggle button
+        self.screen.blit(toggle_text, (self.left_pane_width - 20 - toggle_text.get_width(), 50))
+        
+        # Draw list header
         header_y = 80
         pygame.draw.line(
             self.screen, 
@@ -547,6 +669,14 @@ class PygameUI:
             1
         )
         
+        # Render either ships or actors based on view mode
+        if self.view_ships:
+            self._render_ship_list(header_y)
+        else:
+            self._render_actor_list(header_y)
+    
+    def _render_actor_list(self, header_y: int) -> None:
+        """Render the actor list."""
         # Draw scrollable actor list
         if not self.selected_planet or not self.selected_planet.actors:
             no_actors_text = self.fonts["normal"].render(
@@ -556,8 +686,8 @@ class PygameUI:
             return
             
         # Calculate visible range
-        start_index = min(self.actor_list_scroll_offset, len(self.selected_planet.actors) - 1)
-        end_index = min(start_index + self.actor_list_visible_items, len(self.selected_planet.actors))
+        start_index = min(self.actor_list_scroll_offset, len(self.selected_planet.actors) - 1) if self.selected_planet.actors else 0
+        end_index = min(start_index + self.actor_list_visible_items, len(self.selected_planet.actors)) if self.selected_planet.actors else 0
         
         # Draw each actor in the visible range
         for i in range(start_index, end_index):
@@ -609,6 +739,77 @@ class PygameUI:
                 [(self.left_pane_width - 30, bottom_y - 20), (self.left_pane_width - 20, bottom_y - 5), (self.left_pane_width - 10, bottom_y - 20)]
             )
             
+    def _render_ship_list(self, header_y: int) -> None:
+        """Render the ship list."""
+        # Draw scrollable ship list
+        if not self.selected_planet or not self.selected_planet.ships:
+            no_ships_text = self.fonts["normal"].render(
+                "No ships available", True, self.colors["text"]["error"]
+            )
+            self.screen.blit(no_ships_text, (20, header_y + 20))
+            return
+            
+        # Calculate visible range
+        start_index = min(self.ship_list_scroll_offset, len(self.selected_planet.ships) - 1) if self.selected_planet.ships else 0
+        end_index = min(start_index + self.ship_list_visible_items, len(self.selected_planet.ships)) if self.selected_planet.ships else 0
+        
+        # Draw each ship in the visible range
+        for i in range(start_index, end_index):
+            ship = self.selected_planet.ships[i]
+            y_pos = header_y + ((i - start_index) * self.ship_list_item_height)
+            
+            # Highlight if selected
+            if ship == self.selected_ship:
+                pygame.draw.rect(
+                    self.screen,
+                    self.colors["ui_elements"]["button_hover"],
+                    (5, y_pos, self.left_pane_width - 10, self.ship_list_item_height - 2)
+                )
+            
+            # Ship name and status
+            name_color = self.colors["ship"]["default"]
+            if ship.status == ShipStatus.TRAVELING:
+                name_color = self.colors["ship"]["in_transit"]
+            elif ship.status == ShipStatus.NEEDS_MAINTENANCE:
+                name_color = self.colors["ship"]["needs_maintenance"]
+                
+            name_text = self.fonts["normal"].render(f"{ship.name}", True, name_color)
+            self.screen.blit(name_text, (20, y_pos + 10))
+            
+            # Ship money and cargo status in smaller text to the right
+            cargo_food = ship.cargo.get_quantity(CommodityType.RAW_FOOD)
+            cargo_fuel = ship.cargo.get_quantity(CommodityType.FUEL)
+            
+            money_text = self.fonts["small"].render(
+                f"${ship.money:,}", True, self.colors["text"]["money"]
+            )
+            money_width = money_text.get_width()
+            self.screen.blit(money_text, (self.left_pane_width - 20 - money_width, y_pos + 5))
+            
+            cargo_text = self.fonts["small"].render(
+                f"Food: {cargo_food}, Fuel: {cargo_fuel}", True, self.colors["text"]["food"]
+            )
+            cargo_width = cargo_text.get_width()
+            self.screen.blit(cargo_text, (self.left_pane_width - 20 - cargo_width, y_pos + 22))
+        
+        # Draw scroll indicators if needed
+        if start_index > 0:
+            # Up arrow
+            pygame.draw.polygon(
+                self.screen,
+                self.colors["text"]["normal"],
+                [(self.left_pane_width - 30, header_y + 20), (self.left_pane_width - 20, header_y + 5), (self.left_pane_width - 10, header_y + 20)]
+            )
+            
+        if end_index < len(self.selected_planet.ships):
+            # Down arrow
+            bottom_y = header_y + (self.ship_list_visible_items * self.ship_list_item_height) + 20
+            pygame.draw.polygon(
+                self.screen,
+                self.colors["text"]["normal"],
+                [(self.left_pane_width - 30, bottom_y - 20), (self.left_pane_width - 20, bottom_y - 5), (self.left_pane_width - 10, bottom_y - 20)]
+            )
+            
     def _render_planet_pane(self) -> None:
         """Render the center pane with planets and coordinate grid."""
         # Title
@@ -620,6 +821,10 @@ class PygameUI:
         # Subtitle with count
         planet_count = len(self.simulation.planets)
         subtitle = f"{planet_count} planets"
+        ship_count = len(self.simulation.ships)
+        if ship_count > 0:
+            subtitle += f", {ship_count} ships"
+            
         subtitle_text = self.fonts["normal"].render(
             subtitle, True, self.colors["text"]["normal"]
         )
@@ -637,6 +842,67 @@ class PygameUI:
             )
             return
         
+        # Draw ships in transit before drawing planets
+        self._render_ships_in_transit()
+        
+        # Now render the planets and ships in orbit
+        self._render_planets_and_orbiting_ships()
+        
+    def _render_ships_in_transit(self) -> None:
+        """Render ships that are traveling between planets."""
+        # Find all ships that are currently traveling - they must have TRAVELING status AND a destination
+        ships_in_transit = []
+        for ship in self.simulation.ships:
+            # Check that the ship is really in transit
+            if ship.status == ShipStatus.TRAVELING and ship.destination is not None:
+                ships_in_transit.append(ship)
+        
+        if not ships_in_transit:
+            return
+            
+        for ship in ships_in_transit:
+            # Skip ships without proper origin or destination
+            if not ship.planet or not ship.destination:
+                continue
+                
+            # Get the coordinates for origin and destination planets
+            origin_pos = self.planet_positions.get(ship.planet)
+            dest_pos = self.planet_positions.get(ship.destination)
+            
+            if not origin_pos or not dest_pos:
+                continue
+                
+            # Calculate the ship's current position based on travel progress
+            progress = ship.travel_progress
+            ship_x = int(origin_pos[0] + (dest_pos[0] - origin_pos[0]) * progress)
+            ship_y = int(origin_pos[1] + (dest_pos[1] - origin_pos[1]) * progress)
+            
+            # Draw a line between the planets
+            pygame.draw.line(
+                self.screen,
+                self.colors["ship"]["in_transit"],
+                origin_pos,
+                dest_pos,
+                1
+            )
+            
+            # Draw the ship
+            ship_color = self.colors["ship"]["selected"] if ship == self.selected_ship else self.colors["ship"]["in_transit"]
+            self._draw_ship(ship_x, ship_y, ship_color)
+            
+            # Draw ship name if selected
+            if ship == self.selected_ship:
+                ship_name = self.fonts["small"].render(ship.name, True, ship_color)
+                name_rect = ship_name.get_rect(center=(ship_x, ship_y - 10))
+                self.screen.blit(ship_name, name_rect)
+                
+            # Draw progress percent
+            progress_text = self.fonts["small"].render(f"{int(progress * 100)}%", True, ship_color)
+            progress_rect = progress_text.get_rect(center=(ship_x, ship_y + 10))
+            self.screen.blit(progress_text, progress_rect)
+    
+    def _render_planets_and_orbiting_ships(self) -> None:
+        """Render all planets and ships in orbit around them."""
         # Define the viewport area for reference (used in planet positioning)
         # But don't draw any visible container or background
         margin = 60
@@ -672,18 +938,57 @@ class PygameUI:
                         1
                     )
                 
+                # Draw ships in orbit around this planet
+                if hasattr(planet, 'ships'):
+                    # Get all docked ships - match either by status or by being in the planet's ships list
+                    ships_in_orbit = []
+                    for ship in planet.ships:
+                        if ship.status == ShipStatus.DOCKED:
+                            ships_in_orbit.append(ship)
+                    ship_count = len(ships_in_orbit)
+                else:
+                    ship_count = 0
+                
+                # If there are ships in orbit, draw them
+                if ship_count > 0:
+                    # Distribute ships evenly around the planet in a circle
+                    orbit_radius = self.ship_orbit_radius
+                    for i, ship in enumerate(ships_in_orbit):
+                        # Calculate angle based on ship index
+                        angle = 2 * math.pi * i / max(1, ship_count)
+                        ship_x = pos_x + int(orbit_radius * math.cos(angle))
+                        ship_y = pos_y + int(orbit_radius * math.sin(angle))
+                        
+                        # Draw the ship as a small diamond
+                        ship_color = self.colors["ship"]["selected"] if ship == self.selected_ship else self.colors["ship"]["default"]
+                        self._draw_ship(ship_x, ship_y, ship_color)
+                        
+                        # Draw ship name on hover or if selected
+                        if ship == self.selected_ship:
+                            ship_name = self.fonts["small"].render(ship.name, True, ship_color)
+                            name_rect = ship_name.get_rect(center=(ship_x, ship_y - 10))
+                            self.screen.blit(ship_name, name_rect)
+                
                 # Draw planet name
                 name_text = self.fonts["small"].render(planet.name, True, planet_color)
                 name_rect = name_text.get_rect(center=(pos_x, pos_y + self.planet_radius + 15))
                 self.screen.blit(name_text, name_rect)
                 
+                # Draw ship count if any
+                if ship_count > 0:
+                    ship_count_text = self.fonts["small"].render(f"{ship_count} ship{'s' if ship_count > 1 else ''}", True, self.colors["ship"]["default"])
+                    ship_count_rect = ship_count_text.get_rect(center=(pos_x, pos_y + self.planet_radius + 30))
+                    self.screen.blit(ship_count_text, ship_count_rect)
+                
     def _render_detail_pane(self) -> None:
         """Render the right pane with details."""
         # Title changes based on what's selected
-        if self.selected_actor:
-            title = f"Details: {self.selected_actor.name}"
+        if self.selected_ship:
+            title = f"Ship Details: {self.selected_ship.name}"
+        elif self.selected_actor:
+            title = f"Actor Details: {self.selected_actor.name}"
         elif self.selected_planet:
-            title = f"Details: {self.selected_planet.name}"
+            title = f"Planet Details: {self.selected_planet.name}"
         else:
             title = "Simulation Details"
             
@@ -707,12 +1012,129 @@ class PygameUI:
         )
         
         # Content based on selection
-        if self.selected_actor:
+        if self.selected_ship:
+            self._render_ship_details(panel_rect)
+        elif self.selected_actor:
             self._render_actor_details(panel_rect)
         elif self.selected_planet:
             self._render_planet_details(panel_rect)
         else:
             self._render_simulation_details(panel_rect)
+            
+    def _render_ship_details(self, panel_rect: Rect) -> None:
+        """Render detailed ship information."""
+        if not self.selected_ship:
+            return
+            
+        ship = self.selected_ship
+        x, y = panel_rect.x + 20, panel_rect.y + 20
+        line_height = 30
+        
+        # Ship status
+        status_color = self.colors["text"]["normal"]
+        if ship.status == ShipStatus.TRAVELING:
+            status_color = self.colors["ship"]["in_transit"]
+        elif ship.status == ShipStatus.NEEDS_MAINTENANCE:
+            status_color = self.colors["ship"]["needs_maintenance"]
+            
+        status_text = self.fonts["normal"].render(
+            f"Status: {ship.status.value}", 
+            True, 
+            status_color
+        )
+        self.screen.blit(status_text, (x, y))
+        y += line_height
+        
+        # Current location
+        if ship.status == ShipStatus.TRAVELING:
+            location_text = self.fonts["normal"].render(
+                f"Traveling: {ship.planet.name} → {ship.destination.name} ({int(ship.travel_progress * 100)}%)", 
+                True, 
+                self.colors["text"]["normal"]
+            )
+        else:
+            location_text = self.fonts["normal"].render(
+                f"Location: {ship.planet.name if ship.planet else 'Unknown'}", 
+                True, 
+                self.colors["text"]["normal"]
+            )
+        self.screen.blit(location_text, (x, y))
+        y += line_height
+        
+        # Money
+        money_text = self.fonts["normal"].render(
+            f"Money: ${ship.money:,}", 
+            True, 
+            self.colors["text"]["money"]
+        )
+        self.screen.blit(money_text, (x, y))
+        y += line_height
+        
+        # Cargo and capacity
+        cargo_used = ship.cargo.get_total_quantity()
+        capacity_text = self.fonts["normal"].render(
+            f"Cargo: {cargo_used}/{ship.cargo_capacity} units used", 
+            True, 
+            self.colors["text"]["normal"]
+        )
+        self.screen.blit(capacity_text, (x, y))
+        y += line_height
+        
+        # Fuel capacity and efficiency
+        fuel_text = self.fonts["normal"].render(
+            f"Fuel: {ship.cargo.get_quantity(CommodityType.FUEL)}/{ship.fuel_capacity} units (Efficiency: {ship.fuel_efficiency:.2f})", 
+            True, 
+            self.colors["text"]["normal"]
+        )
+        self.screen.blit(fuel_text, (x, y))
+        y += line_height * 1.5
+        
+        # Cargo section
+        cargo_title = self.fonts["normal"].render(
+            "Cargo Manifest:", True, self.colors["text"]["header"]
+        )
+        self.screen.blit(cargo_title, (x, y))
+        y += line_height
+        
+        # List cargo items
+        has_cargo = False
+        for commodity_type in CommodityType:
+            quantity = ship.cargo.get_quantity(commodity_type)
+            if quantity > 0:
+                has_cargo = True
+                item_text = self.fonts["normal"].render(
+                    f"• {commodity_type.name}: {quantity}", 
+                    True, 
+                    self.colors["text"]["normal"]
+                )
+                self.screen.blit(item_text, (x + 10, y))
+                y += line_height
+                
+        if not has_cargo:
+            empty_text = self.fonts["normal"].render(
+                "• Empty cargo hold", 
+                True, 
+                self.colors["text"]["normal"]
+            )
+            self.screen.blit(empty_text, (x + 10, y))
+            y += line_height
+            
+        # Last action section
+        y += line_height // 2
+        action_title = self.fonts["normal"].render(
+            "Last Action:", True, self.colors["text"]["header"]
+        )
+        self.screen.blit(action_title, (x, y))
+        y += line_height
+        
+        # Display last action
+        if hasattr(ship, "last_action") and ship.last_action:
+            action_text = self.fonts["normal"].render(
+                f"• {ship.last_action}", 
+                True, 
+                self.colors["text"]["normal"]
+            )
+            self.screen.blit(action_text, (x + 10, y))
             
     def _render_actor_details(self, panel_rect: Rect) -> None:
         """Render detailed actor information."""
@@ -1055,7 +1477,30 @@ class PygameUI:
             self.colors["text"]["normal"]
         )
         self.screen.blit(actors_text, (x, y))
-        y += line_height * 2
+        y += line_height
+        
+        # Total ships
+        total_ships = len(self.simulation.ships)
+        ships_text = self.fonts["normal"].render(
+            f"Total Ships: {total_ships}", 
+            True, 
+            self.colors["text"]["normal"]
+        )
+        self.screen.blit(ships_text, (x, y))
+        y += line_height
+        
+        # Ships in transit
+        transit_count = sum(1 for ship in self.simulation.ships if ship.status == ShipStatus.TRAVELING)
+        if transit_count > 0:
+            transit_text = self.fonts["normal"].render(
+                f"Ships in Transit: {transit_count}", 
+                True, 
+                self.colors["ship"]["in_transit"]
+            )
+            self.screen.blit(transit_text, (x + 20, y))
+            y += line_height
+            
+        y += line_height
         
         # Economy overview
         economy_title = self.fonts["normal"].render(

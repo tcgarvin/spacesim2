@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, List, Optional
 if TYPE_CHECKING:
     from spacesim2.core.actor import Actor
     from spacesim2.core.market import Market
+    from spacesim2.core.ship import Ship
 
 
 class Planet:
@@ -13,9 +14,15 @@ class Planet:
         self.x = x
         self.y = y
         self.actors: List["Actor"] = []
+        self.ships: List["Ship"] = []  # Ships docked at this planet
         self.market: Optional["Market"] = None  # Will be set by the simulation
 
     def add_actor(self, actor: "Actor") -> None:
         """Add an actor to this planet."""
         self.actors.append(actor)
         actor.planet = self
+        
+    def add_ship(self, ship: "Ship") -> None:
+        """Add a ship to this planet."""
+        self.ships.append(ship)
+        ship.planet = self

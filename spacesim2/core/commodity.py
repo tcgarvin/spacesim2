@@ -7,12 +7,14 @@ class CommodityType(Enum):
     """Types of commodities in the simulation."""
 
     RAW_FOOD = auto()
+    FUEL = auto()
 
     @classmethod
     def get_base_price(cls, commodity_type: "CommodityType") -> int:
         """Get the base price for a commodity type."""
         base_prices = {
             CommodityType.RAW_FOOD: 10,  # Base price for food
+            CommodityType.FUEL: 15,  # Base price for fuel
         }
         return base_prices.get(commodity_type, 0)
     
@@ -21,6 +23,7 @@ class CommodityType(Enum):
         """Get the cost to produce one unit of a commodity."""
         production_costs = {
             CommodityType.RAW_FOOD: 5,  # Cost in labor/time to produce
+            CommodityType.FUEL: 8,  # Cost in labor/time to produce
         }
         return production_costs.get(commodity_type, 0)
     
@@ -29,6 +32,7 @@ class CommodityType(Enum):
         """Get the standard quantity produced in one action."""
         production_quantities = {
             CommodityType.RAW_FOOD: 3,  # Standard output is 3 units per action
+            CommodityType.FUEL: 2,  # Standard output is 2 units per action
         }
         return production_quantities.get(commodity_type, 0)
 
@@ -151,3 +155,17 @@ class Inventory:
     def has_quantity(self, commodity_type: CommodityType, quantity: int) -> bool:
         """Check if the inventory has at least the specified quantity of a commodity (available only)."""
         return self.get_available_quantity(commodity_type) >= quantity
+        
+    def get_total_quantity(self) -> int:
+        """Get the total quantity of all commodities in the inventory (available + reserved)."""
+        total = 0
+        
+        # Sum available quantities
+        for quantity in self.commodities.values():
+            total += quantity
+            
+        # Sum reserved quantities
+        for quantity in self.reserved_commodities.values():
+            total += quantity
+            
+        return total

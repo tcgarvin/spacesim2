@@ -5,6 +5,7 @@ from spacesim2.core.actor import Actor, ActorType
 from spacesim2.core.commodity import CommodityType
 from spacesim2.core.market import Market
 from spacesim2.core.planet import Planet
+from spacesim2.core.ship import Ship, ShipStatus
 
 
 class Simulation:
@@ -13,15 +14,17 @@ class Simulation:
     def __init__(self) -> None:
         self.planets: List[Planet] = []
         self.actors: List[Actor] = []
+        self.ships: List[Ship] = []
         self.current_turn = 0
         self.market_stats: Dict = {}  # Track market statistics
 
-    def setup_simple(self, num_regular_actors: int = 4, num_market_makers: int = 1) -> None:
-        """Set up a simple simulation with two planets and multiple actors.
+    def setup_simple(self, num_regular_actors: int = 4, num_market_makers: int = 1, num_ships: int = 2) -> None:
+        """Set up a simple simulation with two planets, multiple actors, and ships.
 
         Args:
             num_regular_actors: Number of regular actors to create per planet
             num_market_makers: Number of market makers to create per planet
+            num_ships: Number of ships to create in the simulation
         """
         # Create Earth - positioned near the upper left
         earth = Planet("Earth", x=20.0, y=30.0)
@@ -55,15 +58,22 @@ class Simulation:
             actor_name_prefix="Mars"
         )
             
-        # Give some initial food to market makers to jumpstart the market
+        # Give some initial commodities to market makers to jumpstart the market
         for actor in self.actors:
             if actor.actor_type == ActorType.MARKET_MAKER:
                 actor.inventory.add_commodity(CommodityType.RAW_FOOD, 20)
+                actor.inventory.add_commodity(CommodityType.FUEL, 15)
                 
         # Give regular actors some food to get started
         for actor in self.actors:
             if actor.actor_type == ActorType.REGULAR:
                 actor.inventory.add_commodity(CommodityType.RAW_FOOD, 3)
+                # Give a small amount of fuel to some actors to seed production
+                if random.random() < 0.5:  # 50% chance
+                    actor.inventory.add_commodity(CommodityType.FUEL, 1)
+        
+        # Create ships and distribute them across planets
+        self._setup_ships(num_ships)
                 
     def _setup_planet_actors(self, planet: Planet, num_regular_actors: int, 
                              num_market_makers: int, actor_name_prefix: str) -> None:
@@ -101,6 +111,40 @@ class Simulation:
             self.actors.append(actor)
             planet.add_actor(actor)
 
+    def _setup_ships(self, num_ships: int) -> None:
+        """Set up ships for the simulation.
+        
+        Args:
+            num_ships: Number of ships to create
+        """
+        if not self.planets:
+            return
+            
+        # Create ships with varying fuel efficiency
+        for i in range(1, num_ships + 1):
+            # Random fuel efficiency between 0.8 and 1.2
+            efficiency = random.uniform(0.8, 1.2)
+            
+            # Randomly assign a starting planet
+            planet = random.choice(self.planets)
+            
+            ship = Ship(
+                name=f"Trader-{i}",
+                planet=planet,
+                fuel_efficiency=efficiency,
+                initial_money=1000
+            )
+            
+            # Give ships some starting fuel
+            ship.cargo.add_commodity(CommodityType.FUEL, 30)
+            
+            # Add ship to simulation and planet
+            self.ships.append(ship)
+            planet.add_ship(ship)
+            
+            # Set simulation reference
+            ship.simulation = self
+    
     def run_turn(self) -> None:
         """Run a single turn of the simulation."""
         self.current_turn += 1
@@ -117,6 +161,13 @@ class Simulation:
         # Each actor takes their turn
         for actor in self.actors:
             actor.take_turn()
+        
+        # Randomize ship order
+        random.shuffle(self.ships)
+        
+        # Each ship takes their turn
+        for ship in self.ships:
+            ship.take_turn()
             
         # Process markets
         self._process_markets()
@@ -143,32 +194,46 @@ class Simulation:
             
         market = planet.market
         
-        # Get average price for raw food
-        avg_price = market.get_avg_price(CommodityType.RAW_FOOD)
+        # Initialize stats dictionary if needed
+        if planet.name not in self.market_stats:
+            self.market_stats[planet.name] = {
+                "food_prices": [],
+                "food_transactions": [],
+                "food_volume": [],
+                "fuel_prices": [],
+                "fuel_transactions": [],
+                "fuel_volume": []
+            }
         
-        # Count transactions
+        # Record food stats
+        food_price = market.get_avg_price(CommodityType.RAW_FOOD)
         food_transactions = sum(
             1 for t in market.transaction_history 
             if t.commodity_type == CommodityType.RAW_FOOD
         )
-        
-        # Calculate trading volume
         food_volume = sum(
             t.quantity for t in market.transaction_history 
             if t.commodity_type == CommodityType.RAW_FOOD
         )
         
-        # Store stats
-        if planet.name not in self.market_stats:
-            self.market_stats[planet.name] = {
-                "food_prices": [],
-                "food_transactions": [],
-                "food_volume": []
-            }
-            
-        self.market_stats[planet.name]["food_prices"].append(avg_price)
+        self.market_stats[planet.name]["food_prices"].append(food_price)
         self.market_stats[planet.name]["food_transactions"].append(food_transactions)
         self.market_stats[planet.name]["food_volume"].append(food_volume)
+        
+        # Record fuel stats
+        fuel_price = market.get_avg_price(CommodityType.FUEL)
+        fuel_transactions = sum(
+            1 for t in market.transaction_history 
+            if t.commodity_type == CommodityType.FUEL
+        )
+        fuel_volume = sum(
+            t.quantity for t in market.transaction_history 
+            if t.commodity_type == CommodityType.FUEL
+        )
+        
+        self.market_stats[planet.name]["fuel_prices"].append(fuel_price)
+        self.market_stats[planet.name]["fuel_transactions"].append(fuel_transactions)
+        self.market_stats[planet.name]["fuel_volume"].append(fuel_volume)
 
     def run_simulation(self, num_turns: int) -> None:
         """Run the simulation for a specified number of turns."""
@@ -177,13 +242,28 @@ class Simulation:
 
     def _print_status(self) -> None:
         """Print the current status of the simulation."""
+        # First list all traveling ships since they're not tied to a specific planet at the moment
+        traveling_ships = [ship for ship in self.ships if ship.status == ShipStatus.TRAVELING]
+        if traveling_ships:
+            print("Ships in transit:")
+            for ship in traveling_ships:
+                if ship.destination:
+                    destination_name = ship.destination.name
+                    progress_percent = int(ship.travel_progress * 100)
+                    print(f"  {ship.name}: En route to {destination_name} ({progress_percent}% complete)")
+                    print(f"    Cargo: {ship.cargo.get_quantity(CommodityType.RAW_FOOD)} food, {ship.cargo.get_quantity(CommodityType.FUEL)} fuel")
+                    print(f"    Money: {ship.money} credits")
+                    print(f"    Status: {ship.last_action}")
+        
+        # Now list planets and their contents
         for planet in self.planets:
             print(f"Planet: {planet.name}")
             
             # Calculate market statistics if available
             if planet.market:
                 food_price = planet.market.get_avg_price(CommodityType.RAW_FOOD)
-                print(f"  Market: Raw Food Price: {food_price}")
+                fuel_price = planet.market.get_avg_price(CommodityType.FUEL)
+                print(f"  Market: Raw Food Price: {food_price}, Fuel Price: {fuel_price}")
                 
                 # Print current turn's transactions only
                 if planet.market.transaction_history:
@@ -209,6 +289,14 @@ class Simulation:
                     print(f"  [MM] {actor.name}: {actor.money} credits, {food_qty} food {food_status}")
                 else:
                     print(f"  {actor.name}: {actor.money} credits, {food_qty} food {food_status}")
+            
+            # Print ship status for ships at this planet
+            if planet.ships:
+                print(f"  Ships docked at {planet.name}:")
+                for ship in planet.ships:
+                    print(f"    {ship.name}: {ship.money} credits")
+                    print(f"      Cargo: {ship.cargo.get_quantity(CommodityType.RAW_FOOD)} food, {ship.cargo.get_quantity(CommodityType.FUEL)} fuel")
+                    print(f"      Status: {ship.last_action}")
                 
             # Count hunger
             hungry_count = sum(1 for a in planet.actors if not a.food_consumed_this_turn)

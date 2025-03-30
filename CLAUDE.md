@@ -4,14 +4,16 @@
 A turn-based economic simulation modeling interplanetary trade with actors, markets, and ships.  Design documents can be found in the docs/ directory.
 
 ## Build & Run Commands
-- **Install**: `pip install -e .`
-- **Run**: `python hello.py`
+- **Install**: `uv pip install -e .`
+- **Install Dependencies**: `uv pip install <package-name>`
+- **Run**: `uv run hello.py`
 - **Run Simulation**: `uv run run_headless.py --turns 10` or `uv run run_ui.py`
-- **Test**: `pytest tests/`
-- **Run Single Test**: `pytest tests/test_file.py::test_function -v`
-- **Type Check**: `mypy .`
-- **Lint**: `ruff check .`
-- **Format**: `black .`
+- **Test**: `uv run -m pytest tests/`
+- **Run Single Test**: `uv run -m pytest tests/test_file.py::test_function -v`
+- **Run Python Scripts**: `uv run -c "python_code_here"`
+- **Type Check**: `uv run -m mypy .`
+- **Lint**: `uv run -m ruff check .`
+- **Format**: `uv run -m black .`
 
 ## Code Style Guidelines
 - **Python Version**: 3.11+
