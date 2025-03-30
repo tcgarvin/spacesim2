@@ -17,27 +17,71 @@ class Simulation:
         self.market_stats: Dict = {}  # Track market statistics
 
     def setup_simple(self, num_regular_actors: int = 4, num_market_makers: int = 1) -> None:
-        """Set up a simple simulation with one planet and multiple actors.
+        """Set up a simple simulation with two planets and multiple actors.
 
         Args:
+            num_regular_actors: Number of regular actors to create per planet
+            num_market_makers: Number of market makers to create per planet
+        """
+        # Create Earth - positioned near the upper left
+        earth = Planet("Earth", x=20.0, y=30.0)
+        self.planets.append(earth)
+        
+        # Create and initialize the market for Earth
+        earth_market = Market()
+        earth.market = earth_market
+        
+        # Create Mars (positioned at a different location)
+        mars = Planet("Mars", x=70.0, y=60.0)
+        self.planets.append(mars)
+        
+        # Create and initialize the market for Mars
+        mars_market = Market()
+        mars.market = mars_market
+        
+        # Create actors for Earth
+        self._setup_planet_actors(
+            planet=earth,
+            num_regular_actors=num_regular_actors,
+            num_market_makers=num_market_makers,
+            actor_name_prefix="Earth"
+        )
+        
+        # Create actors for Mars
+        self._setup_planet_actors(
+            planet=mars,
+            num_regular_actors=num_regular_actors,
+            num_market_makers=num_market_makers,
+            actor_name_prefix="Mars"
+        )
+            
+        # Give some initial food to market makers to jumpstart the market
+        for actor in self.actors:
+            if actor.actor_type == ActorType.MARKET_MAKER:
+                actor.inventory.add_commodity(CommodityType.RAW_FOOD, 20)
+                
+        # Give regular actors some food to get started
+        for actor in self.actors:
+            if actor.actor_type == ActorType.REGULAR:
+                actor.inventory.add_commodity(CommodityType.RAW_FOOD, 3)
+                
+    def _setup_planet_actors(self, planet: Planet, num_regular_actors: int, 
+                             num_market_makers: int, actor_name_prefix: str) -> None:
+        """Set up actors for a specific planet.
+        
+        Args:
+            planet: The planet to add actors to
             num_regular_actors: Number of regular actors to create
             num_market_makers: Number of market makers to create
+            actor_name_prefix: Prefix for actor names
         """
-        # Create a planet
-        planet = Planet("Earth")
-        self.planets.append(planet)
-        
-        # Create and initialize the market for the planet
-        market = Market()
-        planet.market = market
-        
         # Create regular actors with varying production efficiencies
         for i in range(1, num_regular_actors + 1):
             # Random production efficiency between 0.7 and 1.3
             efficiency = random.uniform(0.7, 1.3)
             
             actor = Actor(
-                name=f"Colonist-{i}", 
+                name=f"{actor_name_prefix}Colonist-{i}", 
                 planet=planet,
                 actor_type=ActorType.REGULAR,
                 production_efficiency=efficiency,
@@ -49,23 +93,13 @@ class Simulation:
         # Create market makers
         for i in range(1, num_market_makers + 1):
             actor = Actor(
-                name=f"MarketMaker-{i}", 
+                name=f"{actor_name_prefix}MarketMaker-{i}", 
                 planet=planet,
                 actor_type=ActorType.MARKET_MAKER,
                 initial_money=200.0
             )
             self.actors.append(actor)
             planet.add_actor(actor)
-            
-        # Give some initial food to market makers to jumpstart the market
-        for actor in self.actors:
-            if actor.actor_type == ActorType.MARKET_MAKER:
-                actor.inventory.add_commodity(CommodityType.RAW_FOOD, 20)
-                
-        # Give regular actors some food to get started
-        for actor in self.actors:
-            if actor.actor_type == ActorType.REGULAR:
-                actor.inventory.add_commodity(CommodityType.RAW_FOOD, 3)
 
     def run_turn(self) -> None:
         """Run a single turn of the simulation."""

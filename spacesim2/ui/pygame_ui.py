@@ -41,6 +41,9 @@ class PygameUI:
         self.selected_actor: Optional[Actor] = None
         self.selected_commodity: Optional[CommodityType] = None
         
+        # Initialize random seed for consistent colors
+        random.seed(42)
+        
         # Colors
         self.colors = {
             "background": (10, 10, 20),
@@ -85,7 +88,8 @@ class PygameUI:
         
         # Planet visualization
         self.planet_positions: Dict[Planet, Tuple[int, int]] = {}
-        self.planet_radius = 40
+        self.planet_colors: Dict[Planet, Tuple[int, int, int]] = {}
+        self.planet_radius = 15  # Smaller radius for star-like appearance
         
         # Actor visualization
         self.actor_list_item_height = 40
@@ -123,53 +127,81 @@ class PygameUI:
         # Select first planet by default
         if self.simulation.planets:
             self.selected_planet = self.simulation.planets[0]
-            
-        # Generate planet positions in a grid or circle based on count
+        
+        # Generate planet positions
         self._generate_planet_positions()
         
+        # Generate random colors for each planet
+        self._generate_planet_colors()
+        
         return True
+        
+    def _generate_planet_colors(self) -> None:
+        """Generate unique colors for each planet."""
+        # Clear existing colors
+        self.planet_colors = {}
+        
+        # Predefined vibrant colors for small number of planets
+        vibrant_colors = [
+            (255, 130, 40),   # Orange
+            (50, 180, 255),   # Bright blue
+            (255, 60, 100),   # Pink
+            (80, 220, 100),   # Green
+            (220, 70, 220),   # Purple
+            (230, 230, 30),   # Yellow
+            (30, 210, 180),   # Teal
+            (200, 180, 80),   # Gold
+        ]
+        
+        # Generate colors for each planet
+        for i, planet in enumerate(self.simulation.planets):
+            if i < len(vibrant_colors):
+                # Use predefined colors for first few planets
+                self.planet_colors[planet] = vibrant_colors[i]
+            else:
+                # Generate a random vibrant color
+                # Ensure at least one channel is bright
+                r = random.randint(50, 255)
+                g = random.randint(50, 255)
+                b = random.randint(50, 255)
+                
+                # Make sure at least one channel is > 200 for vibrancy
+                brightest = max(r, g, b)
+                if brightest < 200:
+                    if brightest == r:
+                        r = random.randint(200, 255)
+                    elif brightest == g:
+                        g = random.randint(200, 255)
+                    else:
+                        b = random.randint(200, 255)
+                
+                self.planet_colors[planet] = (r, g, b)
 
     def _generate_planet_positions(self) -> None:
-        """Generate positions for planets in the center pane."""
+        """Generate positions for planets based on a 0-100 coordinate system where (0,0) is top-left."""
         if not self.simulation.planets:
             return
             
         planets = self.simulation.planets
-        count = len(planets)
-        
-        # Center of the center pane
-        center_x = self.left_pane_width + (self.center_pane_width // 2)
-        center_y = self.height // 2
         
         # Clear existing positions
         self.planet_positions = {}
         
-        if count <= 9:
-            # Arrange in a grid for small numbers
-            cols = min(3, count)
-            rows = math.ceil(count / cols)
+        # Define the viewport area in the center pane with margins
+        margin = 60  # Margin from edges
+        viewport_left = self.left_pane_width + margin
+        viewport_top = margin + 80  # Extra space at top for headers
+        viewport_width = self.center_pane_width - (margin * 2)
+        viewport_height = self.height - viewport_top - margin
+        
+        # For all planets, map from 0-100 range to screen coordinates
+        for planet in planets:
+            # Convert from 0-100 coordinate space to viewport screen space
+            # x increases to the right, y increases downward
+            screen_x = viewport_left + (planet.x / 100.0) * viewport_width
+            screen_y = viewport_top + (planet.y / 100.0) * viewport_height
             
-            spacing_x = min(150, self.center_pane_width // (cols + 1))
-            spacing_y = min(150, self.height // (rows + 2))
-            
-            start_x = center_x - ((cols - 1) * spacing_x // 2)
-            start_y = center_y - ((rows - 1) * spacing_y // 2)
-            
-            for i, planet in enumerate(planets):
-                row = i // cols
-                col = i % cols
-                x = start_x + (col * spacing_x)
-                y = start_y + (row * spacing_y)
-                self.planet_positions[planet] = (x, y)
-        else:
-            # Arrange in a circle for larger numbers
-            radius = min(self.center_pane_width, self.height) // 3
-            
-            for i, planet in enumerate(planets):
-                angle = (2 * math.pi * i) / count
-                x = center_x + int(radius * math.cos(angle))
-                y = center_y + int(radius * math.sin(angle))
-                self.planet_positions[planet] = (x, y)
+            self.planet_positions[planet] = (int(screen_x), int(screen_y))
 
     def handle_events(self) -> bool:
         """Handle pygame events. Return False to quit."""
@@ -334,12 +366,67 @@ class PygameUI:
             # Calculate distance from click to planet center
             distance = math.sqrt((x - planet_x) ** 2 + (y - planet_y) ** 2)
             
-            # If click is inside planet
-            if distance <= self.planet_radius:
+            # For click detection, use a slightly larger radius than the visual star
+            # This makes it easier to select small stars
+            click_radius = self.planet_radius * 1.5
+            
+            # If click is inside clickable area
+            if distance <= click_radius:
+                self.selected_planet = planet
+                self.selected_actor = None
+                break
+                
+            # Also check if the planet's name was clicked
+            name_text = self.fonts["small"].render(planet.name, True, (0,0,0))
+            name_rect = name_text.get_rect(center=(planet_x, planet_y + self.planet_radius + 15))
+            name_rect.inflate_ip(10, 6)  # Make clickable area slightly larger than text
+            
+            if name_rect.collidepoint(x, y):
                 self.selected_planet = planet
                 self.selected_actor = None
                 break
     
+    def _draw_star(self, x: int, y: int, color: Tuple[int, int, int], is_selected: bool) -> None:
+        """Draw a 4-point star at the given coordinates with the given color."""
+        # Adjust star size based on selection state
+        inner_radius = self.planet_radius // 3
+        if is_selected:
+            outer_radius = self.planet_radius
+        else:
+            outer_radius = self.planet_radius - 2
+        
+        # Calculate the 8 points of the 4-point star
+        points = []
+        
+        # 4 outer points
+        for i in range(4):
+            angle = math.pi / 2 * i
+            point_x = x + int(outer_radius * math.cos(angle))
+            point_y = y + int(outer_radius * math.sin(angle))
+            points.append((point_x, point_y))
+        
+        # 4 inner points (at 45-degree angles from the outer points)
+        for i in range(4):
+            angle = math.pi / 2 * i + math.pi / 4
+            point_x = x + int(inner_radius * math.cos(angle))
+            point_y = y + int(inner_radius * math.sin(angle))
+            points.append((point_x, point_y))
+        
+        # Reorder points to create a star pattern
+        star_points = []
+        for i in range(4):
+            star_points.append(points[i])      # Outer point
+            star_points.append(points[i+4])    # Inner point at 45 degrees
+        
+        # Draw the star
+        pygame.draw.polygon(self.screen, color, star_points)
+        
+        # Draw center circle
+        pygame.draw.circle(self.screen, color, (x, y), inner_radius // 2)
+        
+        # Draw a thin outline for better definition
+        pygame.draw.polygon(self.screen, (min(255, color[0]+30), min(255, color[1]+30), min(255, color[2]+30)), star_points, 1)
+
     def _handle_detail_pane_click(self, x: int, y: int) -> None:
         """Handle clicks in the detail pane."""
         # Check if we're in planet details with a market
@@ -523,7 +610,7 @@ class PygameUI:
             )
             
     def _render_planet_pane(self) -> None:
-        """Render the center pane with planets."""
+        """Render the center pane with planets and coordinate grid."""
         # Title
         title_text = self.fonts["large"].render(
             "Star System", True, self.colors["text"]["header"]
@@ -550,38 +637,45 @@ class PygameUI:
             )
             return
         
+        # Define the viewport area for reference (used in planet positioning)
+        # But don't draw any visible container or background
+        margin = 60
+        viewport_left = self.left_pane_width + margin
+        viewport_top = margin + 80  # Extra space at top for headers
+        viewport_width = self.center_pane_width - (margin * 2)
+        viewport_height = self.height - viewport_top - margin
+        
         # Draw each planet
         for planet in self.simulation.planets:
             if planet in self.planet_positions:
                 pos_x, pos_y = self.planet_positions[planet]
                 
-                # Determine planet color
-                planet_color = self.colors["planet"]["selected"] if planet == self.selected_planet else self.colors["planet"]["default"]
-                
-                # Draw planet
-                pygame.draw.circle(
-                    self.screen, planet_color, (pos_x, pos_y), self.planet_radius
+                # Get planet's color
+                planet_color = self.planet_colors.get(
+                    planet, 
+                    self.colors["planet"]["selected"] if planet == self.selected_planet else self.colors["planet"]["default"]
                 )
                 
-                # Draw outline for the selected planet
+                # Draw planet as a 4-point star
+                self._draw_star(pos_x, pos_y, planet_color, planet == self.selected_planet)
+                
+                # For the selected planet, draw a selection indicator
                 if planet == self.selected_planet:
+                    # Draw a pulsing selection ring
+                    pulse = (math.sin(pygame.time.get_ticks() * 0.005) + 1) * 0.5  # Value between 0 and 1
+                    ring_radius = int(self.planet_radius * 1.8 + pulse * 3)
                     pygame.draw.circle(
-                        self.screen, self.colors["planet"]["outline"], 
-                        (pos_x, pos_y), self.planet_radius + 2, 2
+                        self.screen, 
+                        self.colors["planet"]["outline"], 
+                        (pos_x, pos_y), 
+                        ring_radius, 
+                        1
                     )
                 
                 # Draw planet name
-                name_text = self.fonts["normal"].render(planet.name, True, self.colors["text"]["planet"])
-                name_rect = name_text.get_rect(center=(pos_x, pos_y + self.planet_radius + 20))
+                name_text = self.fonts["small"].render(planet.name, True, planet_color)
+                name_rect = name_text.get_rect(center=(pos_x, pos_y + self.planet_radius + 15))
                 self.screen.blit(name_text, name_rect)
-                
-                # Draw actor count
-                actor_count = len(planet.actors)
-                count_text = self.fonts["small"].render(
-                    f"{actor_count} actors", True, self.colors["text"]["normal"]
-                )
-                count_rect = count_text.get_rect(center=(pos_x, pos_y))
-                self.screen.blit(count_text, count_rect)
                 
     def _render_detail_pane(self) -> None:
         """Render the right pane with details."""

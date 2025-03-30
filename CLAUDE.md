@@ -6,6 +6,7 @@ A turn-based economic simulation modeling interplanetary trade with actors, mark
 ## Build & Run Commands
 - **Install**: `pip install -e .`
 - **Run**: `python hello.py`
+- **Run Simulation**: `uv run run_headless.py --turns 10` or `uv run run_ui.py`
 - **Test**: `pytest tests/`
 - **Run Single Test**: `pytest tests/test_file.py::test_function -v`
 - **Type Check**: `mypy .`
