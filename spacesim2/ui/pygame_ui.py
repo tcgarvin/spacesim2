@@ -170,9 +170,14 @@ class PygameUI:
         # Register quit handlers
         self.input_handler.register_quit_callback(self._handle_quit)
     
-    def _handle_escape(self, event: pygame.event.Event) -> None:
-        """Handle Escape key."""
+    def _handle_escape(self, event: pygame.event.Event) -> bool:
+        """Handle Escape key.
+        
+        Returns:
+            False to indicate the application should quit
+        """
         self.running = False
+        return False
     
     def _handle_space(self, event: pygame.event.Event) -> None:
         """Handle Space key to advance simulation."""

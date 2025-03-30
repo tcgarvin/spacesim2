@@ -1,4 +1,4 @@
-from typing import Callable, Dict, List, Optional, Tuple, Any
+from typing import Callable, Dict, List, Optional, Tuple, Any, Union
 import pygame
 from pygame.event import Event
 
@@ -13,12 +13,13 @@ class InputHandler:
         self.mouse_scroll_callbacks: Dict[int, Callable[[Event], None]] = {}
         self.quit_callbacks: List[Callable[[], None]] = []
         
-    def register_key_callback(self, key: int, callback: Callable[[Event], None]) -> None:
+    def register_key_callback(self, key: int, callback: Callable[[Event], Optional[bool]]) -> None:
         """Register a callback for a specific key press.
         
         Args:
             key: pygame key constant (e.g. pygame.K_SPACE)
             callback: Function to call when key is pressed
+                      If the callback returns False, handle_events will also return False
         """
         self.key_callbacks[key] = callback
         
@@ -58,7 +59,10 @@ class InputHandler:
                 
             elif event.type == pygame.KEYDOWN:
                 if event.key in self.key_callbacks:
-                    self.key_callbacks[event.key](event)
+                    # Call the callback and check if it returns False
+                    result = self.key_callbacks[event.key](event)
+                    if result is False:
+                        return False
                     
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 # Handle click events
