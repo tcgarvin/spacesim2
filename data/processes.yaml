@@ -1,0 +1,98 @@
+- id: gather_biomass
+  name: Gather Biomass
+  inputs: {}
+  outputs:
+    biomass: 1
+  tools_required: []
+  facilities_required: []
+  labor: 1
+  description: Collects biomass from the natural environment.
+
+- id: make_food
+  name: Make Food
+  inputs:
+    biomass: 2
+  outputs:
+    food: 1
+  tools_required: []
+  facilities_required: []
+  labor: 1
+  description: Converts biomass into edible food using simple techniques.
+
+- id: mine_nova_fuel_ore
+  name: Mine Ore
+  inputs: {}
+  outputs:
+    nova_fuel_ore: 1
+  tools_required: []
+  facilities_required: []
+  labor: 1
+  description: Extracts various ores from the planetary crust.
+
+- id: mine_common_metal_ore
+  name: Mine Ore
+  inputs: {}
+  outputs:
+    common_metal_ore: 1
+  tools_required: []
+  facilities_required: []
+  labor: 1
+  description: Extracts various ores from the planetary crust.
+
+- id: refine_common_metal
+  name: Refine Common Metal
+  inputs:
+    common_metal_ore: 3
+  outputs:
+    common_metal: 2
+  tools_required: []
+  facilities_required:
+    - smelting_facility
+  labor: 2
+  description: Smelts common metal ore into usable metal.
+
+- id: refine_nova_fuel
+  name: Refine NovaFuel
+  inputs:
+    nova_fuel_ore: 2
+  outputs:
+    nova_fuel: 1
+  tools_required: 
+    simple_tools: 2
+  facilities_required:
+    - smelting_facility
+  labor: 1
+  description: Refines NovaFuel Ore into volatile high-energy fuel.
+
+- id: make_simple_tools
+  name: Make Simple Tools
+  inputs:
+    common_metal: 2
+  outputs:
+    simple_tools: 1
+  tools_required: []
+  facilities_required: []
+  labor: 1
+  description: Forges simple tools from refined metal using metalworking equipment.
+
+- id: build_smelting_facility
+  name: Build Smelting Facility
+  inputs:
+    simple_building_materials: 5
+  outputs:
+    smelting_facility: 1
+  tools_required: []
+  facilities_required: []
+  labor: 5
+  description: Constructs a stationary smelting facility for refining ores.
+
+- id: build_metalworking_facility
+  name: Build Metalworking Facility
+  inputs:
+    simple_building_materials: 5
+  outputs:
+    metalworking_facility: 1
+  tools_required: []
+  facilities_required: []
+  labor: 5
+  description: Constructs a static metalworking facility for fabricating tools and shaping metals.

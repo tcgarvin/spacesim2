@@ -1,103 +1,115 @@
 # MVP Simulation Design Document
 
-This document outlines the minimal viable product (MVP) for a turn-based economic simulation. The goal is to build a running system step-by-step, ensuring that after each task, we have a fully operational simulation that can be tested and validated.
+## Overview
+A turn-based economic simulation featuring multiple planets with frictionless internal economies, actors performing economic activities, and interplanetary commodity trading.
 
 ---
 
-## Table of Contents
-1. [Overview](#overview)
-2. [Simulation Entities](#simulation-entities)
-   - [Actors](#actors)
-   - [Market](#market)
-   - [Planets](#planets)
-   - [Ships](#ships)
-3. [Commodities](#commodities)
-   - [Categories](#categories)
-   - [Tool & Factory Mechanics](#tool--factory-mechanics)
-4. [Monetary System](#monetary-system)
-5. [Turn Processing](#turn-processing)
+## Simulation Entities
+
+### Actors
+- **Regular Actors**:
+  - Hold inventories and currency.
+  - Perform one economic action per turn (production, labor, maintenance).
+  - Execute multiple market actions per turn (buying/selling commodities).
+  - May perform "government work" to inject currency into the economy when other actions are unprofitable.
+
+- **Market-Makers**:
+  - Identical to regular actors but prioritize market-making strategies.
+  - No special market privileges.
+
+- **Ships**:
+  - Specialized actors transporting commodities between planets.
+  - Fixed cargo capacity, fuel efficiency, and speed.
+  - Consume refined fuel and commodities for maintenance.
+
+### Commodities
+Defined in YAML format. Each commodity is:
+- **Transportable** (tools, raw materials, refined goods) or **Non-transportable** (facilities).
+
+Example:
+```yaml
+- id: common_metal
+  name: Common Metal
+  transportable: true
+  description: Refined metal suitable for construction and tool-making.
+
+- id: smelting_facility
+  name: Smelting Facility
+  transportable: false
+  description: Infrastructure for refining metal ores.
+```
+
+### Processes
+Economic activities consuming inputs (commodities, labor, facilities, tools) and producing outputs (commodities).
+
+Example:
+```yaml
+- id: refine_common_metal
+  name: Refine Common Metal
+  inputs:
+    common_metal_ore: 3
+  outputs:
+    common_metal: 2
+  tools_required: []
+  facilities_required:
+    - smelting_facility
+  labor: 2
+  description: Smelts common metal ore into usable metal.
+```
+
+**Facilities** contain tools necessary for production; actors provide labor.
 
 ---
 
-## 1. Overview
-
-In this simulation:
-- **Planets** have zero internal friction: any actor on the same planet trades instantly with no transaction cost (beyond those defined in the market).
-- **Actors** each turn make one economic action (produce, work, build, etc.) and can place multiple buy/sell orders in a local commodity market.
-- **Market-makers** are special actors with a trading preference but no extra privileges.
-- **Ships** facilitate interplanetary trade, buying commodities on one planet and selling on another.
-- **Money** enters the system through fixed-wage “government work.”
-
-The MVP aims to validate core economic actions, simple commodity markets, and interplanetary trade mechanics without overcomplicating skill growth, health, or advanced governance.
+## Markets
+- Each planet has an order-matching commodity market.
+- Orders persist across turns unless explicitly canceled.
+- Matched orders execute immediately, but commodities/money become available next turn.
 
 ---
 
-## 2. Simulation Entities
-
-### 2.1 Actors
-- **Regular Actors**  
-  - **Attributes**: money, inventory, (optional) skills, consumption needs.  
-  - **Actions**: 
-    1. *Economic Action* (one per turn) – examples include producing a commodity, working at a factory, building/maintaining infrastructure, or doing government work.  
-    2. *Market Actions* (multiple, limited only for performance) – place buy/sell orders on the local market.  
-  - **Motivation**: Meet basic needs (food, shelter, etc.) and accumulate wealth.
-
-- **Market-Makers**  
-  - Mechanically identical to regular actors, but they aim to profit from market spreads.  
-  - No special privileges in order matching.
-
-- **Ships**  
-  - A specialized actor type representing a transport vessel.  
-  - Can purchase commodities (especially fuel), travel between planets, and sell cargo for profit.  
-  - Uniform ships in MVP: fixed cargo capacity, speed, fuel efficiency.
-
-### 2.2 Market
-- Each planet has its own **Market** object.  
-- **Order-Matching**: Limit orders are matched if bid ≥ ask, with immediate execution. Unmatched orders persist across turns until filled or cancelled
-- Execution results (money or goods) are only usable from the next turn onward.
-
-### 2.3 Planets
-- **Planets**: host a local market and a fixed population of actors.  
-- **Resources**: distributed randomly, influencing what commodities can be easily produced on each planet.  
-- **Zero friction** on-planet for travel/communication.
-
-### 2.4 Ships
-- **Distance Calculation**: Planets exist in a 2D coordinate space. Travel time is based on distance.  
-- **Fuel Consumption**: Must buy and carry refined fuel for each journey.  
-- **Maintenance**: Random chance of maintenance requirement before trips, consuming commodities.  
-- **No additional risks** (piracy, spoilage) in the MVP.
+## Planets and Solar Systems
+- Planets exist within solar systems in 2D coordinate space.
+- Resources distributed randomly; specialization can emerge naturally.
+- Fixed populations initially, with actors aiming to meet basic needs (food, shelter).
 
 ---
 
-## 3. Commodities
-
-### 3.1 Categories
-1. **Raw Resources**: e.g., ores, agricultural products, “fuel-ore.”  
-2. **Handmade Goods**: items produced without large infrastructure.  
-3. **Manufactured Goods**: require factories or tools (blueprints define inputs/outputs).  
-4. **Fuel**: refined from “fuel-ore” for ship travel.
-
-### 3.2 Tool & Factory Mechanics
-- **Tools**: degrade randomly on use, so no detailed tracking of partial durability.  
-- **Factories**:  
-  - Built once, consuming specified commodities.  
-  - Require periodic maintenance (consuming smaller amounts of commodities).  
-  - Can refine or transform inputs into higher-value goods.
+## Interplanetary Trade
+- Ships move commodities between planets, consuming refined fuel and occasional maintenance commodities.
+- Travel duration based on spatial coordinates; no travel risks in MVP.
 
 ---
 
-## 4. Monetary System
-- **Government Work** injects currency at a fixed wage each turn.  
-- Actors opt for government work only if other activities are not profitable.  
-- For the MVP, no taxation or money removal. Any offset can come in future iterations.
+## Monetary System
+- Currency injected via actors performing "government work," providing a fixed daily wage.
+- Money represents a debt owed by the government ("King's debt").
 
 ---
 
-## 5. Turn Processing
-1. **Randomized Actor Order** each turn to avoid systematic advantage.  
-2. **Actor’s Economic Action**: produce, build, maintain, work, or do government work.  
-3. **Actor’s Market Actions**: place buy/sell orders on the local market.  
-   - Matched trades execute instantly, but resulting goods/money become available next turn.  
-4. **Interplanetary Travel**: occurs after an actor sets a travel action (ships only); apply any required fuel consumption, travel time.  
-5. **Maintenance Checks**: random checks for factory, tool, and ship maintenance.
+## Economic Graph
+- Commodities and processes form a directed economic graph (commodity ↔ process relationships).
+- AI actors utilize this graph to identify opportunities based on market conditions and inventory states.
+
+---
+
+## Decision and Turn Execution
+- Actors take turns in randomized order each round.
+- Each actor:
+  1. Performs one economic action.
+  2. Places multiple market orders (limited by CPU constraints).
+
+- Results of market actions become available on the next turn.
+
+---
+
+## Future Extensions
+- Population growth and decay.
+- Skill-based labor markets.
+- Expanded government economic controls (taxes, subsidies).
+- Market information delays.
+- Travel hazards and piracy.
+
+This document reflects the current state of the MVP design, capturing key elements and structures for initial implementation and iteration.
 

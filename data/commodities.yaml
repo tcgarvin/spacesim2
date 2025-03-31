@@ -1,0 +1,49 @@
+- id: biomass
+  name: Biomass
+  transportable: true
+  description: Organic matter gathered from the local environment.
+
+- id: food
+  name: Food
+  transportable: true
+  description: Basic nourishment required by actors.
+
+- id: common_metal_ore
+  name: Common Metal Ore
+  transportable: true
+  description: Unrefined ore containing usable industrial metals.
+
+- id: common_metal
+  name: Common Metal
+  transportable: true
+  description: Refined metal suitable for construction and tool-making.
+
+- id: simple_tools
+  name: Simple Tools
+  transportable: true
+  description: Basic hand tools used in simple production processes.
+
+- id: smelting_facility
+  name: Smelting Facility
+  transportable: false
+  description: Stationary infrastructure for refining metal ores.
+
+- id: nova_fuel
+  name: NovaFuel
+  transportable: true
+  description: High-density energy source for starship travel.
+
+- id: nova_fuel_ore
+  name: NovaFuel Ore
+  transportable: true
+  description: Ore containing volatile compounds that refine into NovaFuel.
+
+- id: simple_building_materials
+  name: Simple Building Materials
+  transportable: true
+  description: Basic materials for constructing primitive structures.
+
+- id: metalworking_facility
+  name: Metalworking Facility
+  transportable: false
+  description: Static infrastructure for shaping metals and fabricating tools.
