@@ -1,13 +1,16 @@
 import random
 from typing import Optional, Dict, List, Union, Tuple, Any, TYPE_CHECKING
 import enum
+import random
 
 from spacesim2.core.planet import Planet
 from spacesim2.core.commodity import Inventory, CommodityDefinition
+from spacesim2.core.skill import SkillCheck
 
 if TYPE_CHECKING:
     from spacesim2.core.simulation import Simulation
     from spacesim2.core.process import ProcessDefinition
+    from spacesim2.core.skill import Skill
 
 
 class ActorType(enum.Enum):
@@ -64,16 +67,56 @@ class ActorBrain:
             if not self.actor.inventory.has_quantity(facility, 1):
                 return False
         
-        # Consume inputs
+        # Perform skill check if process has relevant skills
+        success = True
+        multiplier = 1
+        
+        if process.relevant_skills:
+            # Get skill ratings for all relevant skills
+            skill_ratings = []
+            for skill_id in process.relevant_skills:
+                skill_rating = self.actor.get_skill_rating(skill_id)
+                skill_ratings.append(skill_rating)
+            
+            # Calculate combined skill rating
+            combined_rating = SkillCheck.get_combined_skill_rating(skill_ratings)
+            
+            # Perform success check
+            success = SkillCheck.success_check(combined_rating)
+            
+            # If successful, check for multiplier
+            if success and SkillCheck.multiplier_check(combined_rating):
+                multiplier = 2  # Apply ×2 multiplier
+        
+        # If the process failed the skill check, consume inputs but don't produce outputs
+        if not success:
+            # Consume inputs
+            for commodity, quantity in process.inputs.items():
+                self.actor.inventory.remove_commodity(commodity, quantity)
+            
+            # Record failure
+            self.actor.last_action = f"Failed process: {process.name}"
+            return False
+        
+        # Process successful, apply multiplier
+        # Consume inputs (multiplied if multiplier > 1)
         for commodity, quantity in process.inputs.items():
-            self.actor.inventory.remove_commodity(commodity, quantity)
+            self.actor.inventory.remove_commodity(commodity, quantity * multiplier)
             
-        # Add outputs
+        # Add outputs (multiplied if multiplier > 1)
         for commodity, quantity in process.outputs.items():
-            self.actor.inventory.add_commodity(commodity, quantity)
+            self.actor.inventory.add_commodity(commodity, quantity * multiplier)
             
+        # Improve skills used in the process
+        if process.relevant_skills:
+            # Small skill improvement (0.01-0.03) for successful process execution
+            skill_improvement = 0.01 + (0.02 * (multiplier - 1))  # More improvement with multiplier
+            for skill_id in process.relevant_skills:
+                self.actor.improve_skill(skill_id, skill_improvement)
+        
         # Record action
-        self.actor.last_action = f"Executed process: {process.name}"
+        multiplier_text = f" (×{multiplier})" if multiplier > 1 else ""
+        self.actor.last_action = f"Executed process: {process.name}{multiplier_text}"
         return True
 
 
@@ -479,7 +522,8 @@ class Actor:
         planet: Optional[Planet] = None,
         actor_type: ActorType = ActorType.REGULAR,
         production_efficiency: float = 1.0,
-        initial_money: int = 50
+        initial_money: int = 50,
+        initial_skills: Optional[Dict[str, float]] = None
     ) -> None:
         self.name = name
         self.money = initial_money
@@ -495,12 +539,50 @@ class Actor:
         self.last_market_action = "None"  # Track the last market action
         self.sim: Optional['Simulation'] = None  # Reference to the simulation
         
+        # Initialize skills
+        self.skills: Dict[str, float] = {}
+        
+        # Apply any initial skills provided
+        if initial_skills:
+            for skill_id, rating in initial_skills.items():
+                self.skills[skill_id] = rating
+        
         # Give actor a brain based on type
         if actor_type == ActorType.MARKET_MAKER:
             self.money = 200  # Market makers start with more capital (integer)
             self.brain = MarketMakerBrain(self)
         else:
             self.brain = ColonistBrain(self)
+    
+    def get_skill_rating(self, skill_id: str) -> float:
+        """Get the actor's rating for a specific skill.
+        
+        Args:
+            skill_id: The ID of the skill to check
+            
+        Returns:
+            The actor's rating for the skill, defaulting to 0.5 if not found
+        """
+        return self.skills.get(skill_id, 0.5)
+    
+    def set_skill_rating(self, skill_id: str, rating: float) -> None:
+        """Set the actor's rating for a specific skill.
+        
+        Args:
+            skill_id: The ID of the skill to set
+            rating: The new rating for the skill
+        """
+        self.skills[skill_id] = max(0.5, min(3.0, rating))  # Clamp between 0.5 and 3.0
+    
+    def improve_skill(self, skill_id: str, amount: float) -> None:
+        """Improve the actor's rating for a specific skill.
+        
+        Args:
+            skill_id: The ID of the skill to improve
+            amount: The amount to increase the skill rating by
+        """
+        current_rating = self.get_skill_rating(skill_id)
+        self.set_skill_rating(skill_id, current_rating + amount)
 
     def take_turn(self) -> None:
         """Perform actions for this turn.

@@ -8,6 +8,7 @@ from spacesim2.core.process import ProcessRegistry
 from spacesim2.core.market import Market
 from spacesim2.core.planet import Planet
 from spacesim2.core.ship import Ship, ShipStatus
+from spacesim2.core.skill import SkillsRegistry
 
 
 class Simulation:
@@ -36,6 +37,11 @@ class Simulation:
         processes_path = os.path.join(data_dir, 'processes.yaml')
         if os.path.exists(processes_path):
             self.process_registry.load_from_file(processes_path)
+            
+        self.skills_registry = SkillsRegistry()
+        skills_path = os.path.join(data_dir, 'skills.yaml')
+        if os.path.exists(skills_path):
+            self.skills_registry.load_from_file(skills_path)
         
         # Set this instance as the global instance
         Simulation.instance = self
@@ -102,28 +108,50 @@ class Simulation:
             num_market_makers: Number of market makers to create
             actor_name_prefix: Prefix for actor names
         """
-        # Create regular actors with varying production efficiencies
+        # Create regular actors with varying production efficiencies and skills
         for i in range(1, num_regular_actors + 1):
             # Random production efficiency between 0.7 and 1.3
             efficiency = random.uniform(0.7, 1.3)
+            
+            # Generate random initial skills
+            initial_skills = {}
+            
+            # Pick 1-3 skills to specialize in (skills above 1.0)
+            num_specialties = random.randint(1, 3)
+            all_skills = list(self.skills_registry._skills.keys())
+            specialty_skills = random.sample(all_skills, num_specialties)
+            
+            # Give each actor random skill levels
+            for skill_id in all_skills:
+                if skill_id in specialty_skills:
+                    # Specialties get higher ratings (1.0 to 2.0)
+                    initial_skills[skill_id] = random.uniform(1.0, 2.0)
+                else:
+                    # Other skills get lower ratings (0.5 to 1.0)
+                    initial_skills[skill_id] = random.uniform(0.5, 1.0)
             
             actor = Actor(
                 name=f"{actor_name_prefix}Colonist-{i}", 
                 planet=planet,
                 actor_type=ActorType.REGULAR,
                 production_efficiency=efficiency,
-                initial_money=50
+                initial_money=50,
+                initial_skills=initial_skills
             )
             self.actors.append(actor)
             planet.add_actor(actor)
 
-        # Create market makers
+        # Create market makers with balanced skills
         for i in range(1, num_market_makers + 1):
+            # Market makers get average skill levels
+            initial_skills = {skill_id: 1.0 for skill_id in self.skills_registry._skills.keys()}
+            
             actor = Actor(
                 name=f"{actor_name_prefix}MarketMaker-{i}", 
                 planet=planet,
                 actor_type=ActorType.MARKET_MAKER,
-                initial_money=200
+                initial_money=200,
+                initial_skills=initial_skills
             )
             self.actors.append(actor)
             planet.add_actor(actor)
@@ -434,12 +462,19 @@ class Simulation:
                         facility_parts.append(f"Metalworking:{metalworking}")
                     facilities_str = f", Facilities:[{', '.join(facility_parts)}]"
                 
+                # Get top skills to display (skills with rating > 1.0)
+                top_skills = []
+                for skill_id, rating in actor.skills.items():
+                    if rating > 1.0:
+                        top_skills.append(f"{skill_id.split('_')[0][:3]}:{rating:.1f}")
+                skills_str = f", Skills:[{', '.join(top_skills)}]" if top_skills else ""
+                
                 # Show market maker status differently
                 if actor.actor_type == ActorType.MARKET_MAKER:
-                    print(f"  [MM] {actor.name}: ${actor.money}, Food:{food_qty}{food_status}, Bio:{biomass_qty}, Action:{action}{facilities_str}")
+                    print(f"  [MM] {actor.name}: ${actor.money}, Food:{food_qty}{food_status}, Bio:{biomass_qty}, Action:{action}{facilities_str}{skills_str}")
                 else:
                     print(f"  {actor.name}: ${actor.money}, Food:{food_qty}{food_status}, Bio:{biomass_qty}, " +
-                          f"Tools:{tools_qty}, Metal:{metals_qty}, MetalOre:{metal_ore_qty}, Fuel:{fuel_qty}, Action:{action}{facilities_str}")
+                          f"Tools:{tools_qty}, Metal:{metals_qty}, MetalOre:{metal_ore_qty}, Fuel:{fuel_qty}, Action:{action}{facilities_str}{skills_str}")
             
             # Print ship status for ships at this planet
             if planet.ships:

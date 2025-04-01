@@ -1,5 +1,5 @@
-from dataclasses import dataclass
-from typing import Dict, List, Optional
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Set
 
 import yaml
 
@@ -17,6 +17,8 @@ class ProcessDefinition:
     facilities_required: List[CommodityDefinition]  # List of CommodityDefinition for facilities
     labor: int
     description: str
+    # Skills that are relevant to this process
+    relevant_skills: List[str] = field(default_factory=list)
     
     def __str__(self) -> str:
         return self.name
@@ -73,6 +75,9 @@ class ProcessRegistry:
                         # Skip unknown facilities
                         print(f"Warning: Skipping unknown commodity ID '{commodity_id}' in process facilities required")
                 
+                # Get relevant skills with default empty list if not present
+                relevant_skills = process_data.get('relevant_skills', [])
+                
                 process_def = ProcessDefinition(
                     id=process_data['id'],
                     name=process_data['name'],
@@ -81,7 +86,8 @@ class ProcessRegistry:
                     tools_required=tools_required,
                     facilities_required=facilities_required,
                     labor=process_data['labor'],
-                    description=process_data['description']
+                    description=process_data['description'],
+                    relevant_skills=relevant_skills
                 )
                 self._processes[process_def.id] = process_def
         except Exception as e:

@@ -2,10 +2,12 @@
   name: Gather Biomass
   inputs: {}
   outputs:
-    biomass: 1
+    biomass: 4
   tools_required: []
   facilities_required: []
   labor: 1
+  relevant_skills:
+    - agriculture
   description: Collects biomass from the natural environment.
 
 - id: gather_building_materials
@@ -16,17 +18,22 @@
   tools_required: []
   facilities_required: []
   labor: 1
+  relevant_skills:
+    - simple_manufacturing
   description: Collects simple building materials from the natural environment.
 
 - id: make_food
   name: Make Food
   inputs:
-    biomass: 2
+    biomass: 4
   outputs:
-    food: 1
+    food: 2
   tools_required: []
   facilities_required: []
   labor: 1
+  relevant_skills:
+    - culinary
+    - agriculture
   description: Converts biomass into edible food using simple techniques.
 
 - id: mine_nova_fuel_ore
@@ -37,6 +44,8 @@
   tools_required: []
   facilities_required: []
   labor: 1
+  relevant_skills:
+    - mining
   description: Extracts various ores from the planetary crust.
 
 - id: mine_common_metal_ore
@@ -47,6 +56,8 @@
   tools_required: []
   facilities_required: []
   labor: 1
+  relevant_skills:
+    - mining
   description: Extracts various ores from the planetary crust.
 
 - id: refine_common_metal
@@ -59,6 +70,8 @@
   facilities_required:
     - smelting_facility
   labor: 2
+  relevant_skills:
+    - refining
   description: Smelts common metal ore into usable metal.
 
 - id: refine_nova_fuel
@@ -72,6 +85,10 @@
   facilities_required:
     - smelting_facility
   labor: 1
+  relevant_skills:
+    - chemistry
+    - aerospace
+    - refining
   description: Refines NovaFuel Ore into volatile high-energy fuel.
 
 - id: make_simple_tools
@@ -83,6 +100,8 @@
   tools_required: []
   facilities_required: []
   labor: 1
+  relevant_skills:
+    - simple_manufacturing
   description: Forges simple tools from refined metal using metalworking equipment.
 
 - id: build_smelting_facility
@@ -94,6 +113,9 @@
   tools_required: []
   facilities_required: []
   labor: 5
+  relevant_skills:
+    - advanced_manufacturing
+    - simple_manufacturing
   description: Constructs a stationary smelting facility for refining ores.
 
 - id: build_metalworking_facility
@@ -105,4 +127,7 @@
   tools_required: []
   facilities_required: []
   labor: 5
+  relevant_skills:
+    - advanced_manufacturing
+    - simple_manufacturing
   description: Constructs a static metalworking facility for fabricating tools and shaping metals.
