@@ -214,12 +214,11 @@ class ShipListPanel:
             # Ship cargo status
             raw_food = None
             fuel = None
-            if hasattr(ship, "cargo") and hasattr(ship.cargo, "commodities"):
-                for commodity in ship.cargo.commodities:
-                    if commodity.id == "raw_food":
-                        raw_food = commodity
-                    elif commodity.id == "fuel":
-                        fuel = commodity
+            for commodity in ship.cargo.commodities:
+                if commodity.id == "raw_food":
+                    raw_food = commodity
+                elif commodity.id == "fuel":
+                    fuel = commodity
             
             cargo_food = ship.cargo.get_quantity(raw_food) if raw_food else 0
             cargo_fuel = ship.cargo.get_quantity(fuel) if fuel else 0

@@ -265,11 +265,10 @@ class DetailPanel:
         
         # Fuel capacity and efficiency
         fuel = None
-        if hasattr(ship, "cargo") and hasattr(ship.cargo, "commodities"):
-            for commodity in ship.cargo.commodities:
-                if commodity.id == "fuel":
-                    fuel = commodity
-                    break
+        for commodity in ship.cargo.commodities:
+            if commodity.id == "fuel":
+                fuel = commodity
+                break
         
         fuel_amount = ship.cargo.get_quantity(fuel) if fuel else 0
         fuel_text, fuel_rect = text_renderer.render_text(
@@ -291,16 +290,15 @@ class DetailPanel:
         
         # List cargo items
         has_cargo = False
-        if hasattr(ship, "cargo") and hasattr(ship.cargo, "commodities"):
-            for commodity_id, quantity in ship.cargo.commodities.items():
-                if quantity > 0:
-                    has_cargo = True
-                    item_text, item_rect = text_renderer.render_text(
-                        f"• {commodity_id.name}: {quantity}", "normal", self.colors["text"]["normal"]
-                    )
-                    item_rect.topleft = (x + 10, y)
-                    self.screen.blit(item_text, item_rect)
-                    y += line_height
+        for commodity_id, quantity in ship.cargo.commodities.items():
+            if quantity > 0:
+                has_cargo = True
+                item_text, item_rect = text_renderer.render_text(
+                    f"• {commodity_id.name}: {quantity}", "normal", self.colors["text"]["normal"]
+                )
+                item_rect.topleft = (x + 10, y)
+                self.screen.blit(item_text, item_rect)
+                y += line_height
                 
         if not has_cargo:
             empty_text, empty_rect = text_renderer.render_text(
@@ -320,7 +318,7 @@ class DetailPanel:
         y += line_height
         
         # Display last action
-        if hasattr(ship, "last_action") and ship.last_action:
+        if ship.last_action:
             action_text, action_rect = text_renderer.render_text(
                 f"• {ship.last_action}", "normal", self.colors["text"]["normal"]
             )
@@ -354,14 +352,13 @@ class DetailPanel:
         
         # Food status
         raw_food = None
-        if hasattr(actor, "inventory") and hasattr(actor.inventory, "commodities"):
-            for commodity in actor.inventory.commodities:
-                if commodity.id == "raw_food":
-                    raw_food = commodity
-                    break
+        for commodity in actor.inventory.commodities:
+            if commodity.id == "raw_food":
+                raw_food = commodity
+                break
         
-        food_qty = actor.inventory.get_quantity(raw_food) if raw_food and hasattr(actor, "inventory") else 0
-        food_status = "✓" if hasattr(actor, "food_consumed_this_turn") and actor.food_consumed_this_turn else "✗"
+        food_qty = actor.inventory.get_quantity(raw_food) if raw_food else 0
+        food_status = "✓" if actor.food_consumed_this_turn else "✗"
         food_text, food_rect = text_renderer.render_text(
             f"Food: {food_qty} {food_status}", "normal", self.colors["text"]["food"]
         )
@@ -379,30 +376,29 @@ class DetailPanel:
         y += line_height
         
         # List inventory items
-        if hasattr(actor, "inventory") and hasattr(actor.inventory, "commodities"):
-            # Get combined inventory (available and reserved)
-            commodity_registry = self.simulation.commodity_registry if self.simulation else None
-            if commodity_registry:
-                for commodity in commodity_registry.all_commodities():
-                    quantity = actor.inventory.get_quantity(commodity)
-                    if quantity > 0:
-                        available = actor.inventory.get_available_quantity(commodity)
-                        reserved = actor.inventory.get_reserved_quantity(commodity)
-                        
-                        # Show total and breakdown if items are reserved
-                        if reserved > 0:
-                            item_text, item_rect = text_renderer.render_text(
-                                f"• {commodity.name}: {quantity} ({available} avail, {reserved} reserved)", 
-                                "normal", 
-                                self.colors["text"]["normal"]
-                            )
-                        else:
-                            item_text, item_rect = text_renderer.render_text(
-                                f"• {commodity.name}: {quantity}", "normal", self.colors["text"]["normal"]
-                            )
-                        item_rect.topleft = (x + 10, y)
-                        self.screen.blit(item_text, item_rect)
-                        y += line_height
+        # Get combined inventory (available and reserved)
+        commodity_registry = self.simulation.commodity_registry if self.simulation else None
+        if commodity_registry:
+            for commodity in commodity_registry.all_commodities():
+                quantity = actor.inventory.get_quantity(commodity)
+                if quantity > 0:
+                    available = actor.inventory.get_available_quantity(commodity)
+                    reserved = actor.inventory.get_reserved_quantity(commodity)
+                    
+                    # Show total and breakdown if items are reserved
+                    if reserved > 0:
+                        item_text, item_rect = text_renderer.render_text(
+                            f"• {commodity.name}: {quantity} ({available} avail, {reserved} reserved)", 
+                            "normal", 
+                            self.colors["text"]["normal"]
+                        )
+                    else:
+                        item_text, item_rect = text_renderer.render_text(
+                            f"• {commodity.name}: {quantity}", "normal", self.colors["text"]["normal"]
+                        )
+                    item_rect.topleft = (x + 10, y)
+                    self.screen.blit(item_text, item_rect)
+                    y += line_height
         
         # Last actions section
         y += line_height // 2
@@ -414,7 +410,7 @@ class DetailPanel:
         y += line_height
         
         # Display last action
-        if hasattr(actor, "last_action") and actor.last_action:
+        if actor.last_action:
             action_text, action_rect = text_renderer.render_text(
                 f"• {actor.last_action}", "normal", self.colors["text"]["normal"]
             )
@@ -423,7 +419,7 @@ class DetailPanel:
             y += line_height
             
         # Display last market action
-        if hasattr(actor, "last_market_action") and actor.last_market_action:
+        if actor.last_market_action:
             market_action_text, market_action_rect = text_renderer.render_text(
                 f"• {actor.last_market_action}", "normal", self.colors["text"]["normal"]
             )
@@ -523,7 +519,7 @@ class DetailPanel:
         
         # Draw section headers
         orders_title, orders_title_rect = text_renderer.render_text(
-            f"Order Book - {commodity.value}", "normal", self.colors["text"]["header"]
+            f"Order Book - {commodity.name}", "normal", self.colors["text"]["header"]
         )
         orders_title_rect.topleft = (x, y)
         self.screen.blit(orders_title, orders_title_rect)
@@ -714,11 +710,10 @@ class DetailPanel:
         for planet in simulation.planets:
             for actor in planet.actors:
                 total_money += actor.money
-                if hasattr(actor, "inventory") and hasattr(actor.inventory, "commodities"):
-                    for commodity in actor.inventory.commodities:
-                        if commodity.id == raw_food_id:
-                            total_food += actor.inventory.get_quantity(commodity)
-                            break
+                for commodity in actor.inventory.commodities:
+                    if commodity.id == raw_food_id:
+                        total_food += actor.inventory.get_quantity(commodity)
+                        break
         
         money_text, money_rect = text_renderer.render_text(
             f"• Total Money: ${total_money:,}", "normal", self.colors["text"]["money"]

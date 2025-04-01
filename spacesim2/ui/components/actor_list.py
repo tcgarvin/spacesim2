@@ -208,13 +208,12 @@ class ActorListPanel:
             
             # Actor food status
             raw_food = None
-            if hasattr(actor, "inventory") and hasattr(actor.inventory, "commodities"):
-                for commodity in actor.inventory.commodities:
-                    if commodity.id == "raw_food":
-                        raw_food = commodity
-                        break
+            for commodity in actor.inventory.commodities:
+                if commodity.id == "raw_food":
+                    raw_food = commodity
+                    break
                 
-            food_qty = actor.inventory.get_quantity(raw_food) if raw_food and hasattr(actor, "inventory") else 0
+            food_qty = actor.inventory.get_quantity(raw_food) if raw_food else 0
             food_text, food_rect = text_renderer.render_text(
                 f"Food: {food_qty}", "small", self.colors["text"]["food"]
             )
