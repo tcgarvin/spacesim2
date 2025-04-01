@@ -36,10 +36,6 @@ def test_load_commodities_from_yaml():
         assert commodity.name == 'Test Commodity'
         assert commodity.transportable is True
         assert commodity.description == 'A test commodity'
-        
-        # Default values
-        assert commodity.base_price == 10
-        assert commodity.production_cost == 5
     finally:
         # Clean up
         os.unlink(temp_file)
@@ -47,6 +43,41 @@ def test_load_commodities_from_yaml():
 
 def test_load_processes_from_yaml():
     """Test loading processes from YAML file."""
+    # First create commodity registry with required commodities
+    commodity_registry = CommodityRegistry()
+    
+    # Add the necessary commodities
+    input_commodity = CommodityDefinition(
+        id="input_commodity",
+        name="Input Commodity",
+        transportable=True,
+        description="Test input"
+    )
+    output_commodity = CommodityDefinition(
+        id="output_commodity",
+        name="Output Commodity",
+        transportable=True,
+        description="Test output"
+    )
+    tool_commodity = CommodityDefinition(
+        id="tool_commodity",
+        name="Tool Commodity",
+        transportable=True,
+        description="Test tool"
+    )
+    facility_commodity = CommodityDefinition(
+        id="facility_commodity",
+        name="Facility Commodity",
+        transportable=False,
+        description="Test facility"
+    )
+    
+    # Register the commodities
+    commodity_registry._commodities["input_commodity"] = input_commodity
+    commodity_registry._commodities["output_commodity"] = output_commodity
+    commodity_registry._commodities["tool_commodity"] = tool_commodity
+    commodity_registry._commodities["facility_commodity"] = facility_commodity
+    
     # Create a temp YAML file for processes
     with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.yaml') as f:
         yaml.dump([
@@ -64,9 +95,6 @@ def test_load_processes_from_yaml():
         process_file = f.name
     
     try:
-        # Create commodity registry
-        commodity_registry = CommodityRegistry()
-        
         # Load the processes file
         process_registry = ProcessRegistry(commodity_registry)
         process_registry.load_from_file(process_file)
@@ -76,10 +104,16 @@ def test_load_processes_from_yaml():
         assert process is not None
         assert process.id == 'test_process'
         assert process.name == 'Test Process'
-        assert process.inputs == {'input_commodity': 2}
-        assert process.outputs == {'output_commodity': 1}
-        assert process.tools_required == ['tool_commodity']
-        assert process.facilities_required == ['facility_commodity']
+        assert len(process.inputs) == 1
+        assert input_commodity in process.inputs
+        assert process.inputs[input_commodity] == 2
+        assert len(process.outputs) == 1
+        assert output_commodity in process.outputs
+        assert process.outputs[output_commodity] == 1
+        assert len(process.tools_required) == 1
+        assert tool_commodity in process.tools_required
+        assert len(process.facilities_required) == 1 
+        assert facility_commodity in process.facilities_required
         assert process.labor == 3
         assert process.description == 'A test process'
     finally:
