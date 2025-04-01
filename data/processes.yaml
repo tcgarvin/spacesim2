@@ -8,6 +8,16 @@
   labor: 1
   description: Collects biomass from the natural environment.
 
+- id: gather_building_materials
+  name: Gather Building Materials
+  inputs: {}
+  outputs:
+    simple_building_materials: 1
+  tools_required: []
+  facilities_required: []
+  labor: 1
+  description: Collects simple building materials from the natural environment.
+
 - id: make_food
   name: Make Food
   inputs:

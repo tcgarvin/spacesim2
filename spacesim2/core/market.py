@@ -1,10 +1,12 @@
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union, TYPE_CHECKING, Any
 import statistics
 from collections import defaultdict
 
 from spacesim2.core.actor import Actor
-from spacesim2.core.commodity import CommodityType
+
+if TYPE_CHECKING:
+    from spacesim2.core.commodity import CommodityDefinition
 
 
 @dataclass
@@ -12,7 +14,7 @@ class Order:
     """Represents a buy or sell order in the market."""
 
     actor: Actor
-    commodity_type: CommodityType
+    commodity_type: 'CommodityDefinition'  # Must be a CommodityDefinition
     quantity: int
     price: int
     is_buy: bool  # True for buy order, False for sell order
@@ -33,7 +35,7 @@ class Transaction:
 
     buyer: Actor
     seller: Actor
-    commodity_type: CommodityType
+    commodity_type: 'CommodityDefinition'  # Must be a CommodityDefinition
     quantity: int
     price: int
     total_amount: int
@@ -45,8 +47,8 @@ class Market:
 
     def __init__(self) -> None:
         # Order books for each commodity type
-        self.buy_orders: Dict[CommodityType, List[Order]] = defaultdict(list)
-        self.sell_orders: Dict[CommodityType, List[Order]] = defaultdict(list)
+        self.buy_orders: Dict['CommodityDefinition', List[Order]] = defaultdict(list)
+        self.sell_orders: Dict['CommodityDefinition', List[Order]] = defaultdict(list)
         
         # Track orders by ID for quick lookup
         self.orders_by_id: Dict[str, Order] = {}
@@ -61,17 +63,26 @@ class Market:
         self.current_turn = 0
         
         # Track market statistics
-        self.last_traded_prices: Dict[CommodityType, List[int]] = defaultdict(list)
+        self.last_traded_prices: Dict['CommodityDefinition', List[int]] = defaultdict(list)
         
         # Extended market history (for sophisticated market makers)
-        self.price_history: Dict[CommodityType, List[int]] = defaultdict(list)  # All historical prices
-        self.volume_history: Dict[CommodityType, List[int]] = defaultdict(list)  # Daily trading volumes
+        self.price_history: Dict['CommodityDefinition', List[int]] = defaultdict(list)  # All historical prices
+        self.volume_history: Dict['CommodityDefinition', List[int]] = defaultdict(list)  # Daily trading volumes
+        
+        # Reference to commodity registry (will be set by simulation)
+        self.commodity_registry = None
 
     def place_buy_order(
-        self, actor: Actor, commodity_type: CommodityType, quantity: int, price: int
+        self, actor: Actor, commodity_type: 'CommodityDefinition', quantity: int, price: int
     ) -> str:
         """Place a buy order (bid) in the market.
         
+        Args:
+            actor: The actor placing the order
+            commodity_type: A CommodityDefinition object
+            quantity: The quantity to buy
+            price: The price per unit
+            
         Returns:
             str: The order ID if placed successfully, empty string otherwise.
         """
@@ -106,22 +117,28 @@ class Market:
         self.actor_orders[actor]["buy"].append(order.order_id)
         
         # Add to actor's active orders
-        actor.active_orders[order.order_id] = f"buy {commodity_type.name}"
+        actor.active_orders[order.order_id] = f"buy {commodity_type.id}"
         
         return order.order_id
 
     def place_sell_order(
-        self, actor: Actor, commodity_type: CommodityType, quantity: int, price: int
+        self, actor: Actor, commodity_type: 'CommodityDefinition', quantity: int, price: int
     ) -> str:
         """Place a sell order (ask) in the market.
         
+        Args:
+            actor: The actor placing the order
+            commodity_type: A CommodityDefinition object
+            quantity: The quantity to sell
+            price: The price per unit
+            
         Returns:
             str: The order ID if placed successfully, empty string otherwise.
         """
         # Price is already an integer
         
         # Verify the actor has enough of the commodity to sell
-        available_quantity = actor.inventory.get_quantity(commodity_type)
+        available_quantity = actor.inventory.get_available_quantity(commodity_type)
         if available_quantity < quantity:
             quantity = available_quantity
             
@@ -147,7 +164,7 @@ class Market:
         self.actor_orders[actor]["sell"].append(order.order_id)
         
         # Add to actor's active orders
-        actor.active_orders[order.order_id] = f"sell {commodity_type.name}"
+        actor.active_orders[order.order_id] = f"sell {commodity_type.id}"
         
         return order.order_id
 
@@ -157,8 +174,11 @@ class Market:
         daily_volumes = defaultdict(int)
         daily_prices = defaultdict(list)
         
+        # Process orders for all commodity types (both enum and string IDs)
+        all_commodities = set(list(self.buy_orders.keys()) + list(self.sell_orders.keys()))
+        
         # Process orders
-        for commodity_type in set(list(self.buy_orders.keys()) + list(self.sell_orders.keys())):
+        for commodity_type in all_commodities:
             before_count = len(self.transaction_history)
             self._match_orders_for_commodity(commodity_type)
             after_count = len(self.transaction_history)
@@ -183,9 +203,23 @@ class Market:
                 self.price_history[commodity_type].append(self.price_history[commodity_type][-1])
             else:
                 # No trades ever, use base price
-                self.price_history[commodity_type].append(CommodityType.get_base_price(commodity_type))
+                # Get a default base price
+                base_price = 10  # Default base price
+                
+                # Try to get a better base price from previous history if available
+                if len(self.price_history.values()) > 0:
+                    # Use the average of all known commodity prices
+                    all_prices = []
+                    for price_history in self.price_history.values():
+                        if price_history:
+                            all_prices.append(price_history[-1])
+                    
+                    if all_prices:
+                        base_price = int(sum(all_prices) / len(all_prices))
+                
+                self.price_history[commodity_type].append(base_price)
 
-    def _match_orders_for_commodity(self, commodity_type: CommodityType) -> None:
+    def _match_orders_for_commodity(self, commodity_type: 'CommodityDefinition') -> None:
         """Match buy and sell orders for a specific commodity."""
         # Sort buy orders by price (highest first) and timestamp (oldest first)
         buy_orders = sorted(
@@ -282,7 +316,7 @@ class Market:
         self.sell_orders[commodity_type] = sell_orders
 
     def _execute_transaction(
-        self, buyer: Actor, seller: Actor, commodity_type: CommodityType, 
+        self, buyer: Actor, seller: Actor, commodity_type: 'CommodityDefinition', 
         quantity: int, price: int, buy_order: Order = None, sell_order: Order = None
     ) -> None:
         """Execute a transaction between two actors.
@@ -290,7 +324,7 @@ class Market:
         Args:
             buyer: The actor buying the commodity
             seller: The actor selling the commodity
-            commodity_type: The type of commodity being traded
+            commodity_type: The commodity being traded
             quantity: The quantity being traded
             price: The price per unit
             buy_order: The buy order (if any)
@@ -312,14 +346,11 @@ class Market:
         seller.money += total_amount
         
         # Handle commodity transfer differently based on whether order exists
-        if sell_order and commodity_type in seller.inventory.reserved_commodities:
-            # Commodity is already reserved - just reduce reservation, no transfer needed
-            reserved_quantity = min(quantity, seller.inventory.reserved_commodities.get(commodity_type, 0))
-            seller.inventory.reserved_commodities[commodity_type] -= reserved_quantity
-            
-            # Clean up if reserved is now zero
-            if seller.inventory.reserved_commodities.get(commodity_type, 0) <= 0:
-                del seller.inventory.reserved_commodities[commodity_type]
+        if sell_order:
+            # Get reserved quantity
+            reserved_quantity = min(quantity, seller.inventory.get_reserved_quantity(commodity_type))
+            # No need to manually update the reserved commodities - unreserve_commodity handles it
+            seller.inventory.unreserve_commodity(commodity_type, reserved_quantity)
         else:
             # Immediate transaction - remove from available inventory
             seller.inventory.remove_commodity(commodity_type, quantity)
@@ -351,24 +382,32 @@ class Market:
             transaction: The transaction
             side: 'buy' or 'sell'
         """
+        # Get commodity ID for history
+        commodity_name = transaction.commodity_type.id
+            
         actor.market_history.append({
             "turn": self.current_turn,
             "side": side,
-            "commodity": transaction.commodity_type.name,
+            "commodity": commodity_name,
             "quantity": transaction.quantity,
             "price": transaction.price,
             "counterparty": transaction.seller.name if side == "buy" else transaction.buyer.name
         })
 
-    def get_avg_price(self, commodity_type: CommodityType) -> int:
+    def get_avg_price(self, commodity_type: 'CommodityDefinition') -> int:
         """Get the average price for a commodity based on recent transactions."""
         prices = self.last_traded_prices.get(commodity_type, [])
         if not prices:
-            # If no recent trades, use the base price as a fallback
-            return CommodityType.get_base_price(commodity_type)
+            # If no recent trades, use the price history or a default base price
+            if commodity_type in self.price_history and self.price_history[commodity_type]:
+                return self.price_history[commodity_type][-1]
+            
+            # Use a default price of 10 if no history exists
+            return 10
+            
         return int(statistics.mean(prices))
     
-    def get_bid_ask_spread(self, commodity_type: CommodityType) -> Tuple[Optional[int], Optional[int]]:
+    def get_bid_ask_spread(self, commodity_type: 'CommodityDefinition') -> Tuple[Optional[int], Optional[int]]:
         """Get the current highest bid and lowest ask for a commodity."""
         buy_orders = self.buy_orders.get(commodity_type, [])
         sell_orders = self.sell_orders.get(commodity_type, [])
@@ -378,17 +417,17 @@ class Market:
         
         return highest_bid, lowest_ask
         
-    def get_30_day_average_price(self, commodity_type: CommodityType) -> float:
+    def get_30_day_average_price(self, commodity_type: 'CommodityDefinition') -> float:
         """Get the 30-day moving average price for a commodity."""
         prices = self.price_history.get(commodity_type, [])
         if not prices:
-            return float(CommodityType.get_base_price(commodity_type))
+            return 10.0  # Default base price
         
         # Take the last 30 days (or as many as we have)
         recent_prices = prices[-30:] if len(prices) >= 30 else prices
-        return statistics.mean(recent_prices) if recent_prices else float(CommodityType.get_base_price(commodity_type))
+        return statistics.mean(recent_prices) if recent_prices else 10.0
     
-    def get_30_day_average_volume(self, commodity_type: CommodityType) -> float:
+    def get_30_day_average_volume(self, commodity_type: 'CommodityDefinition') -> float:
         """Get the 30-day moving average trading volume for a commodity."""
         volumes = self.volume_history.get(commodity_type, [])
         if not volumes:
@@ -398,20 +437,22 @@ class Market:
         recent_volumes = volumes[-30:] if len(volumes) >= 30 else volumes
         return statistics.mean(recent_volumes) if recent_volumes else 1.0
     
-    def get_30_day_standard_deviation(self, commodity_type: CommodityType) -> float:
+    def get_30_day_standard_deviation(self, commodity_type: 'CommodityDefinition') -> float:
         """Get the standard deviation of prices over the last 30 days."""
         prices = self.price_history.get(commodity_type, [])
         if not prices or len(prices) < 2:  # Need at least 2 prices to calculate std dev
-            return float(CommodityType.get_base_price(commodity_type)) * 0.1  # Default to 10% of base price
+            # Default to 10% of average price or 1.0
+            avg_price = self.get_30_day_average_price(commodity_type)
+            return max(1.0, avg_price * 0.1)
         
         # Take the last 30 days (or as many as we have)
         recent_prices = prices[-30:] if len(prices) >= 30 else prices
         try:
             return statistics.stdev(recent_prices)
         except statistics.StatisticsError:
-            return float(CommodityType.get_base_price(commodity_type)) * 0.1
+            return 1.0  # Default in case of error
     
-    def has_history(self, commodity_type: CommodityType = None) -> bool:
+    def has_history(self, commodity_type: Optional['CommodityDefinition'] = None) -> bool:
         """Check if there is sufficient price history for sophisticated market making."""
         if commodity_type is None:
             # Check if any commodity has history

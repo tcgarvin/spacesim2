@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, List, Optional, Dict, Tuple
 
 if TYPE_CHECKING:
     from spacesim2.core.actor import Actor
@@ -26,3 +26,7 @@ class Planet:
         """Add a ship to this planet."""
         self.ships.append(ship)
         ship.planet = self
+    
+    def get_position(self) -> Tuple[float, float]:
+        """Get the position of the planet as a tuple."""
+        return (self.x, self.y)

@@ -1,9 +1,13 @@
 import random
-from typing import Optional, Dict, List, Union, Tuple
+from typing import Optional, Dict, List, Union, Tuple, Any, TYPE_CHECKING
 import enum
 
 from spacesim2.core.planet import Planet
-from spacesim2.core.commodity import Inventory, CommodityType, Commodity
+from spacesim2.core.commodity import Inventory, CommodityDefinition
+
+if TYPE_CHECKING:
+    from spacesim2.core.simulation import Simulation
+    from spacesim2.core.process import ProcessDefinition
 
 
 class ActorType(enum.Enum):
@@ -31,104 +35,142 @@ class ActorBrain:
     def should_produce_food(self) -> bool:
         """Decide whether to produce food or do government work."""
         raise NotImplementedError("Subclasses must implement this method")
+        
+    def execute_process(self, process_id: str) -> bool:
+        """Execute a production process.
+        
+        Returns:
+            bool: True if process was executed successfully, False otherwise
+        """
+        if not hasattr(self.actor, 'sim') or not self.actor.sim:
+            return False
+            
+        process = self.actor.sim.process_registry.get_process(process_id)
+        if not process:
+            return False
+            
+        # Check if actor has required inputs
+        for commodity, quantity in process.inputs.items():
+            if not self.actor.inventory.has_quantity(commodity, quantity):
+                return False
+                
+        # Check if actor has required tools
+        for tool in process.tools_required:
+            if not self.actor.inventory.has_quantity(tool, 1):
+                return False
+                
+        # Check if actor has access to required facilities in their inventory
+        for facility in process.facilities_required:
+            if not self.actor.inventory.has_quantity(facility, 1):
+                return False
+        
+        # Consume inputs
+        for commodity, quantity in process.inputs.items():
+            self.actor.inventory.remove_commodity(commodity, quantity)
+            
+        # Add outputs
+        for commodity, quantity in process.outputs.items():
+            self.actor.inventory.add_commodity(commodity, quantity)
+            
+        # Record action
+        self.actor.last_action = f"Executed process: {process.name}"
+        return True
 
 
 class ColonistBrain(ActorBrain):
     """Decision-making logic for regular colonist actors."""
     
     def decide_economic_action(self) -> None:
-        """Decide whether to produce food, fuel, or do government work."""
-        # Check if it's profitable to produce fuel
-        if self.should_produce_fuel():
-            self._produce_fuel()
-        # Otherwise, check if it's profitable to produce food
-        elif self.should_produce_food():
-            self._produce_food()
-        # If neither is profitable, do government work
-        else:
-            self._do_government_work()
+        """Decide which economic action to take this turn."""
+        # First, try to satisfy basic needs (food)
+        if not hasattr(self.actor, 'sim') or not self.actor.sim:
+            return
+            
+        food_commodity = self.actor.sim.commodity_registry.get_commodity("food")
+        biomass_commodity = self.actor.sim.commodity_registry.get_commodity("biomass")
+        
+        if not food_commodity or not biomass_commodity:
+            return
+            
+        food_quantity = self.actor.inventory.get_quantity(food_commodity)
+        if food_quantity < 5:
+            # Try to make food
+            if self.execute_process("make_food"):
+                return
+                
+            # If can't make food directly, try to gather biomass
+            biomass_quantity = self.actor.inventory.get_quantity(biomass_commodity)
+            if biomass_quantity < 2 and self.execute_process("gather_biomass"):
+                return
+                
+            # If we gathered biomass and now have enough, try to make food again
+            if self.actor.inventory.get_quantity(biomass_commodity) >= 2 and self.execute_process("make_food"):
+                return
+
+        # Try to find the most profitable process
+        if hasattr(self.actor, 'sim') and self.actor.sim and hasattr(self.actor.sim, 'process_registry'):
+            market = self.actor.planet.market if self.actor.planet else None
+            if market:
+                best_process = self._find_most_profitable_process(market)
+                
+                # Execute the most profitable process if better than government work
+                if best_process and self.execute_process(best_process.id):
+                    return
+        
+        # If no processes can be executed, do government work
+        self._do_government_work()
+    
+    def _find_most_profitable_process(self, market) -> Optional['ProcessDefinition']:
+        """Find the most profitable process based on current market prices and available resources."""
+        if not hasattr(self.actor, 'sim') or not self.actor.sim or not hasattr(self.actor.sim, 'process_registry'):
+            return None
+            
+        best_process = None
+        best_profit = 10  # Must exceed government work profit
+        
+        for process in self.actor.sim.process_registry.all_processes():
+            # Calculate potential profit
+            input_cost = 0
+            for commodity_id, quantity in process.inputs.items():
+                input_cost += market.get_avg_price(commodity_id) * quantity
+                
+            output_value = 0
+            for commodity_id, quantity in process.outputs.items():
+                output_value += market.get_avg_price(commodity_id) * quantity
+                
+            potential_profit = output_value - input_cost
+            
+            # Check if we can execute this process
+            can_execute = True
+            
+            # Check if we have the inputs
+            for commodity_id, quantity in process.inputs.items():
+                if not self.actor.inventory.has_quantity(commodity_id, quantity):
+                    can_execute = False
+                    break
+            
+            # Check if we have the tools
+            for tool_id in process.tools_required:
+                if not self.actor.inventory.has_quantity(tool_id, 1):
+                    can_execute = False
+                    break
+            
+            # Check if we have access to required facilities in our inventory
+            for facility_id in process.facilities_required:
+                if not self.actor.inventory.has_quantity(facility_id, 1):
+                    can_execute = False
+                    break
+            
+            if can_execute and potential_profit > best_profit:
+                best_process = process
+                best_profit = potential_profit
+        
+        return best_process
     
     def should_produce_food(self) -> bool:
         """Decide whether to produce food or not."""
-        # Simple logic: calculate potential profit vs. government wage
-        food_price = 0.0
-        if self.actor.planet and self.actor.planet.market:
-            food_price = self.actor.planet.market.get_avg_price(CommodityType.RAW_FOOD)
-        
-        # Get standard production quantity and apply efficiency
-        standard_output = CommodityType.get_production_quantity(CommodityType.RAW_FOOD)
-        actual_output = int(standard_output * self.actor.production_efficiency)
-        
-        # Calculate potential profit
-        production_cost = CommodityType.get_production_cost(CommodityType.RAW_FOOD)
-        potential_profit = (actual_output * food_price) - production_cost
-        
-        # Government wage is fixed
-        govt_wage = 10.0
-        
-        # Also consider if we need food for personal consumption
-        need_food = self.actor.inventory.get_quantity(CommodityType.RAW_FOOD) < 3
-        
-        # Produce if it's profitable or if we need food
-        return potential_profit > govt_wage or need_food
-        
-    def should_produce_fuel(self) -> bool:
-        """Decide whether to produce fuel or not."""
-        # Simple logic: calculate potential profit vs. government wage and food production
-        fuel_price = 0.0
-        if self.actor.planet and self.actor.planet.market:
-            fuel_price = self.actor.planet.market.get_avg_price(CommodityType.FUEL)
-        
-        # Get standard production quantity and apply efficiency
-        standard_output = CommodityType.get_production_quantity(CommodityType.FUEL)
-        actual_output = int(standard_output * self.actor.production_efficiency)
-        
-        # Calculate potential profit
-        production_cost = CommodityType.get_production_cost(CommodityType.FUEL)
-        potential_profit = (actual_output * fuel_price) - production_cost
-        
-        # Government wage is fixed
-        govt_wage = 10.0
-        
-        # Check if we have enough food first - food is always priority
-        enough_food = self.actor.inventory.get_quantity(CommodityType.RAW_FOOD) >= 5
-        
-        # Also check if fuel will be profitable compared to food
-        food_price = 0.0
-        if self.actor.planet and self.actor.planet.market:
-            food_price = self.actor.planet.market.get_avg_price(CommodityType.RAW_FOOD)
-            
-        food_standard_output = CommodityType.get_production_quantity(CommodityType.RAW_FOOD)
-        food_actual_output = int(food_standard_output * self.actor.production_efficiency)
-        food_production_cost = CommodityType.get_production_cost(CommodityType.RAW_FOOD)
-        food_potential_profit = (food_actual_output * food_price) - food_production_cost
-        
-        # Produce fuel if we have enough food, it's profitable, and more profitable than food
-        return enough_food and potential_profit > govt_wage and potential_profit > food_potential_profit
-    
-    def _produce_food(self) -> None:
-        """Produce raw food commodities."""
-        # Calculate production output based on efficiency
-        standard_output = CommodityType.get_production_quantity(CommodityType.RAW_FOOD)
-        actual_output = int(standard_output * self.actor.production_efficiency)
-        
-        # Add produced food to inventory
-        self.actor.inventory.add_commodity(CommodityType.RAW_FOOD, actual_output)
-        
-        # Record action
-        self.actor.last_action = f"Produced {actual_output} food"
-        
-    def _produce_fuel(self) -> None:
-        """Produce fuel commodities."""
-        # Calculate production output based on efficiency
-        standard_output = CommodityType.get_production_quantity(CommodityType.FUEL)
-        actual_output = int(standard_output * self.actor.production_efficiency)
-        
-        # Add produced fuel to inventory
-        self.actor.inventory.add_commodity(CommodityType.FUEL, actual_output)
-        
-        # Record action
-        self.actor.last_action = f"Produced {actual_output} fuel"
+        # This method is kept for backward compatibility but is no longer used
+        return False
 
     def _do_government_work(self) -> None:
         """Perform government work to earn a fixed wage."""
@@ -155,15 +197,25 @@ class ColonistBrain(ActorBrain):
         # Keep track of all market actions
         market_actions = []
         
+        # Get commodity references
+        food_commodity = None
+        fuel_commodity = None
+        
+        if self.actor.sim and hasattr(self.actor.sim, 'commodity_registry'):
+            food_commodity = self.actor.sim.commodity_registry.get_commodity("food")
+            fuel_commodity = self.actor.sim.commodity_registry.get_commodity("nova_fuel")
+        
         # Handle food trading
-        food_action = self._trade_commodity(market, CommodityType.RAW_FOOD, min_keep=6)
-        if food_action:
-            market_actions.append(food_action)
+        if food_commodity:
+            food_action = self._trade_commodity(market, food_commodity, min_keep=6)
+            if food_action:
+                market_actions.append(food_action)
         
         # Handle fuel trading - we don't need to keep any fuel for ourselves
-        fuel_action = self._trade_commodity(market, CommodityType.FUEL, min_keep=0)
-        if fuel_action:
-            market_actions.append(fuel_action)
+        if fuel_commodity:
+            fuel_action = self._trade_commodity(market, fuel_commodity, min_keep=0)
+            if fuel_action:
+                market_actions.append(fuel_action)
         
         # Update the actor's last market action summary
         if market_actions:
@@ -214,12 +266,15 @@ class ColonistBrain(ActorBrain):
                         self.actor, commodity_type, max_affordable_quantity, best_sell_order.price
                     )
                     if order_id:
-                        self.actor.active_orders[order_id] = f"buy {commodity_type.name}"
-                        return f"Buying {max_affordable_quantity} {commodity_type.name} at {best_sell_order.price}"
+                        commodity_name = commodity_type.id if hasattr(commodity_type, 'id') else str(commodity_type)
+                        self.actor.active_orders[order_id] = f"buy {commodity_name}"
+                        return f"Buying {max_affordable_quantity} {commodity_name} at {best_sell_order.price}"
                 else:
-                    return f"Can't afford {commodity_type.name} at {best_sell_order.price}"
+                    commodity_name = commodity_type.id if hasattr(commodity_type, 'id') else str(commodity_type)
+                    return f"Can't afford {commodity_name} at {best_sell_order.price}"
             else:
-                return f"No {commodity_type.name} sell orders available"
+                commodity_name = commodity_type.id if hasattr(commodity_type, 'id') else str(commodity_type)
+                return f"No {commodity_name} sell orders available"
         
         # Handle selling if we have excess
         if available_inventory > min_keep:
@@ -243,10 +298,12 @@ class ColonistBrain(ActorBrain):
                     self.actor, commodity_type, quantity_to_sell, best_buy_order.price
                 )
                 if order_id:
-                    self.actor.active_orders[order_id] = f"sell {commodity_type.name}"
-                    return f"Selling {quantity_to_sell} {commodity_type.name} at {best_buy_order.price}"
+                    commodity_name = commodity_type.id if hasattr(commodity_type, 'id') else str(commodity_type)
+                    self.actor.active_orders[order_id] = f"sell {commodity_name}"
+                    return f"Selling {quantity_to_sell} {commodity_name} at {best_buy_order.price}"
             else:
-                return f"No {commodity_type.name} buy orders available"
+                commodity_name = commodity_type.id if hasattr(commodity_type, 'id') else str(commodity_type)
+                return f"No {commodity_name} buy orders available"
         
         return None
 
@@ -291,8 +348,18 @@ class MarketMakerBrain(ActorBrain):
         all_buy_actions = []
         all_sell_actions = []
         
+        # Get commodity definitions from registry
+        if not hasattr(self.actor, 'sim') or not self.actor.sim:
+            return
+            
+        food_commodity = self.actor.sim.commodity_registry.get_commodity("food")
+        fuel_commodity = self.actor.sim.commodity_registry.get_commodity("nova_fuel")
+        
+        if not food_commodity or not fuel_commodity:
+            return
+            
         # Handle each commodity type
-        for commodity_type in [CommodityType.RAW_FOOD, CommodityType.FUEL]:
+        for commodity_type in [food_commodity, fuel_commodity]:
             # Get market statistics (30-day moving averages)
             average_volume = market.get_30_day_average_volume(commodity_type)
             average_price = market.get_30_day_average_price(commodity_type)
@@ -344,10 +411,10 @@ class MarketMakerBrain(ActorBrain):
                         amount_remaining -= order_size
                         order_id = market.place_sell_order(self.actor, commodity_type, order_size, price)
                         if order_id:
-                            action = f"{commodity_type.name} {order_size}@{price}"
+                            action = f"{commodity_type.id} {order_size}@{price}"
                             sell_actions.append(action)
                             all_sell_actions.append(action)
-                            self.actor.active_orders[order_id] = f"sell {commodity_type.name}"
+                            self.actor.active_orders[order_id] = f"sell {commodity_type.id}"
     
                 # --- Buy Orders ---
                 # Allocate 15% of funds per commodity (30% total for two commodities)
@@ -374,10 +441,10 @@ class MarketMakerBrain(ActorBrain):
                             funds_remaining -= order_size * price
                             order_id = market.place_buy_order(self.actor, commodity_type, order_size, price)
                             if order_id:
-                                action = f"{commodity_type.name} {order_size}@{price}"
+                                action = f"{commodity_type.id} {order_size}@{price}"
                                 buy_actions.append(action)
                                 all_buy_actions.append(action)
-                                self.actor.active_orders[order_id] = f"buy {commodity_type.name}"
+                                self.actor.active_orders[order_id] = f"buy {commodity_type.id}"
             else:
                 # --- Bootstrapping Orders ---
                 # In bootstrapping mode (market has no history)
@@ -386,10 +453,10 @@ class MarketMakerBrain(ActorBrain):
                     if allocated_funds // i > 0:
                         order_id = market.place_buy_order(self.actor, commodity_type, 1, allocated_funds // i)
                         if order_id:
-                            action = f"{commodity_type.name} 1@{allocated_funds // i}"
+                            action = f"{commodity_type.id} 1@{allocated_funds // i}"
                             buy_actions.append(action)
                             all_buy_actions.append(action)
-                            self.actor.active_orders[order_id] = f"buy {commodity_type.name}"
+                            self.actor.active_orders[order_id] = f"buy {commodity_type.id}"
 
         # Update the actor's last market action summary.
         existing_orders = market.get_actor_orders(self.actor)
@@ -426,6 +493,7 @@ class Actor:
         self.food_consumed_this_turn = False  # Track if actor has consumed food this turn
         self.last_action = "None"  # Track the last action performed
         self.last_market_action = "None"  # Track the last market action
+        self.sim: Optional['Simulation'] = None  # Reference to the simulation
         
         # Give actor a brain based on type
         if actor_type == ActorType.MARKET_MAKER:
@@ -453,25 +521,34 @@ class Actor:
 
     def _consume_food(self) -> None:
         """Consume 1 unit of food per turn if available."""
-        food_type = CommodityType.RAW_FOOD
-        
-        # Check if enough food is available (not reserved)
-        if self.inventory.has_quantity(food_type, 1):
-            self.inventory.remove_commodity(food_type, 1)
-            self.food_consumed_this_turn = True
-        else:
-            # If not enough available food but there's reserved food
-            reserved_food = self.inventory.get_reserved_quantity(food_type)
-            if reserved_food > 0:
-                # Unreserve 1 unit of food and consume it
-                self.inventory.unreserve_commodity(food_type, 1)
-                
-                # Now the food should be available to consume
-                if self.inventory.has_quantity(food_type, 1):
-                    self.inventory.remove_commodity(food_type, 1)
-                    self.food_consumed_this_turn = True
-                    return
-            
-            # If we get here, there's not enough food
+        # Check if the actor has food in inventory
+        if not self.sim or not hasattr(self.sim, 'commodity_registry'):
             self.food_consumed_this_turn = False
-            # In future tasks, we'll add consequences for not consuming food
+            return
+            
+        food_commodity = self.sim.commodity_registry.get_commodity("food")
+        if not food_commodity:
+            self.food_consumed_this_turn = False
+            return
+            
+        # Try to consume from available food
+        if self.inventory.has_quantity(food_commodity, 1):
+            self.inventory.remove_commodity(food_commodity, 1)
+            self.food_consumed_this_turn = True
+            return
+        
+        # Check if there's reserved food
+        reserved_food = self.inventory.get_reserved_quantity(food_commodity)
+        if reserved_food > 0:
+            # Unreserve 1 unit of food and consume it
+            self.inventory.unreserve_commodity(food_commodity, 1)
+            
+            # Now the food should be available to consume
+            if self.inventory.has_quantity(food_commodity, 1):
+                self.inventory.remove_commodity(food_commodity, 1)
+                self.food_consumed_this_turn = True
+                return
+        
+        # If we get here, there's not enough food
+        self.food_consumed_this_turn = False
+        # In future tasks, we'll add consequences for not consuming food

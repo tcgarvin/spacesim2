@@ -51,3 +51,5 @@ coverage.xml
 .vscode/
 *.swp
 *.swo
+
+**/CLAUDE.local.md

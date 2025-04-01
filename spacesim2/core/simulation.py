@@ -1,8 +1,10 @@
 import random
+import os
 from typing import List, Dict, Optional
 
 from spacesim2.core.actor import Actor, ActorType
-from spacesim2.core.commodity import CommodityType
+from spacesim2.core.commodity import CommodityRegistry
+from spacesim2.core.process import ProcessRegistry
 from spacesim2.core.market import Market
 from spacesim2.core.planet import Planet
 from spacesim2.core.ship import Ship, ShipStatus
@@ -10,6 +12,9 @@ from spacesim2.core.ship import Ship, ShipStatus
 
 class Simulation:
     """Main simulation controller."""
+    
+    # Class variable to store the global instance
+    instance = None
 
     def __init__(self) -> None:
         self.planets: List[Planet] = []
@@ -17,6 +22,23 @@ class Simulation:
         self.ships: List[Ship] = []
         self.current_turn = 0
         self.market_stats: Dict = {}  # Track market statistics
+        
+        # Initialize registries
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        data_dir = os.path.join(base_dir, 'data')
+        
+        self.commodity_registry = CommodityRegistry()
+        commodities_path = os.path.join(data_dir, 'commodities.yaml')
+        if os.path.exists(commodities_path):
+            self.commodity_registry.load_from_file(commodities_path)
+        
+        self.process_registry = ProcessRegistry(self.commodity_registry)
+        processes_path = os.path.join(data_dir, 'processes.yaml')
+        if os.path.exists(processes_path):
+            self.process_registry.load_from_file(processes_path)
+        
+        # Set this instance as the global instance
+        Simulation.instance = self
 
     def setup_simple(self, num_regular_actors: int = 4, num_market_makers: int = 1, num_ships: int = 2) -> None:
         """Set up a simple simulation with two planets, multiple actors, and ships.
@@ -32,6 +54,7 @@ class Simulation:
         
         # Create and initialize the market for Earth
         earth_market = Market()
+        earth_market.commodity_registry = self.commodity_registry  # Give market access to commodity registry
         earth.market = earth_market
         
         # Create Mars (positioned at a different location)
@@ -40,6 +63,7 @@ class Simulation:
         
         # Create and initialize the market for Mars
         mars_market = Market()
+        mars_market.commodity_registry = self.commodity_registry  # Give market access to commodity registry
         mars.market = mars_market
         
         # Create actors for Earth
@@ -57,26 +81,19 @@ class Simulation:
             num_market_makers=num_market_makers,
             actor_name_prefix="Mars"
         )
-            
-        # Give some initial commodities to market makers to jumpstart the market
-        for actor in self.actors:
-            if actor.actor_type == ActorType.MARKET_MAKER:
-                actor.inventory.add_commodity(CommodityType.RAW_FOOD, 20)
-                actor.inventory.add_commodity(CommodityType.FUEL, 15)
-                
-        # Give regular actors some food to get started
-        for actor in self.actors:
-            if actor.actor_type == ActorType.REGULAR:
-                actor.inventory.add_commodity(CommodityType.RAW_FOOD, 3)
-                # Give a small amount of fuel to some actors to seed production
-                if random.random() < 0.5:  # 50% chance
-                    actor.inventory.add_commodity(CommodityType.FUEL, 1)
         
+        # Give some initial commodities to all actors
+        self._distribute_initial_commodities()
+            
         # Create ships and distribute them across planets
         self._setup_ships(num_ships)
+        
+        # Set simulation reference in all actors
+        for actor in self.actors:
+            actor.sim = self
                 
     def _setup_planet_actors(self, planet: Planet, num_regular_actors: int, 
-                             num_market_makers: int, actor_name_prefix: str) -> None:
+                         num_market_makers: int, actor_name_prefix: str) -> None:
         """Set up actors for a specific planet.
         
         Args:
@@ -95,7 +112,7 @@ class Simulation:
                 planet=planet,
                 actor_type=ActorType.REGULAR,
                 production_efficiency=efficiency,
-                initial_money=50.0
+                initial_money=50
             )
             self.actors.append(actor)
             planet.add_actor(actor)
@@ -106,10 +123,73 @@ class Simulation:
                 name=f"{actor_name_prefix}MarketMaker-{i}", 
                 planet=planet,
                 actor_type=ActorType.MARKET_MAKER,
-                initial_money=200.0
+                initial_money=200
             )
             self.actors.append(actor)
             planet.add_actor(actor)
+    
+    def _distribute_initial_commodities(self) -> None:
+        """Distribute initial commodities to actors."""
+        # Get all commodities from registry
+        food = self.commodity_registry.get_commodity("food")
+        biomass = self.commodity_registry.get_commodity("biomass")
+        simple_tools = self.commodity_registry.get_commodity("simple_tools")
+        nova_fuel = self.commodity_registry.get_commodity("nova_fuel")
+        nova_fuel_ore = self.commodity_registry.get_commodity("nova_fuel_ore")
+        common_metal = self.commodity_registry.get_commodity("common_metal")
+        common_metal_ore = self.commodity_registry.get_commodity("common_metal_ore")
+        simple_building_materials = self.commodity_registry.get_commodity("simple_building_materials")
+        metalworking_facility = self.commodity_registry.get_commodity("metalworking_facility")
+        smelting_facility = self.commodity_registry.get_commodity("smelting_facility")
+        
+        # Give some initial commodities to market makers to jumpstart the market
+        for actor in self.actors:
+            if actor.actor_type == ActorType.MARKET_MAKER:
+                # Give food and resources
+                if food:
+                    actor.inventory.add_commodity(food, 20)
+                if biomass:
+                    actor.inventory.add_commodity(biomass, 30)
+                if simple_tools:
+                    actor.inventory.add_commodity(simple_tools, 5)
+                if nova_fuel:
+                    actor.inventory.add_commodity(nova_fuel, 15)
+                if nova_fuel_ore:
+                    actor.inventory.add_commodity(nova_fuel_ore, 20)
+                if common_metal:
+                    actor.inventory.add_commodity(common_metal, 10)
+                if common_metal_ore:
+                    actor.inventory.add_commodity(common_metal_ore, 15)
+                if simple_building_materials:
+                    actor.inventory.add_commodity(simple_building_materials, 15)
+                
+                # Give market makers some facilities to jumpstart production
+                if metalworking_facility:
+                    actor.inventory.add_commodity(metalworking_facility, 1)
+                if smelting_facility:
+                    actor.inventory.add_commodity(smelting_facility, 1)
+                
+        # Give regular actors some commodities to get started
+        for i, actor in enumerate(self.actors):
+            if actor.actor_type == ActorType.REGULAR:
+                # Basic food and resources
+                if food:
+                    actor.inventory.add_commodity(food, 3)
+                if biomass:
+                    actor.inventory.add_commodity(biomass, 5)
+                
+                # Give a small amount of fuel and tools to some actors to seed production
+                if random.random() < 0.5:  # 50% chance
+                    if nova_fuel:
+                        actor.inventory.add_commodity(nova_fuel, 1)
+                    if simple_tools:
+                        actor.inventory.add_commodity(simple_tools, 1)
+                
+                # Give some regular actors facilities (one in four)
+                if i % 4 == 0 and smelting_facility:
+                    actor.inventory.add_commodity(smelting_facility, 1)
+                elif i % 4 == 1 and metalworking_facility:
+                    actor.inventory.add_commodity(metalworking_facility, 1)
 
     def _setup_ships(self, num_ships: int) -> None:
         """Set up ships for the simulation.
@@ -136,7 +216,9 @@ class Simulation:
             )
             
             # Give ships some starting fuel
-            ship.cargo.add_commodity(CommodityType.FUEL, 30)
+            nova_fuel = self.commodity_registry.get_commodity("nova_fuel")
+            if nova_fuel:
+                ship.cargo.add_commodity(nova_fuel, 30)
             
             # Add ship to simulation and planet
             self.ships.append(ship)
@@ -205,35 +287,44 @@ class Simulation:
                 "fuel_volume": []
             }
         
-        # Record food stats
-        food_price = market.get_avg_price(CommodityType.RAW_FOOD)
-        food_transactions = sum(
-            1 for t in market.transaction_history 
-            if t.commodity_type == CommodityType.RAW_FOOD
-        )
-        food_volume = sum(
-            t.quantity for t in market.transaction_history 
-            if t.commodity_type == CommodityType.RAW_FOOD
-        )
+        # Get commodities by ID
+        food_commodity = self.commodity_registry.get_commodity("food")
+        fuel_commodity = self.commodity_registry.get_commodity("nova_fuel")
         
-        self.market_stats[planet.name]["food_prices"].append(food_price)
-        self.market_stats[planet.name]["food_transactions"].append(food_transactions)
-        self.market_stats[planet.name]["food_volume"].append(food_volume)
-        
-        # Record fuel stats
-        fuel_price = market.get_avg_price(CommodityType.FUEL)
-        fuel_transactions = sum(
-            1 for t in market.transaction_history 
-            if t.commodity_type == CommodityType.FUEL
-        )
-        fuel_volume = sum(
-            t.quantity for t in market.transaction_history 
-            if t.commodity_type == CommodityType.FUEL
-        )
-        
-        self.market_stats[planet.name]["fuel_prices"].append(fuel_price)
-        self.market_stats[planet.name]["fuel_transactions"].append(fuel_transactions)
-        self.market_stats[planet.name]["fuel_volume"].append(fuel_volume)
+        if food_commodity and fuel_commodity:
+            # Record food stats
+            food_price = market.get_avg_price(food_commodity)
+            food_transactions = sum(
+                1 for t in market.transaction_history 
+                if t.commodity_type == food_commodity or 
+                (isinstance(t.commodity_type, str) and t.commodity_type == "food")
+            )
+            food_volume = sum(
+                t.quantity for t in market.transaction_history 
+                if t.commodity_type == food_commodity or 
+                (isinstance(t.commodity_type, str) and t.commodity_type == "food")
+            )
+            
+            self.market_stats[planet.name]["food_prices"].append(food_price)
+            self.market_stats[planet.name]["food_transactions"].append(food_transactions)
+            self.market_stats[planet.name]["food_volume"].append(food_volume)
+            
+            # Record fuel stats
+            fuel_price = market.get_avg_price(fuel_commodity)
+            fuel_transactions = sum(
+                1 for t in market.transaction_history 
+                if t.commodity_type == fuel_commodity or 
+                (isinstance(t.commodity_type, str) and t.commodity_type == "nova_fuel")
+            )
+            fuel_volume = sum(
+                t.quantity for t in market.transaction_history 
+                if t.commodity_type == fuel_commodity or 
+                (isinstance(t.commodity_type, str) and t.commodity_type == "nova_fuel")
+            )
+            
+            self.market_stats[planet.name]["fuel_prices"].append(fuel_price)
+            self.market_stats[planet.name]["fuel_transactions"].append(fuel_transactions)
+            self.market_stats[planet.name]["fuel_volume"].append(fuel_volume)
 
     def run_simulation(self, num_turns: int) -> None:
         """Run the simulation for a specified number of turns."""
@@ -251,7 +342,14 @@ class Simulation:
                     destination_name = ship.destination.name
                     progress_percent = int(ship.travel_progress * 100)
                     print(f"  {ship.name}: En route to {destination_name} ({progress_percent}% complete)")
-                    print(f"    Cargo: {ship.cargo.get_quantity(CommodityType.RAW_FOOD)} food, {ship.cargo.get_quantity(CommodityType.FUEL)} fuel")
+                    
+                    # Get commodity quantities
+                    food_commodity = self.commodity_registry.get_commodity("food")
+                    fuel_commodity = self.commodity_registry.get_commodity("nova_fuel")
+                    food_qty = ship.cargo.get_quantity(food_commodity) if food_commodity else 0
+                    fuel_qty = ship.cargo.get_quantity(fuel_commodity) if fuel_commodity else 0
+                    
+                    print(f"    Cargo: {food_qty} food, {fuel_qty} fuel")
                     print(f"    Money: {ship.money} credits")
                     print(f"    Status: {ship.last_action}")
         
@@ -261,9 +359,12 @@ class Simulation:
             
             # Calculate market statistics if available
             if planet.market:
-                food_price = planet.market.get_avg_price(CommodityType.RAW_FOOD)
-                fuel_price = planet.market.get_avg_price(CommodityType.FUEL)
-                print(f"  Market: Raw Food Price: {food_price}, Fuel Price: {fuel_price}")
+                food_commodity = self.commodity_registry.get_commodity("food")
+                fuel_commodity = self.commodity_registry.get_commodity("nova_fuel")
+                if food_commodity and fuel_commodity:
+                    food_price = planet.market.get_avg_price(food_commodity)
+                    fuel_price = planet.market.get_avg_price(fuel_commodity)
+                    print(f"  Market: Food Price: {food_price}, Fuel Price: {fuel_price}")
                 
                 # Print current turn's transactions only
                 if planet.market.transaction_history:
@@ -273,7 +374,12 @@ class Simulation:
                     if current_turn_transactions:
                         print(f"  Transactions this turn:")
                         for tx in current_turn_transactions:
-                            print(f"    {tx.buyer.name} bought {tx.quantity} {tx.commodity_type.name} from {tx.seller.name} @ {tx.price}")
+                            # Handle string or object commodity type
+                            if hasattr(tx.commodity_type, 'name'):
+                                commodity_name = tx.commodity_type.name
+                            else:
+                                commodity_name = str(tx.commodity_type)
+                            print(f"    {tx.buyer.name} bought {tx.quantity} {commodity_name} from {tx.seller.name} @ {tx.price}")
                     else:
                         print("  No transactions this turn")
                 else:
@@ -281,21 +387,73 @@ class Simulation:
             
             # Print actor status
             for actor in planet.actors:
-                food_qty = actor.inventory.get_quantity(CommodityType.RAW_FOOD)
+                # Get commodity quantities
+                food_commodity = self.commodity_registry.get_commodity("food")
+                biomass_commodity = self.commodity_registry.get_commodity("biomass")
+                tools_commodity = self.commodity_registry.get_commodity("simple_tools")
+                fuel_commodity = self.commodity_registry.get_commodity("nova_fuel")
+                metal_commodity = self.commodity_registry.get_commodity("common_metal")
+                metal_ore_commodity = self.commodity_registry.get_commodity("common_metal_ore")
+                
+                # Get quantities
+                food_qty = actor.inventory.get_quantity(food_commodity) if food_commodity else 0
+                biomass_qty = actor.inventory.get_quantity(biomass_commodity) if biomass_commodity else 0
+                tools_qty = actor.inventory.get_quantity(tools_commodity) if tools_commodity else 0
+                fuel_qty = actor.inventory.get_quantity(fuel_commodity) if fuel_commodity else 0
+                metals_qty = actor.inventory.get_quantity(metal_commodity) if metal_commodity else 0
+                metal_ore_qty = actor.inventory.get_quantity(metal_ore_commodity) if metal_ore_commodity else 0
+                
+                # Fall back to string IDs if needed
+                if food_qty == 0 and isinstance(food_commodity, str):
+                    food_qty = actor.inventory.get_quantity("food")
+                if biomass_qty == 0 and isinstance(biomass_commodity, str):
+                    biomass_qty = actor.inventory.get_quantity("biomass")
+                if tools_qty == 0 and isinstance(tools_commodity, str):
+                    tools_qty = actor.inventory.get_quantity("simple_tools")
+                if fuel_qty == 0 and isinstance(fuel_commodity, str):
+                    fuel_qty = actor.inventory.get_quantity("nova_fuel")
+                if metals_qty == 0 and isinstance(metal_commodity, str):
+                    metals_qty = actor.inventory.get_quantity("common_metal")
+                if metal_ore_qty == 0 and isinstance(metal_ore_commodity, str):
+                    metal_ore_qty = actor.inventory.get_quantity("common_metal_ore")
+                
                 food_status = "✓" if actor.food_consumed_this_turn else "✗"
+                
+                # Show actor's last action
+                action = actor.last_action
+                
+                # Check for facilities
+                smelting = actor.inventory.get_quantity("smelting_facility")
+                metalworking = actor.inventory.get_quantity("metalworking_facility")
+                facilities_str = ""
+                if smelting > 0 or metalworking > 0:
+                    facility_parts = []
+                    if smelting > 0:
+                        facility_parts.append(f"Smelting:{smelting}")
+                    if metalworking > 0:
+                        facility_parts.append(f"Metalworking:{metalworking}")
+                    facilities_str = f", Facilities:[{', '.join(facility_parts)}]"
                 
                 # Show market maker status differently
                 if actor.actor_type == ActorType.MARKET_MAKER:
-                    print(f"  [MM] {actor.name}: {actor.money} credits, {food_qty} food {food_status}")
+                    print(f"  [MM] {actor.name}: ${actor.money}, Food:{food_qty}{food_status}, Bio:{biomass_qty}, Action:{action}{facilities_str}")
                 else:
-                    print(f"  {actor.name}: {actor.money} credits, {food_qty} food {food_status}")
+                    print(f"  {actor.name}: ${actor.money}, Food:{food_qty}{food_status}, Bio:{biomass_qty}, " +
+                          f"Tools:{tools_qty}, Metal:{metals_qty}, MetalOre:{metal_ore_qty}, Fuel:{fuel_qty}, Action:{action}{facilities_str}")
             
             # Print ship status for ships at this planet
             if planet.ships:
                 print(f"  Ships docked at {planet.name}:")
                 for ship in planet.ships:
                     print(f"    {ship.name}: {ship.money} credits")
-                    print(f"      Cargo: {ship.cargo.get_quantity(CommodityType.RAW_FOOD)} food, {ship.cargo.get_quantity(CommodityType.FUEL)} fuel")
+                    
+                    # Get commodity quantities
+                    food_commodity = self.commodity_registry.get_commodity("food")
+                    fuel_commodity = self.commodity_registry.get_commodity("nova_fuel")
+                    food_qty = ship.cargo.get_quantity(food_commodity) if food_commodity else 0
+                    fuel_qty = ship.cargo.get_quantity(fuel_commodity) if fuel_commodity else 0
+                    
+                    print(f"      Cargo: {food_qty} food, {fuel_qty} fuel")
                     print(f"      Status: {ship.last_action}")
                 
             # Count hunger

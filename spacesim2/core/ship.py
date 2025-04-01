@@ -4,7 +4,7 @@ import enum
 import math
 
 from spacesim2.core.planet import Planet
-from spacesim2.core.commodity import Inventory, CommodityType, Commodity
+from spacesim2.core.commodity import Inventory
 from spacesim2.core.market import Market
 
 
@@ -40,12 +40,24 @@ class TraderBrain(ShipBrain):
             return
         
         market = self.ship.planet.market
-        commodity_type = CommodityType.RAW_FOOD  # For now, only trade food
+        
+        # Get commodity references
+        food_commodity = None
+        fuel_commodity = None
+        
+        if self.ship.simulation and hasattr(self.ship.simulation, 'commodity_registry'):
+            food_commodity = self.ship.simulation.commodity_registry.get_commodity("food")
+            fuel_commodity = self.ship.simulation.commodity_registry.get_commodity("nova_fuel")
+        
+        if not food_commodity or not fuel_commodity:
+            # Can't trade without commodity references
+            self.ship.last_action = "No trading - commodity definitions not available"
+            return
         
         # Track cargo and money
-        cargo_quantity = self.ship.cargo.get_quantity(commodity_type)
+        cargo_quantity = self.ship.cargo.get_quantity(food_commodity)
         cargo_space_available = self.ship.cargo_capacity - self.ship.cargo.get_total_quantity()
-        fuel_quantity = self.ship.cargo.get_quantity(CommodityType.FUEL)
+        fuel_quantity = self.ship.cargo.get_quantity(fuel_commodity)
         
         # Cancel existing orders
         existing_orders = market.get_actor_orders(self.ship)
@@ -57,38 +69,38 @@ class TraderBrain(ShipBrain):
         # If we have cargo to sell, sell it
         if cargo_quantity > 0:
             # Get market price information
-            avg_price = market.get_avg_price(commodity_type)
+            avg_price = market.get_avg_price(food_commodity)
             # Aim to sell above average price if possible
             sell_price = max(int(avg_price * 1.1), 2)
             
             order_id = market.place_sell_order(
-                self.ship, commodity_type, cargo_quantity, sell_price
+                self.ship, food_commodity, cargo_quantity, sell_price
             )
             if order_id:
                 actions.append(f"Offering {cargo_quantity} food at {sell_price} credits each")
-                self.ship.active_orders[order_id] = f"sell {commodity_type.name}"
+                self.ship.active_orders[order_id] = f"sell food"
         
         # If we have room for cargo and money to spend, buy fuel first then commodities
         if cargo_space_available > 0 and self.ship.money > 0:
             # Prioritize buying fuel if needed
             if fuel_quantity < self.ship.fuel_capacity / 2:
                 fuel_to_buy = min(cargo_space_available, self.ship.fuel_capacity - fuel_quantity)
-                fuel_price = market.get_avg_price(CommodityType.FUEL) or 5  # Default price if unknown
+                fuel_price = market.get_avg_price(fuel_commodity) or 5  # Default price if unknown
                 affordable_fuel = min(fuel_to_buy, self.ship.money // fuel_price)
                 
                 if affordable_fuel > 0:
                     order_id = market.place_buy_order(
-                        self.ship, CommodityType.FUEL, affordable_fuel, fuel_price
+                        self.ship, fuel_commodity, affordable_fuel, fuel_price
                     )
                     if order_id:
                         actions.append(f"Buying {affordable_fuel} fuel at {fuel_price} credits each")
-                        self.ship.active_orders[order_id] = f"buy {CommodityType.FUEL.name}"
+                        self.ship.active_orders[order_id] = f"buy fuel"
                         cargo_space_available -= affordable_fuel
             
             # Buy commodities with remaining space and money
             if cargo_space_available > 0 and self.ship.money > 0:
                 # Get market price information
-                avg_price = market.get_avg_price(commodity_type)
+                avg_price = market.get_avg_price(food_commodity)
                 # Aim to buy below average price if possible
                 buy_price = max(int(avg_price * 0.9), 1)
                 
@@ -100,11 +112,11 @@ class TraderBrain(ShipBrain):
                 
                 if affordable_quantity > 0:
                     order_id = market.place_buy_order(
-                        self.ship, commodity_type, affordable_quantity, buy_price
+                        self.ship, food_commodity, affordable_quantity, buy_price
                     )
                     if order_id:
                         actions.append(f"Bidding for {affordable_quantity} food at {buy_price} credits each")
-                        self.ship.active_orders[order_id] = f"buy {commodity_type.name}"
+                        self.ship.active_orders[order_id] = f"buy food"
         
         # Update the ship's last action summary
         if actions:
@@ -122,10 +134,21 @@ class TraderBrain(ShipBrain):
         if not self.ship.planet or not self.ship.simulation or not self.ship.simulation.planets:
             return None
         
+        # Get commodity references
+        fuel_commodity = None
+        food_commodity = None
+        
+        if self.ship.simulation and hasattr(self.ship.simulation, 'commodity_registry'):
+            fuel_commodity = self.ship.simulation.commodity_registry.get_commodity("nova_fuel")
+            food_commodity = self.ship.simulation.commodity_registry.get_commodity("food")
+        
+        if not fuel_commodity or not food_commodity:
+            return None
+        
         # Consider traveling if we have enough fuel and cargo
         current_planet = self.ship.planet
-        fuel_available = self.ship.cargo.get_quantity(CommodityType.FUEL)
-        food_cargo = self.ship.cargo.get_quantity(CommodityType.RAW_FOOD)
+        fuel_available = self.ship.cargo.get_quantity(fuel_commodity)
+        food_cargo = self.ship.cargo.get_quantity(food_commodity)
         
         # Find all planets we can reach with our fuel
         reachable_planets = []
@@ -151,7 +174,7 @@ class TraderBrain(ShipBrain):
             
             for planet, _ in reachable_planets:
                 if planet.market:
-                    price = planet.market.get_avg_price(CommodityType.RAW_FOOD)
+                    price = planet.market.get_avg_price(food_commodity)
                     if price > best_price:
                         best_price = price
                         best_planet = planet
@@ -165,7 +188,7 @@ class TraderBrain(ShipBrain):
             
             for planet, _ in reachable_planets:
                 if planet.market:
-                    price = planet.market.get_avg_price(CommodityType.RAW_FOOD)
+                    price = planet.market.get_avg_price(food_commodity)
                     if 0 < price < best_price:  # Ensure price is positive
                         best_price = price
                         best_planet = planet
@@ -238,9 +261,18 @@ class Ship:
         Returns:
             True if maintenance was successful, False if we lack resources.
         """
+        # Get fuel commodity
+        fuel_commodity = None
+        if self.simulation and hasattr(self.simulation, 'commodity_registry'):
+            fuel_commodity = self.simulation.commodity_registry.get_commodity("nova_fuel")
+        
+        if not fuel_commodity:
+            self.last_action = "Cannot perform maintenance - fuel commodity not defined"
+            return False
+            
         # Simple maintenance: costs 5 fuel units
-        if self.cargo.has_quantity(CommodityType.FUEL, 5):
-            self.cargo.remove_commodity(CommodityType.FUEL, 5)
+        if self.cargo.has_quantity(fuel_commodity, 5):
+            self.cargo.remove_commodity(fuel_commodity, 5)
             self.maintenance_needed = False
             self.status = ShipStatus.DOCKED
             self.last_action = "Performed maintenance using 5 fuel units"
@@ -277,18 +309,27 @@ class Ship:
             self.last_action = "Maintenance required before departure"
             return False
             
+        # Get fuel commodity
+        fuel_commodity = None
+        if self.simulation and hasattr(self.simulation, 'commodity_registry'):
+            fuel_commodity = self.simulation.commodity_registry.get_commodity("nova_fuel")
+        
+        if not fuel_commodity:
+            self.last_action = "Cannot start journey - fuel commodity not defined"
+            return False
+            
         # Calculate distance and fuel requirements
         distance = Ship.calculate_distance(self.planet, destination)
         fuel_needed = Ship.calculate_fuel_needed(distance)
         adjusted_fuel_needed = math.ceil(fuel_needed / self.fuel_efficiency)
         
         # Check if we have enough fuel
-        if not self.cargo.has_quantity(CommodityType.FUEL, adjusted_fuel_needed):
+        if not self.cargo.has_quantity(fuel_commodity, adjusted_fuel_needed):
             self.last_action = f"Insufficient fuel for journey (need {adjusted_fuel_needed})"
             return False
             
         # Consume fuel
-        self.cargo.remove_commodity(CommodityType.FUEL, adjusted_fuel_needed)
+        self.cargo.remove_commodity(fuel_commodity, adjusted_fuel_needed)
         
         # Calculate travel time (1 turn per 20 distance units, minimum 1)
         self.travel_time = max(1, math.ceil(distance / 20))
