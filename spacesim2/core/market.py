@@ -330,40 +330,64 @@ class Market:
             buy_order: The buy order (if any)
             sell_order: The sell order (if any)
         """
-        total_amount = quantity * price
+        # Handle commodity transfer first to determine actual quantity
+        actual_quantity = quantity  # Track the actual quantity being transferred
+        
+        if sell_order:
+            # For sell orders, we need to unreserve the commodity (which makes it available again)
+            # and then remove it from the seller's inventory
+            reserved_quantity = min(quantity, seller.inventory.get_reserved_quantity(commodity_type))
+            if reserved_quantity < quantity:
+                # This should not happen, but log it if it does
+                actual_quantity = reserved_quantity
+                print(f"WARNING: Reserved quantity ({reserved_quantity}) less than transfer quantity ({quantity})")
+                
+            # First unreserve the commodity (moves from reserved to available)
+            seller.inventory.unreserve_commodity(commodity_type, actual_quantity)
+            
+            # Then remove from available inventory
+            if not seller.inventory.remove_commodity(commodity_type, actual_quantity):
+                print(f"ERROR: Failed to remove {actual_quantity} of {commodity_type.id} from seller inventory")
+                actual_quantity = 0
+        else:
+            # Immediate transaction - remove directly from available inventory
+            if not seller.inventory.remove_commodity(commodity_type, quantity):
+                # This should not happen, but log it if it does
+                print(f"ERROR: Failed to remove {quantity} of {commodity_type.id} from seller inventory")
+                actual_quantity = 0
+        
+        # Calculate the actual price based on the quantity that was transferred
+        total_amount = actual_quantity * price
         
         # Handle money transfers differently based on whether order exists
         if buy_order:
             # Money is already reserved - adjust from reserved to spent
-            # In case of partial fills, calculate the actual amount to unreserve
-            reserved_amount = min(quantity * buy_order.price, buyer.reserved_money)
+            # Calculate the exact amount to unreserve based on the actual quantity transferred
+            reserved_amount = min(actual_quantity * buy_order.price, buyer.reserved_money)
             buyer.reserved_money -= reserved_amount
+            
+            # If transaction price differs from order price, adjust the difference
+            price_diff = buy_order.price - price
+            if price_diff > 0 and actual_quantity > 0:
+                # Buyer pays less than reserved, return the difference
+                refund = actual_quantity * price_diff
+                buyer.money += refund
         else:
             # Immediate transaction - reduce available money
             buyer.money -= total_amount
             
         # Add money to seller (always goes to available money)
         seller.money += total_amount
-        
-        # Handle commodity transfer differently based on whether order exists
-        if sell_order:
-            # Get reserved quantity
-            reserved_quantity = min(quantity, seller.inventory.get_reserved_quantity(commodity_type))
-            # No need to manually update the reserved commodities - unreserve_commodity handles it
-            seller.inventory.unreserve_commodity(commodity_type, reserved_quantity)
-        else:
-            # Immediate transaction - remove from available inventory
-            seller.inventory.remove_commodity(commodity_type, quantity)
             
-        # Add commodity to buyer (always goes to available inventory)
-        buyer.inventory.add_commodity(commodity_type, quantity)
+        # Add commodity to buyer (only the amount actually taken from seller)
+        buyer.inventory.add_commodity(commodity_type, actual_quantity)
         
-        # Record the transaction
+        # Record the transaction (with the actual quantity transferred)
         transaction = Transaction(
             buyer=buyer,
             seller=seller,
             commodity_type=commodity_type,
-            quantity=quantity,
+            quantity=actual_quantity,
             price=price,
             total_amount=total_amount,
             turn=self.current_turn
