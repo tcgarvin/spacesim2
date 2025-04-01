@@ -3,7 +3,7 @@ import pygame
 from pygame import Rect, Surface
 
 from spacesim2.core.ship import Ship, ShipStatus
-from spacesim2.core.commodity import CommodityType
+from spacesim2.core.commodity import CommodityDefinition
 from spacesim2.core.planet import Planet
 from spacesim2.ui.utils.text import TextRenderer
 
@@ -212,8 +212,17 @@ class ShipListPanel:
             self.screen.blit(money_text, money_rect)
             
             # Ship cargo status
-            cargo_food = ship.cargo.get_quantity(CommodityType.RAW_FOOD)
-            cargo_fuel = ship.cargo.get_quantity(CommodityType.FUEL)
+            raw_food = None
+            fuel = None
+            if hasattr(ship, "cargo") and hasattr(ship.cargo, "commodities"):
+                for commodity in ship.cargo.commodities:
+                    if commodity.id == "raw_food":
+                        raw_food = commodity
+                    elif commodity.id == "fuel":
+                        fuel = commodity
+            
+            cargo_food = ship.cargo.get_quantity(raw_food) if raw_food else 0
+            cargo_fuel = ship.cargo.get_quantity(fuel) if fuel else 0
             cargo_text, cargo_rect = text_renderer.render_text(
                 f"Food: {cargo_food}, Fuel: {cargo_fuel}", "small", self.colors["text"]["food"]
             )

@@ -10,7 +10,7 @@ except ImportError:
     print("Warning: pygame not installed. Only headless mode available.")
 
 from spacesim2.core.actor import Actor
-from spacesim2.core.commodity import CommodityType
+from spacesim2.core.commodity import CommodityDefinition
 from spacesim2.core.simulation import Simulation
 from spacesim2.core.planet import Planet
 from spacesim2.core.ship import Ship, ShipStatus
@@ -55,7 +55,7 @@ class PygameUI:
         self.selected_planet: Optional[Planet] = None
         self.selected_actor: Optional[Actor] = None
         self.selected_ship: Optional[Ship] = None
-        self.selected_commodity: Optional[CommodityType] = None
+        self.selected_commodity: Optional[CommodityDefinition] = None
         self.view_ships = False  # Toggle between viewing actors and ships in the left pane
         
         # Initialize color manager

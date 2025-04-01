@@ -5,7 +5,7 @@ from pygame import Rect, Surface
 from spacesim2.core.actor import Actor, ActorType
 from spacesim2.core.ship import Ship, ShipStatus
 from spacesim2.core.planet import Planet
-from spacesim2.core.commodity import CommodityType
+from spacesim2.core.commodity import CommodityDefinition
 from spacesim2.core.simulation import Simulation
 from spacesim2.ui.utils.text import TextRenderer
 from spacesim2.ui.renderers.ui_renderer import UIRenderer
@@ -39,7 +39,7 @@ class DetailPanel:
         self.selected_planet: Optional[Planet] = None
         self.selected_actor: Optional[Actor] = None
         self.selected_ship: Optional[Ship] = None
-        self.selected_commodity: Optional[CommodityType] = None
+        self.selected_commodity: Optional[CommodityDefinition] = None
         self.simulation: Optional[Simulation] = None
         
     def set_simulation(self, simulation: Simulation) -> None:
@@ -58,7 +58,7 @@ class DetailPanel:
         """Set the currently selected ship."""
         self.selected_ship = ship
         
-    def set_selected_commodity(self, commodity: Optional[CommodityType]) -> None:
+    def set_selected_commodity(self, commodity: Optional[CommodityDefinition]) -> None:
         """Set the currently selected commodity."""
         self.selected_commodity = commodity
         
@@ -95,14 +95,16 @@ class DetailPanel:
                     commodity_index = (y_relative - commodity_start_y) // line_height
                     
                     # Select the commodity if valid
-                    commodity_types = list(CommodityType)
-                    if 0 <= commodity_index < len(commodity_types):
-                        # If already selected, deselect it
-                        if self.selected_commodity == commodity_types[commodity_index]:
-                            self.selected_commodity = None
-                        else:
-                            self.selected_commodity = commodity_types[commodity_index]
-                        return True
+                    commodity_registry = self.simulation.commodity_registry if self.simulation else None
+                    if commodity_registry:
+                        commodity_list = commodity_registry.all_commodities()
+                        if 0 <= commodity_index < len(commodity_list):
+                            # If already selected, deselect it
+                            if self.selected_commodity == commodity_list[commodity_index]:
+                                self.selected_commodity = None
+                            else:
+                                self.selected_commodity = commodity_list[commodity_index]
+                            return True
                             
         return False
         
@@ -118,37 +120,45 @@ class DetailPanel:
         # When in planet details, allow commodity selection
         if self.selected_planet and self.selected_planet.market:
             # Get list of available commodities
-            commodity_types = list(CommodityType)
-            
-            if not commodity_types:
+            commodity_registry = self.simulation.commodity_registry if self.simulation else None
+            if not commodity_registry:
                 return False
                 
-            current_index = commodity_types.index(self.selected_commodity) if self.selected_commodity in commodity_types else -1
+            commodity_list = commodity_registry.all_commodities()
+            
+            if not commodity_list:
+                return False
+                
+            current_index = -1
+            for i, commodity in enumerate(commodity_list):
+                if self.selected_commodity == commodity:
+                    current_index = i
+                    break
             
             if key == pygame.K_UP:
                 # Select previous commodity
                 if current_index > 0:
-                    self.selected_commodity = commodity_types[current_index - 1]
+                    self.selected_commodity = commodity_list[current_index - 1]
                 elif current_index == -1:
                     # No commodity selected, select the last one
-                    self.selected_commodity = commodity_types[-1]
+                    self.selected_commodity = commodity_list[-1]
                 return True
                 
             elif key == pygame.K_DOWN:
                 # Select next commodity
-                if current_index < len(commodity_types) - 1:
-                    self.selected_commodity = commodity_types[current_index + 1]
+                if current_index < len(commodity_list) - 1:
+                    self.selected_commodity = commodity_list[current_index + 1]
                 elif current_index == -1:
                     # No commodity selected, select the first one
-                    self.selected_commodity = commodity_types[0]
+                    self.selected_commodity = commodity_list[0]
                 return True
                 
             elif key == pygame.K_RETURN:
                 # Toggle commodity selection
                 if self.selected_commodity:
                     self.selected_commodity = None
-                elif commodity_types:
-                    self.selected_commodity = commodity_types[0]
+                elif commodity_list:
+                    self.selected_commodity = commodity_list[0]
                 return True
                 
         return False
@@ -254,8 +264,16 @@ class DetailPanel:
         y += line_height
         
         # Fuel capacity and efficiency
+        fuel = None
+        if hasattr(ship, "cargo") and hasattr(ship.cargo, "commodities"):
+            for commodity in ship.cargo.commodities:
+                if commodity.id == "fuel":
+                    fuel = commodity
+                    break
+        
+        fuel_amount = ship.cargo.get_quantity(fuel) if fuel else 0
         fuel_text, fuel_rect = text_renderer.render_text(
-            f"Fuel: {ship.cargo.get_quantity(CommodityType.FUEL)}/{ship.fuel_capacity} units (Efficiency: {ship.fuel_efficiency:.2f})", 
+            f"Fuel: {fuel_amount}/{ship.fuel_capacity} units (Efficiency: {ship.fuel_efficiency:.2f})", 
             "normal", 
             self.colors["text"]["normal"]
         )
@@ -273,16 +291,16 @@ class DetailPanel:
         
         # List cargo items
         has_cargo = False
-        for commodity_type in CommodityType:
-            quantity = ship.cargo.get_quantity(commodity_type)
-            if quantity > 0:
-                has_cargo = True
-                item_text, item_rect = text_renderer.render_text(
-                    f"• {commodity_type.name}: {quantity}", "normal", self.colors["text"]["normal"]
-                )
-                item_rect.topleft = (x + 10, y)
-                self.screen.blit(item_text, item_rect)
-                y += line_height
+        if hasattr(ship, "cargo") and hasattr(ship.cargo, "commodities"):
+            for commodity_id, quantity in ship.cargo.commodities.items():
+                if quantity > 0:
+                    has_cargo = True
+                    item_text, item_rect = text_renderer.render_text(
+                        f"• {commodity_id.name}: {quantity}", "normal", self.colors["text"]["normal"]
+                    )
+                    item_rect.topleft = (x + 10, y)
+                    self.screen.blit(item_text, item_rect)
+                    y += line_height
                 
         if not has_cargo:
             empty_text, empty_rect = text_renderer.render_text(
@@ -335,7 +353,14 @@ class DetailPanel:
         y += line_height
         
         # Food status
-        food_qty = actor.inventory.get_quantity(CommodityType.RAW_FOOD) if hasattr(actor, "inventory") else 0
+        raw_food = None
+        if hasattr(actor, "inventory") and hasattr(actor.inventory, "commodities"):
+            for commodity in actor.inventory.commodities:
+                if commodity.id == "raw_food":
+                    raw_food = commodity
+                    break
+        
+        food_qty = actor.inventory.get_quantity(raw_food) if raw_food and hasattr(actor, "inventory") else 0
         food_status = "✓" if hasattr(actor, "food_consumed_this_turn") and actor.food_consumed_this_turn else "✗"
         food_text, food_rect = text_renderer.render_text(
             f"Food: {food_qty} {food_status}", "normal", self.colors["text"]["food"]
@@ -354,28 +379,30 @@ class DetailPanel:
         y += line_height
         
         # List inventory items
-        if hasattr(actor, "inventory"):
+        if hasattr(actor, "inventory") and hasattr(actor.inventory, "commodities"):
             # Get combined inventory (available and reserved)
-            for commodity_type in CommodityType:
-                quantity = actor.inventory.get_quantity(commodity_type)
-                if quantity > 0:
-                    available = actor.inventory.get_available_quantity(commodity_type)
-                    reserved = actor.inventory.get_reserved_quantity(commodity_type)
-                    
-                    # Show total and breakdown if items are reserved
-                    if reserved > 0:
-                        item_text, item_rect = text_renderer.render_text(
-                            f"• {commodity_type.value}: {quantity} ({available} avail, {reserved} reserved)", 
-                            "normal", 
-                            self.colors["text"]["normal"]
-                        )
-                    else:
-                        item_text, item_rect = text_renderer.render_text(
-                            f"• {commodity_type.value}: {quantity}", "normal", self.colors["text"]["normal"]
-                        )
-                    item_rect.topleft = (x + 10, y)
-                    self.screen.blit(item_text, item_rect)
-                    y += line_height
+            commodity_registry = self.simulation.commodity_registry if self.simulation else None
+            if commodity_registry:
+                for commodity in commodity_registry.all_commodities():
+                    quantity = actor.inventory.get_quantity(commodity)
+                    if quantity > 0:
+                        available = actor.inventory.get_available_quantity(commodity)
+                        reserved = actor.inventory.get_reserved_quantity(commodity)
+                        
+                        # Show total and breakdown if items are reserved
+                        if reserved > 0:
+                            item_text, item_rect = text_renderer.render_text(
+                                f"• {commodity.name}: {quantity} ({available} avail, {reserved} reserved)", 
+                                "normal", 
+                                self.colors["text"]["normal"]
+                            )
+                        else:
+                            item_text, item_rect = text_renderer.render_text(
+                                f"• {commodity.name}: {quantity}", "normal", self.colors["text"]["normal"]
+                            )
+                        item_rect.topleft = (x + 10, y)
+                        self.screen.blit(item_text, item_rect)
+                        y += line_height
         
         # Last actions section
         y += line_height // 2
@@ -445,32 +472,34 @@ class DetailPanel:
             y += line_height
             
             # List commodity prices
-            for commodity_type in CommodityType:
-                avg_price = planet.market.get_avg_price(commodity_type)
-                highest_bid, lowest_ask = planet.market.get_bid_ask_spread(commodity_type)
-                bid_ask_str = ""
-                if highest_bid is not None and lowest_ask is not None:
-                    bid_ask_str = f" (Bid: ${highest_bid}, Ask: ${lowest_ask})"
-                
-                # Highlight selected commodity
-                if commodity_type == self.selected_commodity:
-                    # Draw selection background
-                    pygame.draw.rect(
-                        self.screen,
-                        self.colors["ui_elements"]["button_hover"],
-                        (x, y, panel_rect.width - 40, line_height),
-                        border_radius=3
+            commodity_registry = self.simulation.commodity_registry if self.simulation else None
+            if commodity_registry:
+                for commodity in commodity_registry.all_commodities():
+                    avg_price = planet.market.get_avg_price(commodity)
+                    highest_bid, lowest_ask = planet.market.get_bid_ask_spread(commodity)
+                    bid_ask_str = ""
+                    if highest_bid is not None and lowest_ask is not None:
+                        bid_ask_str = f" (Bid: ${highest_bid}, Ask: ${lowest_ask})"
+                    
+                    # Highlight selected commodity
+                    if commodity == self.selected_commodity:
+                        # Draw selection background
+                        pygame.draw.rect(
+                            self.screen,
+                            self.colors["ui_elements"]["button_hover"],
+                            (x, y, panel_rect.width - 40, line_height),
+                            border_radius=3
+                        )
+                        text_color = self.colors["text"]["highlight"]
+                    else:
+                        text_color = self.colors["text"]["normal"]
+                    
+                    price_text, price_rect = text_renderer.render_text(
+                        f"• {commodity.name}: ${avg_price:.2f}{bid_ask_str}", "normal", text_color
                     )
-                    text_color = self.colors["text"]["highlight"]
-                else:
-                    text_color = self.colors["text"]["normal"]
-                
-                price_text, price_rect = text_renderer.render_text(
-                    f"• {commodity_type.value}: ${avg_price:.2f}{bid_ask_str}", "normal", text_color
-                )
-                price_rect.topleft = (x + 10, y)
-                self.screen.blit(price_text, price_rect)
-                y += line_height
+                    price_rect.topleft = (x + 10, y)
+                    self.screen.blit(price_text, price_rect)
+                    y += line_height
             
             # If a commodity is selected, show orders
             if self.selected_commodity and planet.market:
@@ -681,11 +710,15 @@ class DetailPanel:
         # Calculate total money and food in the system
         total_money = 0
         total_food = 0
+        raw_food_id = "raw_food"  # ID of the raw food commodity
         for planet in simulation.planets:
             for actor in planet.actors:
                 total_money += actor.money
-                if hasattr(actor, "inventory"):
-                    total_food += actor.inventory.get_quantity(CommodityType.RAW_FOOD)
+                if hasattr(actor, "inventory") and hasattr(actor.inventory, "commodities"):
+                    for commodity in actor.inventory.commodities:
+                        if commodity.id == raw_food_id:
+                            total_food += actor.inventory.get_quantity(commodity)
+                            break
         
         money_text, money_rect = text_renderer.render_text(
             f"• Total Money: ${total_money:,}", "normal", self.colors["text"]["money"]

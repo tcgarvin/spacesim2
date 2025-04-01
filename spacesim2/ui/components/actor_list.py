@@ -3,7 +3,7 @@ import pygame
 from pygame import Rect, Surface
 
 from spacesim2.core.actor import Actor, ActorType
-from spacesim2.core.commodity import CommodityType
+from spacesim2.core.commodity import CommodityDefinition
 from spacesim2.core.planet import Planet
 from spacesim2.ui.utils.text import TextRenderer
 
@@ -207,7 +207,14 @@ class ActorListPanel:
             self.screen.blit(money_text, money_rect)
             
             # Actor food status
-            food_qty = actor.inventory.get_quantity(CommodityType.RAW_FOOD) if hasattr(actor, "inventory") else 0
+            raw_food = None
+            if hasattr(actor, "inventory") and hasattr(actor.inventory, "commodities"):
+                for commodity in actor.inventory.commodities:
+                    if commodity.id == "raw_food":
+                        raw_food = commodity
+                        break
+                
+            food_qty = actor.inventory.get_quantity(raw_food) if raw_food and hasattr(actor, "inventory") else 0
             food_text, food_rect = text_renderer.render_text(
                 f"Food: {food_qty}", "small", self.colors["text"]["food"]
             )
