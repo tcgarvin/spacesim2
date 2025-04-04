@@ -162,6 +162,7 @@ class PygameUI:
         
         # Register mouse handlers
         self.input_handler.register_mouse_click_callback(1, self._handle_mouse_click)
+        self.input_handler.register_mouse_motion_callback(self._handle_mouse_motion)
         
         # Register scroll handlers
         self.input_handler.register_mouse_scroll_callback(4, self._handle_scroll_up)
@@ -230,6 +231,16 @@ class PygameUI:
         else:
             self.selected_ship = None
     
+    def _handle_mouse_motion(self, event: pygame.event.Event) -> None:
+        """Handle mouse motion for hover effects."""
+        x, y = event.pos
+        
+        # Update hover states only where needed
+        if x < self.left_pane_width:
+            # Handle actor hover in left pane
+            if not self.view_ships and self.actor_list_panel:
+                self.actor_list_panel.handle_mouse_motion(x, y)
+        
     def _handle_mouse_click(self, event: pygame.event.Event) -> None:
         """Handle mouse click."""
         x, y = event.pos
@@ -262,6 +273,13 @@ class PygameUI:
             if self.detail_panel:
                 self.detail_panel.handle_click(x, y)
                 self.selected_commodity = self.detail_panel.selected_commodity
+                
+                # Set market context when a commodity is selected
+                if self.actor_list_panel:
+                    if self.selected_commodity:
+                        self.actor_list_panel.set_market_context(self.selected_commodity)
+                    else:
+                        self.actor_list_panel.set_context("default")
     
     def _handle_scroll_up(self, event: pygame.event.Event) -> None:
         """Handle scroll up."""
@@ -303,6 +321,13 @@ class PygameUI:
             if self.detail_panel:
                 if self.detail_panel.handle_key(key):
                     self.selected_commodity = self.detail_panel.selected_commodity
+                    
+                    # Set market context when a commodity is selected (keyboard nav)
+                    if self.actor_list_panel:
+                        if self.selected_commodity:
+                            self.actor_list_panel.set_market_context(self.selected_commodity)
+                        else:
+                            self.actor_list_panel.set_context("default")
     
     def _update_selected_planet(self, planet: Optional[Planet]) -> None:
         """Update all components with the newly selected planet."""
@@ -312,6 +337,7 @@ class PygameUI:
         if self.actor_list_panel:
             self.actor_list_panel.set_selected_planet(planet)
             self.actor_list_panel.set_selected_actor(None)
+            self.actor_list_panel.set_context("default")
             
         if self.ship_list_panel:
             self.ship_list_panel.set_selected_planet(planet)
@@ -322,7 +348,6 @@ class PygameUI:
             
         if self.detail_panel:
             self.detail_panel.set_selected_planet(planet)
-            self.detail_panel.set_selected_actor(None)
             self.detail_panel.set_selected_ship(None)
             
         # Clear selections
@@ -361,6 +386,11 @@ class PygameUI:
                 self.ship_list_panel.render(self.text_renderer)
         else:
             if self.actor_list_panel:
+                # Always set the current context before rendering
+                if self.selected_commodity:
+                    self.actor_list_panel.set_market_context(self.selected_commodity)
+                else:
+                    self.actor_list_panel.set_context("default")
                 self.actor_list_panel.render(self.text_renderer)
                 
         if self.planet_view_panel:
@@ -368,7 +398,6 @@ class PygameUI:
             
         if self.detail_panel:
             # Update selected objects in case they changed
-            self.detail_panel.set_selected_actor(self.selected_actor)
             self.detail_panel.set_selected_ship(self.selected_ship)
             self.detail_panel.set_selected_commodity(self.selected_commodity)
             self.detail_panel.render(self.text_renderer)

@@ -172,8 +172,6 @@ class DetailPanel:
         # Title changes based on what's selected
         if self.selected_ship:
             title = f"Ship Details: {self.selected_ship.name}"
-        elif self.selected_actor:
-            title = f"Actor Details: {self.selected_actor.name}"
         elif self.selected_planet:
             title = f"Planet Details: {self.selected_planet.name}"
         else:
@@ -197,8 +195,6 @@ class DetailPanel:
         # Content based on selection
         if self.selected_ship:
             self._render_ship_details(panel_rect, text_renderer)
-        elif self.selected_actor:
-            self._render_actor_details(panel_rect, text_renderer)
         elif self.selected_planet:
             self._render_planet_details(panel_rect, text_renderer)
         else:
