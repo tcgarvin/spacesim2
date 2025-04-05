@@ -170,7 +170,9 @@ class DetailPanel:
             text_renderer: TextRenderer for rendering text
         """
         # Title changes based on what's selected
-        if self.selected_ship:
+        if self.selected_actor:
+            title = f"Actor Details: {self.selected_actor.name}"
+        elif self.selected_ship:
             title = f"Ship Details: {self.selected_ship.name}"
         elif self.selected_planet:
             title = f"Planet Details: {self.selected_planet.name}"
@@ -193,7 +195,9 @@ class DetailPanel:
         self.ui_renderer.draw_panel(panel_rect, border_radius=5)
         
         # Content based on selection
-        if self.selected_ship:
+        if self.selected_actor:
+            self._render_actor_details(panel_rect, text_renderer)
+        elif self.selected_ship:
             self._render_ship_details(panel_rect, text_renderer)
         elif self.selected_planet:
             self._render_planet_details(panel_rect, text_renderer)

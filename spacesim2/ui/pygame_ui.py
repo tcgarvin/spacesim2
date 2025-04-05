@@ -56,7 +56,6 @@ class PygameUI:
         self.selected_actor: Optional[Actor] = None
         self.selected_ship: Optional[Ship] = None
         self.selected_commodity: Optional[CommodityDefinition] = None
-        self.view_ships = False  # Toggle between viewing actors and ships in the left pane
         
         # Initialize color manager
         self.color_manager = ColorManager()
@@ -73,7 +72,6 @@ class PygameUI:
         self.input_handler: Optional[InputHandler] = None
         self.ui_renderer: Optional[UIRenderer] = None
         self.actor_list_panel: Optional[ActorListPanel] = None
-        self.ship_list_panel: Optional[ShipListPanel] = None
         self.planet_view_panel: Optional[PlanetViewPanel] = None
         self.detail_panel: Optional[DetailPanel] = None
         self.status_bar: Optional[StatusBar] = None
@@ -113,12 +111,8 @@ class PygameUI:
         
     def _initialize_components(self) -> None:
         """Initialize all UI components."""
-        # Left pane components
+        # Left pane component
         self.actor_list_panel = ActorListPanel(
-            self.screen, self.text_renderer.fonts, self.colors, 
-            self.left_pane_width, self.height
-        )
-        self.ship_list_panel = ShipListPanel(
             self.screen, self.text_renderer.fonts, self.colors, 
             self.left_pane_width, self.height
         )
@@ -157,7 +151,6 @@ class PygameUI:
         self.input_handler.register_key_callback(pygame.K_RIGHT, self._handle_right)
         self.input_handler.register_key_callback(pygame.K_UP, self._handle_up)
         self.input_handler.register_key_callback(pygame.K_DOWN, self._handle_down)
-        self.input_handler.register_key_callback(pygame.K_s, self._handle_toggle_ships)
         self.input_handler.register_key_callback(pygame.K_RETURN, self._handle_enter)
         
         # Register mouse handlers
@@ -223,13 +216,7 @@ class PygameUI:
             # Handle navigation within the active pane
             self._handle_navigation_in_active_pane(event.key)
     
-    def _handle_toggle_ships(self, event: pygame.event.Event) -> None:
-        """Handle S key to toggle between actors and ships view."""
-        self.view_ships = not self.view_ships
-        if self.view_ships:
-            self.selected_actor = None
-        else:
-            self.selected_ship = None
+    # Ship toggle removed as ships are now integrated into actor list
     
     def _handle_mouse_motion(self, event: pygame.event.Event) -> None:
         """Handle mouse motion for hover effects."""
@@ -237,8 +224,8 @@ class PygameUI:
         
         # Update hover states only where needed
         if x < self.left_pane_width:
-            # Handle actor hover in left pane
-            if not self.view_ships and self.actor_list_panel:
+            # Handle entity hover in left pane
+            if self.actor_list_panel:
                 self.actor_list_panel.handle_mouse_motion(x, y)
         
     def _handle_mouse_click(self, event: pygame.event.Event) -> None:
@@ -248,18 +235,11 @@ class PygameUI:
         # Determine which pane was clicked
         if x < self.left_pane_width:
             self.active_pane = 0
-            # Handle actor/ship selection in left pane
-            if self.view_ships and self.ship_list_panel:
-                self.ship_list_panel.handle_click(x, y)
-                self.selected_ship = self.ship_list_panel.selected_ship
-                if self.selected_ship:
-                    self.selected_actor = None
-            else:
-                if self.actor_list_panel:
-                    self.actor_list_panel.handle_click(x, y)
-                    self.selected_actor = self.actor_list_panel.selected_actor
-                    if self.selected_actor:
-                        self.selected_ship = None
+            # Handle entity selection in left pane
+            if self.actor_list_panel:
+                self.actor_list_panel.handle_click(x, y)
+                self.selected_actor = self.actor_list_panel.selected_actor
+                self.selected_ship = self.actor_list_panel.selected_ship
         elif x < self.left_pane_width + self.center_pane_width:
             self.active_pane = 1
             # Handle planet selection in center pane
@@ -283,19 +263,13 @@ class PygameUI:
     
     def _handle_scroll_up(self, event: pygame.event.Event) -> None:
         """Handle scroll up."""
-        if self.active_pane == 0:  # Left pane
-            if self.view_ships and self.ship_list_panel:
-                self.ship_list_panel.scroll_up()
-            elif self.actor_list_panel:
-                self.actor_list_panel.scroll_up()
+        if self.active_pane == 0 and self.actor_list_panel:  # Left pane
+            self.actor_list_panel.scroll_up()
     
     def _handle_scroll_down(self, event: pygame.event.Event) -> None:
         """Handle scroll down."""
-        if self.active_pane == 0:  # Left pane
-            if self.view_ships and self.ship_list_panel:
-                self.ship_list_panel.scroll_down()
-            elif self.actor_list_panel:
-                self.actor_list_panel.scroll_down()
+        if self.active_pane == 0 and self.actor_list_panel:  # Left pane
+            self.actor_list_panel.scroll_down()
     
     def _handle_quit(self) -> None:
         """Handle quit event."""
@@ -303,13 +277,10 @@ class PygameUI:
     
     def _handle_navigation_in_active_pane(self, key: int) -> None:
         """Handle navigation keys within the active pane."""
-        if self.active_pane == 0:  # Left pane (actor/ship list)
-            if self.view_ships and self.ship_list_panel:
-                if self.ship_list_panel.handle_key(key):
-                    self.selected_ship = self.ship_list_panel.selected_ship
-            elif self.actor_list_panel:
-                if self.actor_list_panel.handle_key(key):
-                    self.selected_actor = self.actor_list_panel.selected_actor
+        if self.active_pane == 0:  # Left pane (entity list)
+            if self.actor_list_panel and self.actor_list_panel.handle_key(key):
+                self.selected_actor = self.actor_list_panel.selected_actor
+                self.selected_ship = self.actor_list_panel.selected_ship
         
         elif self.active_pane == 1:  # Center pane (planet grid)
             if self.planet_view_panel:
@@ -337,11 +308,8 @@ class PygameUI:
         if self.actor_list_panel:
             self.actor_list_panel.set_selected_planet(planet)
             self.actor_list_panel.set_selected_actor(None)
+            self.actor_list_panel.set_selected_ship(None)
             self.actor_list_panel.set_context("default")
-            
-        if self.ship_list_panel:
-            self.ship_list_panel.set_selected_planet(planet)
-            self.ship_list_panel.set_selected_ship(None)
             
         if self.planet_view_panel:
             self.planet_view_panel.set_selected_planet(planet)
@@ -380,18 +348,14 @@ class PygameUI:
             }
             self.ui_renderer.draw_pane_backgrounds(self.active_pane, pane_dimensions)
         
-        # Render each component
-        if self.view_ships:
-            if self.ship_list_panel:
-                self.ship_list_panel.render(self.text_renderer)
-        else:
-            if self.actor_list_panel:
-                # Always set the current context before rendering
-                if self.selected_commodity:
-                    self.actor_list_panel.set_market_context(self.selected_commodity)
-                else:
-                    self.actor_list_panel.set_context("default")
-                self.actor_list_panel.render(self.text_renderer)
+        # Render the actor/ship list
+        if self.actor_list_panel:
+            # Always set the current context before rendering
+            if self.selected_commodity:
+                self.actor_list_panel.set_market_context(self.selected_commodity)
+            else:
+                self.actor_list_panel.set_context("default")
+            self.actor_list_panel.render(self.text_renderer)
                 
         if self.planet_view_panel:
             self.planet_view_panel.render(self.text_renderer, self.simulation.ships)

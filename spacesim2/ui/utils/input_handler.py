@@ -11,6 +11,7 @@ class InputHandler:
         self.key_callbacks: Dict[int, Callable[[Event], None]] = {}
         self.mouse_click_callbacks: Dict[int, Callable[[Event], None]] = {}
         self.mouse_scroll_callbacks: Dict[int, Callable[[Event], None]] = {}
+        self.mouse_motion_callback: Optional[Callable[[Event], None]] = None
         self.quit_callbacks: List[Callable[[], None]] = []
         
     def register_key_callback(self, key: int, callback: Callable[[Event], Optional[bool]]) -> None:
@@ -31,6 +32,14 @@ class InputHandler:
             callback: Function to call when button is clicked
         """
         self.mouse_click_callbacks[button] = callback
+        
+    def register_mouse_motion_callback(self, callback: Callable[[Event], None]) -> None:
+        """Register a callback for mouse motion.
+        
+        Args:
+            callback: Function to call when mouse moves
+        """
+        self.mouse_motion_callback = callback
         
     def register_mouse_scroll_callback(self, direction: int, callback: Callable[[Event], None]) -> None:
         """Register a callback for mouse scroll.
@@ -72,5 +81,10 @@ class InputHandler:
                 # Handle scroll events
                 if event.button in self.mouse_scroll_callbacks:
                     self.mouse_scroll_callbacks[event.button](event)
+                    
+            elif event.type == pygame.MOUSEMOTION:
+                # Handle mouse motion events
+                if self.mouse_motion_callback:
+                    self.mouse_motion_callback(event)
                     
         return True
