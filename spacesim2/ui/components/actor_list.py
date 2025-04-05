@@ -408,37 +408,57 @@ class ActorListPanel:
         # Enhanced market context coloring based on actor type and active orders
         if self.context == "market":
             # Market makers get a distinct color
-            if actor.actor_type == ActorType.MARKET_MAKER:
-                # Market makers always get purple
-                base_color = (180, 100, 200)  # Purple for market makers
+            # Get active orders directly from the actor's active_orders dictionary
+            has_buy_order = False
+            has_sell_order = False
+            has_recent_buy = False
+            has_recent_sell = False
+            
+            # Check active orders dictionary directly
+            for order_desc in actor.active_orders.values():
+                if self.selected_commodity and self.selected_commodity.id in order_desc:
+                    if "buy" in order_desc:
+                        has_buy_order = True
+                    elif "sell" in order_desc:
+                        has_sell_order = True
+                        
+            # Check market history for recent transactions (last 2 turns)
+            if self.selected_commodity:
+                current_turn = actor.sim.current_turn
+                for transaction in reversed(actor.market_history):
+                    if current_turn - transaction['turn'] > 0:
+                        break
+                        
+                    if transaction['commodity'] == self.selected_commodity.id:
+                        if transaction['side'] == 'buy':
+                            has_recent_buy = True
+                        elif transaction['side'] == 'sell':
+                            has_recent_sell = True
+            
+            # Determine color based on order presence and recent transactions
+            if has_buy_order and has_sell_order:
+                # Both buy and sell orders
+                base_color = (200, 150, 220)  # Purple-gold blend
+            elif has_buy_order:
+                # Buy orders only - green
+                base_color = (100, 200, 100)  # Green
+            elif has_sell_order:
+                # Sell orders only - red
+                base_color = (200, 100, 100)  # Red
+            elif has_recent_buy and has_recent_sell:
+                # Recent transactions of both types
+                base_color = (180, 140, 200)  # Lighter purple-gold
+            elif has_recent_buy:
+                # Recent buys only - deep green
+                base_color = (0, 180, 0)  # Deep green
+            elif has_recent_sell:
+                # Recent sells only - deep red
+                base_color = (180, 0, 0)  # Deep red
             else:
-                # Get active orders directly from the actor's active_orders dictionary
-                has_buy_order = False
-                has_sell_order = False
-                
-                # Check active orders dictionary directly
-                for order_desc in actor.active_orders.values():
-                    if self.selected_commodity and self.selected_commodity.id in order_desc:
-                        if "buy" in order_desc:
-                            has_buy_order = True
-                        elif "sell" in order_desc:
-                            has_sell_order = True
-                
-                # Determine color based on order presence
-                if has_buy_order and has_sell_order:
-                    # Both buy and sell orders
-                    base_color = (200, 150, 220)  # Purple-gold blend
-                elif has_buy_order:
-                    # Buy orders only - green
-                    base_color = (100, 200, 100)  # Green
-                elif has_sell_order:
-                    # Sell orders only - red
-                    base_color = (200, 100, 100)  # Red
-                else:
-                    # No orders - darker version of default
-                    base_color = (max(base_color[0] - 30, 0), 
-                                max(base_color[1] - 30, 0), 
-                                max(base_color[2] - 30, 0))
+                # No orders or recent transactions - darker version of default
+                base_color = (max(base_color[0] - 30, 0), 
+                            max(base_color[1] - 30, 0), 
+                            max(base_color[2] - 30, 0))
         
         # Draw the actor shape based on type
         if actor.actor_type == ActorType.MARKET_MAKER:
