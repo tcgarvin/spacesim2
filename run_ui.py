@@ -13,7 +13,7 @@ def main() -> None:
 
     # Create and initialize simulation
     simulation = Simulation()
-    simulation.setup_simple()
+    simulation.setup_simple(num_planets=5, num_regular_actors=50, num_market_makers=2)
 
     # Run with pygame UI
     ui = PygameUI(simulation)
