@@ -4,7 +4,7 @@ from typing import Dict, Optional, List, Any
 import yaml
 
 
-@dataclass
+@dataclass(frozen=True)
 class CommodityDefinition:
     """Definition of a commodity in the simulation."""
     id: str
@@ -15,16 +15,6 @@ class CommodityDefinition:
     def __str__(self) -> str:
         return self.name
     
-    def __hash__(self) -> int:
-        """Make CommodityDefinition objects hashable based on their ID."""
-        return hash(self.id)
-    
-    def __eq__(self, other):
-        """Enable equality comparison between CommodityDefinition objects."""
-        if isinstance(other, CommodityDefinition):
-            return self.id == other.id
-        return False
-
 
 class CommodityRegistry:
     """Registry that loads and manages commodity definitions."""
@@ -56,6 +46,13 @@ class CommodityRegistry:
     def all_commodities(self) -> List[CommodityDefinition]:
         """Get all commodity definitions."""
         return list(self._commodities.values())
+
+    def __getitem__(self, commodity_id: str) -> CommodityDefinition:
+        """Get a commodity definition by ID using dictionary-like access."""
+        returnable = self.get_commodity(commodity_id)
+        if returnable is None:
+            raise KeyError(f"Commodity with ID '{commodity_id}' not found.")
+        return returnable
 
 
 class Inventory:
