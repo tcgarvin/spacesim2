@@ -4,6 +4,8 @@ from spacesim2.core.actor import Actor
 from spacesim2.core.commodity import CommodityDefinition, Inventory, CommodityRegistry
 from spacesim2.core.market import Market, Order, Transaction
 
+from .helpers import get_actor
+
 
 @pytest.fixture
 def commodity_registry():
@@ -31,7 +33,7 @@ def test_place_buy_order(commodity_registry, food_commodity, mock_sim) -> None:
     """Test that a buy order can be placed in the market."""
     market = Market()
     market.commodity_registry = commodity_registry
-    actor = Actor("Buyer", mock_sim, initial_money=100)
+    actor = get_actor("Buyer", mock_sim, initial_money=100)
     
     market.place_buy_order(actor, food_commodity, 10, 5)
     
@@ -48,7 +50,7 @@ def test_place_sell_order(commodity_registry, food_commodity, mock_sim) -> None:
     """Test that a sell order can be placed in the market."""
     market = Market()
     market.commodity_registry = commodity_registry
-    actor = Actor("Seller", mock_sim)
+    actor = get_actor("Seller", mock_sim)
     
     # Add some food to inventory
     actor.inventory.add_commodity(food_commodity, 10)
@@ -70,8 +72,8 @@ def test_order_matching(commodity_registry, food_commodity, mock_sim) -> None:
     market.commodity_registry = commodity_registry
     
     # Create actors
-    buyer = Actor("Buyer", mock_sim, initial_money=100)
-    seller = Actor("Seller", mock_sim)
+    buyer = get_actor("Buyer", mock_sim, initial_money=100)
+    seller = get_actor("Seller", mock_sim)
     
     # Give seller some food
     seller.inventory.add_commodity(food_commodity, 10)
@@ -107,8 +109,8 @@ def test_order_partial_matching(commodity_registry, food_commodity, mock_sim) ->
     market.commodity_registry = commodity_registry
     
     # Create actors
-    buyer = Actor("Buyer", mock_sim, initial_money=100)
-    seller = Actor("Seller", mock_sim)
+    buyer = get_actor("Buyer", mock_sim, initial_money=100)
+    seller = get_actor("Seller", mock_sim)
     
     # Give seller more food than will be sold
     seller.inventory.add_commodity(food_commodity, 10)
@@ -139,8 +141,8 @@ def test_no_match_when_bid_too_low(commodity_registry, food_commodity, mock_sim)
     market = Market()
     market.commodity_registry = commodity_registry
     
-    buyer = Actor("Buyer", mock_sim, initial_money=100)
-    seller = Actor("Seller", mock_sim)
+    buyer = get_actor("Buyer", mock_sim, initial_money=100)
+    seller = get_actor("Seller", mock_sim)
     
     seller.inventory.add_commodity(food_commodity, 10)
     
@@ -179,8 +181,8 @@ def test_clear_orders(commodity_registry, food_commodity, mock_sim) -> None:
     market = Market()
     market.commodity_registry = commodity_registry
     
-    buyer = Actor("Buyer", mock_sim, initial_money=100)
-    seller = Actor("Seller", mock_sim)
+    buyer = get_actor("Buyer", mock_sim, initial_money=100)
+    seller = get_actor("Seller", mock_sim)
     
     seller.inventory.add_commodity(food_commodity, 10)
     

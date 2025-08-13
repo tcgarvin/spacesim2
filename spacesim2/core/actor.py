@@ -3,13 +3,11 @@ from typing import Optional, Dict, List, Union, Tuple, Any, TYPE_CHECKING
 import enum
 
 from spacesim2.core.planet import Planet
-from spacesim2.core.commodity import Inventory, CommodityDefinition
-from spacesim2.core.actor_brain import ActorBrain, ColonistBrain, MarketMakerBrain
+from spacesim2.core.commodity import Inventory
 
 if TYPE_CHECKING:
+    from spacesim2.core.actor_brain import ActorBrain
     from spacesim2.core.simulation import Simulation
-    from spacesim2.core.process import ProcessDefinition
-    from spacesim2.core.skill import Skill
 
 
 class ActorType(enum.Enum):
@@ -26,8 +24,9 @@ class Actor:
         self, 
         name: str, 
         sim: 'Simulation',
+        actor_type: ActorType,
+        brain: 'ActorBrain',
         planet: Optional[Planet] = None,
-        actor_type: ActorType = ActorType.REGULAR,
         initial_money: int = 50,
         initial_skills: Optional[Dict[str, float]] = None
     ) -> None:
@@ -56,11 +55,7 @@ class Actor:
             for skill_id, rating in initial_skills.items():
                 self.skills[skill_id] = rating
         
-        # Give actor a brain based on type
-        if actor_type == ActorType.MARKET_MAKER:
-            self.brain = MarketMakerBrain(self)
-        else:
-            self.brain = ColonistBrain(self)
+        self.brain = brain
     
     def get_skill_rating(self, skill_id: str) -> float:
         """Get the actor's rating for a specific skill.
@@ -104,12 +99,12 @@ class Actor:
         self._consume_food()
         
         # Step 2: Perform economic action
-        economic_command = self.brain.decide_economic_action()
+        economic_command = self.brain.decide_economic_action(self)
         if economic_command:
             economic_command.execute(self)
         
         # Step 3: Perform market actions
-        market_commands = self.brain.decide_market_actions()
+        market_commands = self.brain.decide_market_actions(self)
         market_actions = []
         for command in market_commands:
             success = command.execute(self)
@@ -124,6 +119,32 @@ class Actor:
             self.last_market_action = "; ".join(market_actions)
         else:
             self.last_market_action = "No market actions"
+
+    def can_execute_process(self, process_id: str) -> bool:
+        """Check if actor can execute a process without actually executing it."""
+        # Actor always has sim reference
+            
+        process = self.sim.process_registry.get_process(process_id)
+        if not process:
+            return False
+            
+        # Check if actor has required inputs
+        for commodity, quantity in process.inputs.items():
+            if not self.inventory.has_quantity(commodity, quantity):
+                return False
+                
+        # Check if actor has required tools
+        for tool in process.tools_required:
+            if not self.inventory.has_quantity(tool, 1):
+                return False
+                
+        # Check if actor has access to required facilities in their inventory
+        for facility in process.facilities_required:
+            if not self.inventory.has_quantity(facility, 1):
+                return False
+        
+        return True
+    
 
     def _consume_food(self) -> None:
         """Consume 1 unit of food per turn if available."""

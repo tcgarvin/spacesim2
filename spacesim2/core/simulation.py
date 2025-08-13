@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
 from spacesim2.core.actor import Actor, ActorType
+from spacesim2.core.brains import ColonistBrain, MarketMakerBrain
 from spacesim2.core.commodity import CommodityRegistry
 from spacesim2.core.process import ProcessRegistry
 from spacesim2.core.market import Market
@@ -176,6 +177,7 @@ class Simulation:
                 sim=self,
                 planet=planet,
                 actor_type=ActorType.REGULAR,
+                brain=ColonistBrain(),
                 initial_money=50,
                 initial_skills=initial_skills
             )
@@ -192,6 +194,7 @@ class Simulation:
                 sim=self,
                 planet=planet,
                 actor_type=ActorType.MARKET_MAKER,
+                brain=MarketMakerBrain(),
                 initial_money=200,
                 initial_skills=initial_skills
             )

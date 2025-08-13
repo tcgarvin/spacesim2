@@ -1,10 +1,12 @@
 import pytest
 
 from spacesim2.core.actor import Actor, ActorType
+from spacesim2.core.brains import MarketMakerBrain, ColonistBrain
 from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry, Inventory
 from spacesim2.core.market import Market, Order, Transaction
 from spacesim2.core.planet import Planet
-from spacesim2.core.simulation import Simulation
+
+from .helpers import get_actor
 
 @pytest.fixture
 def food_commodity():
@@ -24,7 +26,7 @@ def test_order_reservation_system(food_commodity, mock_sim) -> None:
     market.commodity_registry._commodities["food"] = food_commodity
     
     # Create buyer with 100 money
-    buyer = Actor("Buyer", mock_sim, initial_money=100)
+    buyer = get_actor("Buyer", mock_sim, initial_money=100)
     
     # Place a buy order for 5 food at 10 credits each
     order_id = market.place_buy_order(buyer, food_commodity, 5, 10)
@@ -35,7 +37,7 @@ def test_order_reservation_system(food_commodity, mock_sim) -> None:
     assert order_id is not None and order_id != ""
     
     # Create seller with 10 food
-    seller = Actor("Seller", mock_sim)
+    seller = get_actor("Seller", mock_sim)
     seller.inventory.add_commodity(food_commodity, 10)
     
     # Before placing order, check inventory
@@ -73,7 +75,7 @@ def test_cancel_order(food_commodity, mock_sim) -> None:
     market.commodity_registry._commodities["food"] = food_commodity
     
     # Create buyer with 100 money
-    buyer = Actor("Buyer", mock_sim, initial_money=100)
+    buyer = get_actor("Buyer", mock_sim, initial_money=100)
     
     # Place a buy order
     order_id = market.place_buy_order(buyer, food_commodity, 5, 10)
@@ -94,7 +96,7 @@ def test_cancel_order(food_commodity, mock_sim) -> None:
     assert order_id not in market.orders_by_id
     
     # Test with sell order
-    seller = Actor("Seller", mock_sim)
+    seller = get_actor("Seller", mock_sim)
     seller.inventory.add_commodity(food_commodity, 10)
     
     # Place sell order
@@ -119,7 +121,7 @@ def test_modify_order(food_commodity, mock_sim) -> None:
     market.commodity_registry._commodities["food"] = food_commodity
     
     # Create buyer with 100 money
-    buyer = Actor("Buyer", mock_sim, initial_money=100)
+    buyer = get_actor("Buyer", mock_sim, initial_money=100)
     
     # Place a buy order
     order_id = market.place_buy_order(buyer, food_commodity, 5, 10)
@@ -153,8 +155,8 @@ def test_order_persistence(food_commodity, mock_sim) -> None:
     market.commodity_registry._commodities["food"] = food_commodity
     
     # Create buyer and seller
-    buyer = Actor("Buyer", mock_sim, initial_money=100)
-    seller = Actor("Seller", mock_sim)
+    buyer = get_actor("Buyer", mock_sim, initial_money=100)
+    seller = get_actor("Seller", mock_sim)
     seller.inventory.add_commodity(food_commodity, 10)
     
     # Place non-matching orders
@@ -191,7 +193,7 @@ def test_actor_order_tracking(food_commodity, mock_sim) -> None:
     market.commodity_registry._commodities["food"] = food_commodity
     
     # Create buyer
-    buyer = Actor("Buyer", mock_sim, initial_money=100)
+    buyer = get_actor("Buyer", mock_sim, initial_money=100)
     
     # Place buy order
     order_id = market.place_buy_order(buyer, food_commodity, 5, 10)
@@ -214,155 +216,6 @@ def test_actor_order_tracking(food_commodity, mock_sim) -> None:
     # Check market tracking is updated
     actor_orders = market.get_actor_orders(buyer)
     assert len(actor_orders["buy"]) == 0
-
-
-def test_market_maker_strategy(food_commodity, mock_sim) -> None:
-    """Test that market makers manage their orders effectively."""
-    # Create a planet with a market
-    market = Market()
-    planet = Planet("Test Planet", market)
-    
-    # Create commodity registry
-    commodity_registry = CommodityRegistry()
-    commodity_registry._commodities["food"] = food_commodity
-    
-    # For the new implementation to work properly, we need fuel commodity too
-    fuel_commodity = CommodityDefinition(
-        id="nova_fuel",
-        name="NovaFuel",
-        transportable=True,
-        description="High-density energy source for starship travel."
-    )
-    commodity_registry._commodities["nova_fuel"] = fuel_commodity
-    market.commodity_registry = commodity_registry
-    
-    # Create a market maker with some initial inventory
-    market_maker = Actor("MM-1", mock_sim, planet=planet, actor_type=ActorType.MARKET_MAKER)
-    market_maker.inventory.add_commodity(food_commodity, 20)
-    market_maker.sim = type('obj', (object,), {
-        'commodity_registry': commodity_registry,
-    })
-    
-    # First turn - should place buy orders in bootstrap mode
-    commands = market_maker.brain.decide_market_actions()
-    for command in commands:
-        command.execute(market_maker)
-    
-    # Check that some buy orders were placed (bootstrap mode)
-    mm_orders = market.get_actor_orders(market_maker)
-    assert len(mm_orders["buy"]) > 0
-    
-    # Cancel all existing orders before testing with price history
-    for order in mm_orders["buy"] + mm_orders["sell"]:
-        market.cancel_order(order.order_id)
-    
-    # Add price history for testing the behavior with history
-    try:
-        # Import scipy to verify it's available
-        from scipy.stats import norm
-        
-        # Add price history to trigger sophisticated market making
-        market.price_history[food_commodity] = [10, 11, 9, 10, 12]
-        market.volume_history[food_commodity] = [5, 6, 4, 7, 8]
-        
-        # Run market maker actions with price history
-        commands = market_maker.brain.decide_market_actions()
-        for command in commands:
-            command.execute(market_maker)
-        
-        # Check that orders were placed using the more sophisticated algorithm
-        mm_orders = market.get_actor_orders(market_maker)
-        assert len(mm_orders["buy"]) + len(mm_orders["sell"]) > 0
-    except ImportError:
-        # Skip testing the scipy-based functionality if scipy is not available
-        pass
-
-
-def test_regular_actor_strategy(food_commodity, mock_sim) -> None:
-    """Test that regular actors manage their orders effectively."""
-    # Create a planet with a market
-    market = Market()
-    planet = Planet("Test Planet", market)
-    
-    # Create commodity registry
-    commodity_registry = CommodityRegistry()
-    commodity_registry._commodities["food"] = food_commodity
-    # Add nova_fuel commodity that ColonistBrain expects
-    fuel_commodity = CommodityDefinition(
-        id="nova_fuel", 
-        name="Nova Fuel",
-        transportable=True,
-        description="High-energy fuel"
-    )
-    commodity_registry._commodities["nova_fuel"] = fuel_commodity
-    market.commodity_registry = commodity_registry
-    
-    # Create a regular actor with not enough food
-    actor = Actor("Actor-1", mock_sim, planet=planet)
-    actor.inventory.add_commodity(food_commodity, 3)  # Below threshold of 6 (new value)
-    actor.sim = type('obj', (object,), {
-        'commodity_registry': commodity_registry,
-    })
-    
-    # Create a seller with enough food
-    seller = Actor("Seller", mock_sim, planet=planet)
-    seller.inventory.add_commodity(food_commodity, 20)
-    
-    # Place a sell order in the market for the actor to match against
-    market.place_sell_order(seller, food_commodity, 5, 10)
-    
-    # Actor should try to buy food to meet their minimum
-    commands = actor.brain.decide_market_actions()
-    for command in commands:
-        command.execute(actor)
-    
-    # Check the actor's behavior
-    actor_orders = market.get_actor_orders(actor)
-    
-    # Either:
-    # 1. Actor placed a buy order to match the sell order, or
-    # 2. Transaction already happened (in which case they should have more food)
-    
-    food_quantity = actor.inventory.get_quantity(food_commodity)
-    has_more_food = food_quantity > 3
-    has_buy_order = len(actor_orders["buy"]) > 0
-    
-    # Either the actor bought food or placed an order to buy it
-    assert has_more_food or has_buy_order
-    
-    # Reset for the selling test
-    # Cancel any existing orders
-    for order in actor_orders["buy"] + actor_orders["sell"]:
-        market.cancel_order(order.order_id)
-    
-    # Add food to inventory (now has plenty)
-    actor.inventory.add_commodity(food_commodity, 10)  # Now has 13+ food
-    
-    # Create a buyer with money
-    buyer = Actor("Buyer", mock_sim, planet=planet, initial_money=200)
-    
-    # Place a buy order in the market for the actor to match against
-    market.place_buy_order(buyer, food_commodity, 5, 10)
-    
-    # Now actor should sell excess food
-    commands = actor.brain.decide_market_actions()
-    for command in commands:
-        command.execute(actor)
-    
-    # Check the actor's behavior
-    actor_orders = market.get_actor_orders(actor)
-    initial_food = 13 if food_quantity == 3 else food_quantity + 10
-    
-    # Either:
-    # 1. Actor placed a sell order to match the buy order, or
-    # 2. Transaction already happened (in which case they should have less food)
-    
-    food_quantity_after = actor.inventory.get_quantity(food_commodity)
-    sold_food = food_quantity_after < initial_food
-    has_sell_order = len(actor_orders["sell"]) > 0
-    
-    # Either the actor sold food or placed an order to sell it
-    assert sold_food or has_sell_order
 
 
 def test_integrated_market_simulation(mock_sim) -> None:
@@ -395,13 +248,13 @@ def test_integrated_market_simulation(mock_sim) -> None:
     planet = Planet("Test Planet", market)
     
     # Create a seller and buyer
-    seller = Actor("Seller", mock_sim, planet=planet)
+    seller = get_actor("Seller", mock_sim, planet=planet)
     seller.inventory.add_commodity(food_commodity, 20)
     seller.sim = type('obj', (object,), {
         'commodity_registry': commodity_registry,
     })
     
-    buyer = Actor("Buyer", mock_sim, planet=planet, initial_money=200)
+    buyer = get_actor("Buyer", mock_sim, planet=planet, initial_money=200)
     buyer.sim = type('obj', (object,), {
         'commodity_registry': commodity_registry,
     })

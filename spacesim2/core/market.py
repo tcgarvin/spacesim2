@@ -1,7 +1,8 @@
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Union, TYPE_CHECKING, Any
 import statistics
-from collections import defaultdict
+import uuid
 
 from spacesim2.core.actor import Actor
 
@@ -24,7 +25,6 @@ class Order:
     
     def __post_init__(self):
         """Generate a unique order ID if not provided."""
-        import uuid
         if not self.order_id:
             self.order_id = str(uuid.uuid4())[:8]  # Short UUID
 
@@ -58,6 +58,7 @@ class Market:
         
         # Track completed trades
         self.transaction_history: List[Transaction] = []
+        self.actor_transaction_history: Dict[str, List[Transaction]] = defaultdict(list)
         
         # Track current turn for timestamping orders
         self.current_turn = 0
@@ -71,6 +72,20 @@ class Market:
         
         # Reference to commodity registry (will be set by simulation)
         self.commodity_registry = None
+
+    def _trim_transaction_history(self) -> None:
+        """Trim the transaction history to the last 1000 transactions for global transactions and last 100 transactions for actor transactions."""
+        if len(self.transaction_history) > 1000:
+            self.transaction_history = self.transaction_history[-1000:]
+        
+        # Also trim actor transaction histories
+        for actor_transactions in self.actor_transaction_history.values():
+            if len(actor_transactions) > 100:
+                actor_transactions[:] = actor_transactions[-100:]
+
+    def get_actor_transaction_history(self, actor: Actor) -> List[Transaction]:
+        """Get the transaction history for a specific actor."""
+        return self.actor_transaction_history.get(actor.name, [])
 
     def place_buy_order(
         self, actor: Actor, commodity_type: 'CommodityDefinition', quantity: int, price: int
@@ -173,7 +188,9 @@ class Market:
         # Record daily volumes for each commodity
         daily_volumes = defaultdict(int)
         daily_prices = defaultdict(list)
-        
+
+        self._trim_transaction_history()
+
         # Process orders for all commodity types (both enum and string IDs)
         all_commodities = set(list(self.buy_orders.keys()) + list(self.sell_orders.keys()))
         
@@ -393,30 +410,8 @@ class Market:
             turn=self.current_turn
         )
         self.transaction_history.append(transaction)
-        
-        # Update each actor's market history
-        self._record_actor_transaction(buyer, transaction, "buy")
-        self._record_actor_transaction(seller, transaction, "sell")
-        
-    def _record_actor_transaction(self, actor: Actor, transaction: Transaction, side: str) -> None:
-        """Record a transaction in an actor's market history.
-        
-        Args:
-            actor: The actor involved in the transaction
-            transaction: The transaction
-            side: 'buy' or 'sell'
-        """
-        # Get commodity ID for history
-        commodity_name = transaction.commodity_type.id
-            
-        actor.market_history.append({
-            "turn": self.current_turn,
-            "side": side,
-            "commodity": commodity_name,
-            "quantity": transaction.quantity,
-            "price": transaction.price,
-            "counterparty": transaction.seller.name if side == "buy" else transaction.buyer.name
-        })
+        self.actor_transaction_history[buyer.name].append(transaction)
+        self.actor_transaction_history[seller.name].append(transaction)
 
     def get_avg_price(self, commodity_type: 'CommodityDefinition') -> int:
         """Get the average price for a commodity based on recent transactions."""

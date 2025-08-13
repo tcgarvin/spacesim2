@@ -6,6 +6,8 @@ from spacesim2.core.market import Market
 from spacesim2.core.planet import Planet
 from spacesim2.core.simulation import Simulation
 
+from .helpers import get_actor
+
 @pytest.fixture
 def food_commodity():
     """Create a food commodity for testing."""
@@ -23,7 +25,7 @@ def test_actor_government_work() -> None:
     mock_sim = type('MockSimulation', (object,), {
         'commodity_registry': CommodityRegistry()
     })()
-    actor = Actor("Test Actor", mock_sim, initial_money=0)
+    actor = get_actor("Test Actor", mock_sim, initial_money=0)
     initial_money = actor.money
     
     # Test via command pattern
@@ -41,7 +43,7 @@ def test_planet_add_actor() -> None:
     mock_sim = type('MockSimulation', (object,), {
         'commodity_registry': CommodityRegistry()
     })()
-    actor = Actor("Test Actor", mock_sim)
+    actor = get_actor("Test Actor", mock_sim)
 
     planet.add_actor(actor)
 
@@ -123,7 +125,7 @@ class SimulationTestHelper:
         market.commodity_registry = sim.commodity_registry
         
         # Create a test actor that does government work
-        actor = Actor(
+        actor = get_actor(
             name="TestWorker",
             sim=sim,
             planet=planet,
@@ -133,13 +135,9 @@ class SimulationTestHelper:
         
         # Simulation reference already set in constructor
         
-        # Override the should_produce_food method to always return False
-        # so the actor will always do government work in tests
-        actor.brain.should_produce_food = lambda: False
-        
         # Override decide_economic_action to always return government work
         from spacesim2.core.commands import GovernmentWorkCommand
-        actor.brain.decide_economic_action = lambda: GovernmentWorkCommand()
+        actor.brain.decide_economic_action = lambda _: GovernmentWorkCommand()
         
         sim.actors.append(actor)
         planet.add_actor(actor)

@@ -5,6 +5,8 @@ from spacesim2.core.actor import Actor
 from spacesim2.core.commodity import CommodityRegistry, CommodityDefinition, Inventory
 from spacesim2.core.market import Market
 
+from .helpers import get_actor
+
 
 @pytest.fixture
 def commodity_registry():
@@ -26,8 +28,8 @@ def market_with_actors(commodity_registry, nova_fuel, mock_sim) -> Tuple[Market,
     market = Market()
     market.commodity_registry = commodity_registry
     
-    buyer = Actor("Buyer", mock_sim, initial_money=1000)
-    seller = Actor("Seller", mock_sim, initial_money=500)
+    buyer = get_actor("Buyer", mock_sim, initial_money=1000)
+    seller = get_actor("Seller", mock_sim, initial_money=500)
     
     # Give the seller some nova_fuel
     seller.inventory.add_commodity(nova_fuel, 20)

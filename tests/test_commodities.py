@@ -3,12 +3,15 @@ import tempfile
 import os
 import yaml
 
-from spacesim2.core.commodity import CommodityRegistry, CommodityDefinition
+from spacesim2.core.commodity import CommodityRegistry, CommodityDefinition, Inventory
+from spacesim2.core.commands import ProcessCommand
 from spacesim2.core.process import ProcessRegistry, ProcessDefinition
-from spacesim2.core.actor import Actor, ActorType
+from spacesim2.core.actor import Actor
 from spacesim2.core.planet import Planet
 from spacesim2.core.market import Market
 from spacesim2.core.simulation import Simulation
+
+from .helpers import get_actor
 
 
 def test_load_commodities_from_yaml():
@@ -125,27 +128,27 @@ def test_load_processes_from_yaml():
 def test_inventory_commodity_items(mock_sim):
     """Test the Inventory class with string commodity IDs."""
     mock_sim = mock_sim
-    actor = Actor("Test Actor", mock_sim)
+    inventory = Inventory()
     
     # Add and check commodity
-    actor.inventory.add_commodity("test_commodity", 5)
-    assert actor.inventory.get_quantity("test_commodity") == 5
+    inventory.add_commodity("test_commodity", 5)
+    assert inventory.get_quantity("test_commodity") == 5
     
     # Remove some and check
-    actor.inventory.remove_commodity("test_commodity", 2)
-    assert actor.inventory.get_quantity("test_commodity") == 3
+    inventory.remove_commodity("test_commodity", 2)
+    assert inventory.get_quantity("test_commodity") == 3
     
     # Reserve some and check
-    assert actor.inventory.reserve_commodity("test_commodity", 1)
-    assert actor.inventory.get_available_quantity("test_commodity") == 2
-    assert actor.inventory.get_reserved_quantity("test_commodity") == 1
-    assert actor.inventory.get_quantity("test_commodity") == 3
+    assert inventory.reserve_commodity("test_commodity", 1)
+    assert inventory.get_available_quantity("test_commodity") == 2
+    assert inventory.get_reserved_quantity("test_commodity") == 1
+    assert inventory.get_quantity("test_commodity") == 3
     
     # Unreserve and check
-    actor.inventory.unreserve_commodity("test_commodity", 1)
-    assert actor.inventory.get_available_quantity("test_commodity") == 3
-    assert actor.inventory.get_reserved_quantity("test_commodity") == 0
-    assert actor.inventory.get_quantity("test_commodity") == 3
+    inventory.unreserve_commodity("test_commodity", 1)
+    assert inventory.get_available_quantity("test_commodity") == 3
+    assert inventory.get_reserved_quantity("test_commodity") == 0
+    assert inventory.get_quantity("test_commodity") == 3
 
 
 def test_actor_execute_process():
@@ -201,13 +204,12 @@ def test_actor_execute_process():
     planet = Planet("Test Planet", market)
     
     # Create actor with required inputs, tools, and facilities  
-    actor = Actor("Test Actor", sim, planet=planet)
+    actor = get_actor("Test Actor", sim, planet=planet)
     actor.inventory.add_commodity("input_commodity", 5)
     actor.inventory.add_commodity("tool_commodity", 1)
     actor.inventory.add_commodity("facility_commodity", 1)  # Actor has the facility
     
     # Execute process via command pattern
-    from spacesim2.core.commands import ProcessCommand
     command = ProcessCommand("test_process")
     result = command.execute(actor)
     assert result is True
@@ -266,11 +268,10 @@ def test_process_requires_facility():
     planet = Planet("Test Planet", market)
     
     # Create actor with required inputs but without facility
-    actor = Actor("Test Actor", sim, planet=planet)
+    actor = get_actor("Test Actor", sim, planet=planet)
     actor.inventory.add_commodity("input_commodity", 5)
     
     # Try to execute process - should fail because actor doesn't have the facility
-    from spacesim2.core.commands import ProcessCommand
     command1 = ProcessCommand("test_process")
     result = command1.execute(actor)
     assert result is False
