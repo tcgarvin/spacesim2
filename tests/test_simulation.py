@@ -54,7 +54,7 @@ def test_simulation_setup() -> None:
     sim = Simulation()
     sim.setup_simple()
 
-    assert len(sim.planets) == 2  # Earth and Mars
+    assert len(sim.planets) == 2  # Two fictional planets
     
     # Total actors should be 10 (4 regular + 1 market maker per planet)
     assert len(sim.actors) == 10
@@ -72,16 +72,16 @@ def test_simulation_setup() -> None:
     assert market_maker_count == 2  # 1 market maker per planet
 
     # All actors should be assigned to a planet
-    earth_actors = 0
-    mars_actors = 0
+    planet1_actors = 0
+    planet2_actors = 0
     for actor in sim.actors:
-        if actor.planet.name == "Earth":
-            earth_actors += 1
-        elif actor.planet.name == "Mars":
-            mars_actors += 1
+        if actor.planet.name == sim.planets[0].name:
+            planet1_actors += 1
+        elif actor.planet.name == sim.planets[1].name:
+            planet2_actors += 1
     
-    assert earth_actors == 5  # 4 regular + 1 market maker
-    assert mars_actors == 5  # 4 regular + 1 market maker
+    assert planet1_actors == 5  # 4 regular + 1 market maker
+    assert planet2_actors == 5  # 4 regular + 1 market maker
 
     # Each planet should have a market
     assert sim.planets[0].market is not None

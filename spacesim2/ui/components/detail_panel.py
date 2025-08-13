@@ -453,50 +453,50 @@ class DetailPanel:
         
         # Market information
         # Market is guaranteed to exist
-            market_title, market_title_rect = text_renderer.render_text(
-                "Market Information:", "normal", self.colors["text"]["header"]
-            )
-            market_title_rect.topleft = (x, y)
-            self.screen.blit(market_title, market_title_rect)
-            y += line_height
-            
-            instruction_text, instruction_rect = text_renderer.render_text(
-                "Select a commodity to view orders (Enter to select)", "small", self.colors["text"]["normal"]
-            )
-            instruction_rect.topleft = (x + 10, y)
-            self.screen.blit(instruction_text, instruction_rect)
-            y += line_height
-            
-            # List commodity prices
-            commodity_registry = self.simulation.commodity_registry if self.simulation else None
-            if commodity_registry:
-                for commodity in commodity_registry.all_commodities():
-                    avg_price = planet.market.get_avg_price(commodity)
-                    highest_bid, lowest_ask = planet.market.get_bid_ask_spread(commodity)
-                    bid_ask_str = ""
-                    if highest_bid is not None and lowest_ask is not None:
-                        bid_ask_str = f" (Bid: ${highest_bid}, Ask: ${lowest_ask})"
-                    
-                    # Highlight selected commodity
-                    if commodity == self.selected_commodity:
-                        # Draw selection background
-                        pygame.draw.rect(
-                            self.screen,
-                            self.colors["ui_elements"]["button_hover"],
-                            (x, y, panel_rect.width - 40, line_height),
-                            border_radius=3
-                        )
-                        text_color = self.colors["text"]["highlight"]
-                    else:
-                        text_color = self.colors["text"]["normal"]
-                    
-                    price_text, price_rect = text_renderer.render_text(
-                        f"• {commodity.name}: ${avg_price:.2f}{bid_ask_str}", "normal", text_color
+        market_title, market_title_rect = text_renderer.render_text(
+            "Market Information:", "normal", self.colors["text"]["header"]
+        )
+        market_title_rect.topleft = (x, y)
+        self.screen.blit(market_title, market_title_rect)
+        y += line_height
+        
+        instruction_text, instruction_rect = text_renderer.render_text(
+            "Select a commodity to view orders (Enter to select)", "small", self.colors["text"]["normal"]
+        )
+        instruction_rect.topleft = (x + 10, y)
+        self.screen.blit(instruction_text, instruction_rect)
+        y += line_height
+        
+        # List commodity prices
+        commodity_registry = self.simulation.commodity_registry if self.simulation else None
+        if commodity_registry:
+            for commodity in commodity_registry.all_commodities():
+                avg_price = planet.market.get_avg_price(commodity)
+                highest_bid, lowest_ask = planet.market.get_bid_ask_spread(commodity)
+                bid_ask_str = ""
+                if highest_bid is not None and lowest_ask is not None:
+                    bid_ask_str = f" (Bid: ${highest_bid}, Ask: ${lowest_ask})"
+                
+                # Highlight selected commodity
+                if commodity == self.selected_commodity:
+                    # Draw selection background
+                    pygame.draw.rect(
+                        self.screen,
+                        self.colors["ui_elements"]["button_hover"],
+                        (x, y, panel_rect.width - 40, line_height),
+                        border_radius=3
                     )
-                    price_rect.topleft = (x + 10, y)
-                    self.screen.blit(price_text, price_rect)
-                    y += line_height
-            
+                    text_color = self.colors["text"]["highlight"]
+                else:
+                    text_color = self.colors["text"]["normal"]
+                
+                price_text, price_rect = text_renderer.render_text(
+                    f"• {commodity.name}: ${avg_price:.2f}{bid_ask_str}", "normal", text_color
+                )
+                price_rect.topleft = (x + 10, y)
+                self.screen.blit(price_text, price_rect)
+                y += line_height
+        
             # If a commodity is selected, show orders
             if self.selected_commodity:
                 y += line_height

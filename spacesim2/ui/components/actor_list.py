@@ -1031,8 +1031,8 @@ class ActorListPanel:
             self.screen.blit(action_text, action_rect)
             y += line_height - 4
             
-        # Display last market action if available
-        if display_entity.last_market_action:
+        # Display last market action if available (actors only)
+        if not isinstance(display_entity, Ship) and hasattr(display_entity, 'last_market_action') and display_entity.last_market_action:
             # Truncate if too long for display
             market_action = display_entity.last_market_action
             if len(market_action) > 60:

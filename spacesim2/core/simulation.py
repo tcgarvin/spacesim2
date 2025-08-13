@@ -1,7 +1,8 @@
 import random
 import os
+import math
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 
 from spacesim2.core.actor import Actor, ActorType
 from spacesim2.core.commodity import CommodityRegistry
@@ -38,6 +39,75 @@ class Simulation:
         self.skills_registry = SkillsRegistry()
         self.skills_registry.load_from_file(skills_path)
         
+    def _generate_fictional_planets(self, num_planets: int) -> List[Tuple[str, float, float]]:
+        """Generate fictional planet names and positions with minimum 10 unit separation.
+        
+        Args:
+            num_planets: Number of planets to generate
+            
+        Returns:
+            List of tuples containing (name, x, y) for each planet
+        """
+        # Collection of fictional planet names from various sci-fi sources
+        fictional_names = [
+            "Tatooine", "Coruscant", "Naboo", "Alderaan", "Hoth", "Endor", "Bespin", "Dagobah",
+            "Arrakis", "Caladan", "Giedi Prime", "Kaitain", "Ix", "Tleilax", "Salusa Secundus",
+            "Pandora", "Polyphemus", "LV-426", "LV-223", "Fiorina 161", "Origae-6",
+            "Vulcan", "Romulus", "Qo'noS", "Risa", "Bajor", "Cardassia", "Ferenginar", "Andoria",
+            "Caprica", "Gemenon", "Tauron", "Picon", "Leonis", "Virgon", "Canceron", "Aerilon",
+            "Reach", "Installation 04", "High Charity", "Sanghelios", "Harvest", "Arcadia",
+            "Kepler-438b", "Proxima b", "Gliese 667Cc", "TRAPPIST-1e", "K2-18b", "TOI-715b"
+        ]
+        
+        # Ensure we don't request more planets than we have names
+        num_planets = min(num_planets, len(fictional_names))
+        
+        # Randomly select planet names
+        selected_names = random.sample(fictional_names, num_planets)
+        
+        # Generate positions with minimum 10 unit separation
+        positions = self._generate_separated_positions(num_planets, min_distance=10.0, map_size=100.0)
+        
+        return list(zip(selected_names, [pos[0] for pos in positions], [pos[1] for pos in positions]))
+    
+    def _generate_separated_positions(self, num_positions: int, min_distance: float, map_size: float) -> List[Tuple[float, float]]:
+        """Generate positions with minimum distance separation using Poisson disc sampling approach.
+        
+        Args:
+            num_positions: Number of positions to generate
+            min_distance: Minimum distance between positions
+            map_size: Size of the map (square area from 0 to map_size)
+            
+        Returns:
+            List of (x, y) positions
+        """
+        positions = []
+        max_attempts = 1000  # Prevent infinite loops
+        attempts = 0
+        
+        while len(positions) < num_positions and attempts < max_attempts:
+            # Generate random position
+            x = random.uniform(min_distance, map_size - min_distance)
+            y = random.uniform(min_distance, map_size - min_distance)
+            
+            # Check distance to all existing positions
+            valid = True
+            for existing_x, existing_y in positions:
+                distance = math.sqrt((x - existing_x)**2 + (y - existing_y)**2)
+                if distance < min_distance:
+                    valid = False
+                    break
+            
+            if valid:
+                positions.append((x, y))
+            
+            attempts += 1
+        
+        # If we couldn't generate enough positions, warn and return what we have
+        if len(positions) < num_positions:
+            print(f"Warning: Could only generate {len(positions)} positions out of {num_positions} requested with min_distance={min_distance}")
+        
+        return positions
 
     def setup_simple(self, num_planets: int = 2, num_regular_actors: int = 4, num_market_makers: int = 1, num_ships: int = 2) -> None:
         """Set up a simple simulation with multiple planets, actors, and ships.
@@ -48,24 +118,11 @@ class Simulation:
             num_market_makers: Number of market makers to create per planet
             num_ships: Number of ships to create in the simulation
         """
-        # Planet names and positions
-        planet_data = [
-            ("Earth", 20.0, 30.0),
-            ("Mars", 70.0, 60.0),
-            ("Venus", 30.0, 70.0),
-            ("Jupiter", 80.0, 30.0),
-            ("Saturn", 50.0, 15.0),
-            ("Mercury", 10.0, 50.0),
-            ("Neptune", 60.0, 80.0),
-            ("Uranus", 40.0, 50.0)
-        ]
-        
-        # Use only the number of planets requested (max 8)
-        num_planets = min(num_planets, len(planet_data))
+        # Generate fictional planet data with random positions
+        planet_data = self._generate_fictional_planets(num_planets)
         
         # Create the planets with their markets
-        for i in range(num_planets):
-            name, x, y = planet_data[i]
+        for name, x, y in planet_data:
             # Create and initialize the market for the planet
             planet_market = Market()
             planet_market.commodity_registry = self.commodity_registry  # Give market access to commodity registry
@@ -238,7 +295,8 @@ class Simulation:
         hungry_percent = (total_hungry / total_actors * 100) if total_actors > 0 else 0
         
         # Print simulation stats
-        print(f"Planets: {len(self.planets)}")
+        planet_names = ", ".join([p.name for p in self.planets])
+        print(f"Planets ({len(self.planets)}): {planet_names}")
         print(f"Population: {regular_actors} colonists, {market_makers} market makers")
         print(f"Ships: {total_ships} total, {traveling_ships} in transit")
         print(f"Hunger: {total_hungry}/{total_actors} actors hungry ({hungry_percent:.1f}%)")
