@@ -245,7 +245,9 @@ def test_market_maker_strategy(food_commodity) -> None:
     })
     
     # First turn - should place buy orders in bootstrap mode
-    market_maker.brain.decide_market_actions()
+    commands = market_maker.brain.decide_market_actions()
+    for command in commands:
+        command.execute(market_maker)
     
     # Check that some buy orders were placed (bootstrap mode)
     mm_orders = market.get_actor_orders(market_maker)
@@ -265,7 +267,9 @@ def test_market_maker_strategy(food_commodity) -> None:
         market.volume_history[food_commodity] = [5, 6, 4, 7, 8]
         
         # Run market maker actions with price history
-        market_maker.brain.decide_market_actions()
+        commands = market_maker.brain.decide_market_actions()
+        for command in commands:
+            command.execute(market_maker)
         
         # Check that orders were placed using the more sophisticated algorithm
         mm_orders = market.get_actor_orders(market_maker)
@@ -285,6 +289,14 @@ def test_regular_actor_strategy(food_commodity) -> None:
     # Create commodity registry
     commodity_registry = CommodityRegistry()
     commodity_registry._commodities["food"] = food_commodity
+    # Add nova_fuel commodity that ColonistBrain expects
+    fuel_commodity = CommodityDefinition(
+        id="nova_fuel", 
+        name="Nova Fuel",
+        transportable=True,
+        description="High-energy fuel"
+    )
+    commodity_registry._commodities["nova_fuel"] = fuel_commodity
     market.commodity_registry = commodity_registry
     
     # Create a regular actor with not enough food
@@ -302,7 +314,9 @@ def test_regular_actor_strategy(food_commodity) -> None:
     market.place_sell_order(seller, food_commodity, 5, 10)
     
     # Actor should try to buy food to meet their minimum
-    actor.brain.decide_market_actions()
+    commands = actor.brain.decide_market_actions()
+    for command in commands:
+        command.execute(actor)
     
     # Check the actor's behavior
     actor_orders = market.get_actor_orders(actor)
@@ -333,7 +347,9 @@ def test_regular_actor_strategy(food_commodity) -> None:
     market.place_buy_order(buyer, food_commodity, 5, 10)
     
     # Now actor should sell excess food
-    actor.brain.decide_market_actions()
+    commands = actor.brain.decide_market_actions()
+    for command in commands:
+        command.execute(actor)
     
     # Check the actor's behavior
     actor_orders = market.get_actor_orders(actor)

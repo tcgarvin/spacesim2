@@ -204,8 +204,10 @@ def test_actor_execute_process():
     actor.inventory.add_commodity("tool_commodity", 1)
     actor.inventory.add_commodity("facility_commodity", 1)  # Actor has the facility
     
-    # Execute process
-    result = actor.brain.execute_process("test_process")
+    # Execute process via command pattern
+    from spacesim2.core.commands import ProcessCommand
+    command = ProcessCommand("test_process")
+    result = command.execute(actor)
     assert result is True
     
     # Check results
@@ -266,14 +268,17 @@ def test_process_requires_facility():
     actor.inventory.add_commodity("input_commodity", 5)
     
     # Try to execute process - should fail because actor doesn't have the facility
-    result = actor.brain.execute_process("test_process")
+    from spacesim2.core.commands import ProcessCommand
+    command1 = ProcessCommand("test_process")
+    result = command1.execute(actor)
     assert result is False
     
     # Add the facility to actor's inventory
     actor.inventory.add_commodity("facility_commodity", 1)
     
     # Try again - should succeed
-    result = actor.brain.execute_process("test_process")
+    command2 = ProcessCommand("test_process")
+    result = command2.execute(actor)
     assert result is True
     
     # Check results

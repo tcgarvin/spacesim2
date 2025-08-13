@@ -63,7 +63,10 @@ def test_actor_government_work() -> None:
     """Test that an actor earns money from government work."""
     actor = Actor("Test Actor", initial_money=0)
     
-    actor.brain._do_government_work()
+    # Test via command pattern
+    from spacesim2.core.commands import GovernmentWorkCommand
+    command = GovernmentWorkCommand()
+    command.execute(actor)
     
     assert actor.money == 10  # Government wage
 
@@ -106,7 +109,11 @@ def test_market_maker_strategy(food_commodity) -> None:
     actor.inventory.add_commodity(food_commodity, 10)
     
     # Run market maker strategy with no price history (bootstrap mode)
-    actor.brain.decide_market_actions()
+    commands = actor.brain.decide_market_actions()
+    
+    # Execute the commands
+    for command in commands:
+        command.execute(actor)
     
     # In bootstrap mode, the market maker should place orders
     # It will try for both food and fuel

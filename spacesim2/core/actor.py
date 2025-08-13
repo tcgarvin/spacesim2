@@ -27,11 +27,15 @@ class Actor:
         name: str, 
         planet: Optional[Planet] = None,
         actor_type: ActorType = ActorType.REGULAR,
-        initial_money: int = 50,
+        initial_money: Optional[int] = None,
         initial_skills: Optional[Dict[str, float]] = None
     ) -> None:
         self.name = name
-        self.money = initial_money
+        # Set default money based on actor type
+        if initial_money is None:
+            self.money = 200 if actor_type == ActorType.MARKET_MAKER else 50
+        else:
+            self.money = initial_money
         self.reserved_money = 0  # Money reserved for market orders
         self.planet = planet
         self.inventory = Inventory()
@@ -99,10 +103,26 @@ class Actor:
         self._consume_food()
         
         # Step 2: Perform economic action
-        self.brain.decide_economic_action()
+        economic_command = self.brain.decide_economic_action()
+        if economic_command:
+            economic_command.execute(self)
         
         # Step 3: Perform market actions
-        self.brain.decide_market_actions()
+        market_commands = self.brain.decide_market_actions()
+        market_actions = []
+        for command in market_commands:
+            success = command.execute(self)
+            if success and hasattr(command, 'commodity_type') and hasattr(command, 'quantity') and hasattr(command, 'price'):
+                # Track market action for logging
+                action_type = "Buy" if hasattr(command, '__class__') and "Buy" in command.__class__.__name__ else "Sell"
+                commodity_name = command.commodity_type.id if hasattr(command.commodity_type, 'id') else str(command.commodity_type)
+                market_actions.append(f"{action_type} {command.quantity} {commodity_name} at {command.price}")
+        
+        # Update the actor's last market action summary
+        if market_actions:
+            self.last_market_action = "; ".join(market_actions)
+        else:
+            self.last_market_action = "No market actions"
 
     def _consume_food(self) -> None:
         """Consume 1 unit of food per turn if available."""

@@ -3,6 +3,7 @@ from typing import Optional, Dict, List, Union, Tuple, Any, TYPE_CHECKING
 from math import ceil, floor
 
 from scipy.stats import norm
+from spacesim2.core.commands import EconomicCommand, MarketCommand, ProcessCommand, GovernmentWorkCommand, CancelOrderCommand, PlaceBuyOrderCommand, PlaceSellOrderCommand
 
 if TYPE_CHECKING:
     from spacesim2.core.simulation import Simulation
@@ -19,11 +20,11 @@ class ActorBrain:
         """Initialize the brain with a reference to its actor."""
         self.actor = actor
     
-    def decide_economic_action(self) -> None:
+    def decide_economic_action(self) -> Optional[EconomicCommand]:
         """Decide which economic action to take this turn."""
         raise NotImplementedError("Subclasses must implement this method")
     
-    def decide_market_actions(self) -> None:
+    def decide_market_actions(self) -> List[MarketCommand]:
         """Decide what market actions to take this turn."""
         raise NotImplementedError("Subclasses must implement this method")
     
@@ -31,114 +32,33 @@ class ActorBrain:
         """Decide whether to produce food or do government work."""
         raise NotImplementedError("Subclasses must implement this method")
         
-    def execute_process(self, process_id: str) -> bool:
-        """Execute a production process.
-        
-        Returns:
-            bool: True if process was executed successfully, False otherwise
-        """
-        if not hasattr(self.actor, 'sim') or not self.actor.sim:
-            return False
-            
-        process = self.actor.sim.process_registry.get_process(process_id)
-        if not process:
-            return False
-            
-        # Check if actor has required inputs
-        for commodity, quantity in process.inputs.items():
-            if not self.actor.inventory.has_quantity(commodity, quantity):
-                return False
-                
-        # Check if actor has required tools
-        for tool in process.tools_required:
-            if not self.actor.inventory.has_quantity(tool, 1):
-                return False
-                
-        # Check if actor has access to required facilities in their inventory
-        for facility in process.facilities_required:
-            if not self.actor.inventory.has_quantity(facility, 1):
-                return False
-        
-        # Perform skill check if process has relevant skills
-        success = True
-        multiplier = 1
-        
-        if process.relevant_skills:
-            # Get skill ratings for all relevant skills
-            skill_ratings = []
-            for skill_id in process.relevant_skills:
-                skill_rating = self.actor.get_skill_rating(skill_id)
-                skill_ratings.append(skill_rating)
-            
-            # Calculate combined skill rating
-            from spacesim2.core.skill import SkillCheck
-            combined_rating = SkillCheck.get_combined_skill_rating(skill_ratings)
-            
-            # Perform success check
-            success = SkillCheck.success_check(combined_rating)
-            
-            # If successful, check for multiplier
-            if success and SkillCheck.multiplier_check(combined_rating):
-                multiplier = 2  # Apply ×2 multiplier
-        
-        # If the process failed the skill check nothing happens
-        if not success:
-            
-            # Record failure
-            self.actor.last_action = f"Failed process: {process.name}"
-            return False
-        
-        # Process successful, apply multiplier
-        # Consume inputs (multiplied if multiplier > 1)
-        for commodity, quantity in process.inputs.items():
-            self.actor.inventory.remove_commodity(commodity, quantity * multiplier)
-            
-        # Add outputs (multiplied if multiplier > 1)
-        for commodity, quantity in process.outputs.items():
-            self.actor.inventory.add_commodity(commodity, quantity * multiplier)
-            
-        # Improve skills used in the process
-        if process.relevant_skills:
-            # Small skill improvement (0.01-0.03) for successful process execution
-            skill_improvement = 0.01 + (0.02 * (multiplier - 1))  # More improvement with multiplier
-            for skill_id in process.relevant_skills:
-                self.actor.improve_skill(skill_id, skill_improvement)
-        
-        # Record action
-        multiplier_text = f" (×{multiplier})" if multiplier > 1 else ""
-        self.actor.last_action = f"Executed process: {process.name}{multiplier_text}"
-        return True
 
 
 class ColonistBrain(ActorBrain):
     """Decision-making logic for regular colonist actors."""
     
-    def decide_economic_action(self) -> None:
+    def decide_economic_action(self) -> Optional[EconomicCommand]:
         """Decide which economic action to take this turn."""
         # First, try to satisfy basic needs (food)
         if not hasattr(self.actor, 'sim') or not self.actor.sim:
-            return
+            return GovernmentWorkCommand()
             
         food_commodity = self.actor.sim.commodity_registry.get_commodity("food")
         biomass_commodity = self.actor.sim.commodity_registry.get_commodity("biomass")
         
         if not food_commodity or not biomass_commodity:
-            return
+            return GovernmentWorkCommand()
             
         food_quantity = self.actor.inventory.get_quantity(food_commodity)
         if food_quantity < 5:
             # Try to make food
-            if self.execute_process("make_food"):
-                return
+            if self._can_execute_process("make_food"):
+                return ProcessCommand("make_food")
                 
             # If can't make food directly, try to gather biomass
             biomass_quantity = self.actor.inventory.get_quantity(biomass_commodity)
-            if biomass_quantity < 2 and self.execute_process("gather_biomass"):
-                return
-                
-            # If we gathered biomass and now have enough, try to make food again
-            if self.actor.inventory.get_quantity(biomass_commodity) >= 2 and self.execute_process("make_food"):
-                return
+            if biomass_quantity < 2 and self._can_execute_process("gather_biomass"):
+                return ProcessCommand("gather_biomass")
 
         # Try to find the most profitable process
         if hasattr(self.actor, 'sim') and self.actor.sim and hasattr(self.actor.sim, 'process_registry'):
@@ -146,12 +66,12 @@ class ColonistBrain(ActorBrain):
             if market:
                 best_process = self._find_most_profitable_process(market)
                 
-                # Execute the most profitable process if better than government work
-                if best_process and self.execute_process(best_process.id):
-                    return
+                # Return the most profitable process if better than government work
+                if best_process and self._can_execute_process(best_process.id):
+                    return ProcessCommand(best_process.id)
         
         # If no processes can be executed, do government work
-        self._do_government_work()
+        return GovernmentWorkCommand()
     
     def _find_most_profitable_process(self, market) -> Optional['ProcessDefinition']:
         """Find the most profitable process based on current market prices and available resources."""
@@ -174,25 +94,7 @@ class ColonistBrain(ActorBrain):
             potential_profit = output_value - input_cost
             
             # Check if we can execute this process
-            can_execute = True
-            
-            # Check if we have the inputs
-            for commodity_id, quantity in process.inputs.items():
-                if not self.actor.inventory.has_quantity(commodity_id, quantity):
-                    can_execute = False
-                    break
-            
-            # Check if we have the tools
-            for tool_id in process.tools_required:
-                if not self.actor.inventory.has_quantity(tool_id, 1):
-                    can_execute = False
-                    break
-            
-            # Check if we have access to required facilities in our inventory
-            for facility_id in process.facilities_required:
-                if not self.actor.inventory.has_quantity(facility_id, 1):
-                    can_execute = False
-                    break
+            can_execute = self._can_execute_process(process.id)
             
             if can_execute and potential_profit > best_profit:
                 best_process = process
@@ -200,35 +102,51 @@ class ColonistBrain(ActorBrain):
         
         return best_process
     
+    def _can_execute_process(self, process_id: str) -> bool:
+        """Check if actor can execute a process without actually executing it."""
+        if not hasattr(self.actor, 'sim') or not self.actor.sim:
+            return False
+            
+        process = self.actor.sim.process_registry.get_process(process_id)
+        if not process:
+            return False
+            
+        # Check if actor has required inputs
+        for commodity, quantity in process.inputs.items():
+            if not self.actor.inventory.has_quantity(commodity, quantity):
+                return False
+                
+        # Check if actor has required tools
+        for tool in process.tools_required:
+            if not self.actor.inventory.has_quantity(tool, 1):
+                return False
+                
+        # Check if actor has access to required facilities in their inventory
+        for facility in process.facilities_required:
+            if not self.actor.inventory.has_quantity(facility, 1):
+                return False
+        
+        return True
+    
     def should_produce_food(self) -> bool:
         """Decide whether to produce food or not."""
         # This method is kept for backward compatibility but is no longer used
         return False
-
-    def _do_government_work(self) -> None:
-        """Perform government work to earn a fixed wage."""
-        wage = 10  # Fixed wage for government work (integer)
-        self.actor.money += wage
-        
-        # Record action
-        self.actor.last_action = f"Government work for {wage} credits"
     
-    def decide_market_actions(self) -> None:
+    def decide_market_actions(self) -> List[MarketCommand]:
         """Regular actors buy what they need and sell excess, matching existing orders when possible."""
         if not self.actor.planet or not self.actor.planet.market:
-            return
+            return []
         
         market = self.actor.planet.market
+        commands = []
         
         # Get existing actor's orders
         existing_orders = market.get_actor_orders(self.actor)
         
         # Cancel all existing orders
         for order in existing_orders["buy"] + existing_orders["sell"]:
-            market.cancel_order(order.order_id)
-        
-        # Keep track of all market actions
-        market_actions = []
+            commands.append(CancelOrderCommand(order.order_id))
         
         # Get commodity references
         food_commodity = None
@@ -239,23 +157,17 @@ class ColonistBrain(ActorBrain):
             fuel_commodity = self.actor.sim.commodity_registry["nova_fuel"]
         
         # Handle food trading
-        food_action = self._trade_commodity(market, food_commodity, min_keep=6)
-        if food_action:
-            market_actions.append(food_action)
+        food_commands = self._get_trade_commands(market, food_commodity, min_keep=6)
+        commands.extend(food_commands)
         
         # Handle fuel trading - we don't need to keep any fuel for ourselves
-        fuel_action = self._trade_commodity(market, fuel_commodity, min_keep=0)
-        if fuel_action:
-            market_actions.append(fuel_action)
+        fuel_commands = self._get_trade_commands(market, fuel_commodity, min_keep=0)
+        commands.extend(fuel_commands)
         
-        # Update the actor's last market action summary
-        if market_actions:
-            self.actor.last_market_action = "; ".join(market_actions)
-        else:
-            self.actor.last_market_action = "No market actions"
+        return commands
     
-    def _trade_commodity(self, market, commodity_type, min_keep=0):
-        """Helper method to handle buying and selling of a specific commodity.
+    def _get_trade_commands(self, market, commodity_type, min_keep=0) -> List[MarketCommand]:
+        """Helper method to generate trading commands for a specific commodity.
         
         Args:
             market: The market to trade in
@@ -263,8 +175,10 @@ class ColonistBrain(ActorBrain):
             min_keep: Minimum amount to keep in inventory
             
         Returns:
-            String describing the market action taken or None
+            List of MarketCommand objects for trading actions
         """
+        commands = []
+        
         # Track inventory
         quantity = self.actor.inventory.get_quantity(commodity_type)
         available_inventory = self.actor.inventory.get_available_quantity(commodity_type)
@@ -293,19 +207,9 @@ class ColonistBrain(ActorBrain):
                 
                 if max_affordable_quantity > 0:
                     # Place a matching buy order at exactly the seller's price
-                    order_id = market.place_buy_order(
-                        self.actor, commodity_type, max_affordable_quantity, best_sell_order.price
-                    )
-                    if order_id:
-                        commodity_name = commodity_type.id if hasattr(commodity_type, 'id') else str(commodity_type)
-                        self.actor.active_orders[order_id] = f"buy {commodity_name}"
-                        return f"Buying {max_affordable_quantity} {commodity_name} at {best_sell_order.price}"
-                else:
-                    commodity_name = commodity_type.id if hasattr(commodity_type, 'id') else str(commodity_type)
-                    return f"Can't afford {commodity_name} at {best_sell_order.price}"
-            else:
-                commodity_name = commodity_type.id if hasattr(commodity_type, 'id') else str(commodity_type)
-                return f"No {commodity_name} sell orders available"
+                    commands.append(PlaceBuyOrderCommand(
+                        commodity_type, max_affordable_quantity, best_sell_order.price
+                    ))
         
         # Handle selling if we have excess
         if available_inventory > min_keep:
@@ -325,18 +229,11 @@ class ColonistBrain(ActorBrain):
                 
                 # Accept any price - regular actors are price takers
                 # Place a matching sell order at exactly the buyer's price
-                order_id = market.place_sell_order(
-                    self.actor, commodity_type, quantity_to_sell, best_buy_order.price
-                )
-                if order_id:
-                    commodity_name = commodity_type.id if hasattr(commodity_type, 'id') else str(commodity_type)
-                    self.actor.active_orders[order_id] = f"sell {commodity_name}"
-                    return f"Selling {quantity_to_sell} {commodity_name} at {best_buy_order.price}"
-            else:
-                commodity_name = commodity_type.id if hasattr(commodity_type, 'id') else str(commodity_type)
-                return f"No {commodity_name} buy orders available"
+                commands.append(PlaceSellOrderCommand(
+                    commodity_type, quantity_to_sell, best_buy_order.price
+                ))
         
-        return None
+        return commands
 
 
 class MarketMakerBrain(ActorBrain):
@@ -347,37 +244,26 @@ class MarketMakerBrain(ActorBrain):
         super().__init__(actor)
         self.spread_percentage = random.uniform(0.1, 0.3)  # 10-30% spread
     
-    def decide_economic_action(self) -> None:
+    def decide_economic_action(self) -> Optional[EconomicCommand]:
         """Market makers only do government work."""
-        self._do_government_work()
+        return GovernmentWorkCommand()
     
     def should_produce_food(self) -> bool:
         """Market makers don't produce food."""
         return False
     
-    def _do_government_work(self) -> None:
-        """Perform government work to earn a fixed wage."""
-        wage = 10  # Fixed wage for government work (integer)
-        self.actor.money += wage
-        
-        # Record action
-        self.actor.last_action = f"Government work for {wage} credits"
-    
-    def decide_market_actions(self) -> None:
+    def decide_market_actions(self) -> List[MarketCommand]:
         """Market makers provide liquidity by placing both buy and sell orders based on inventory and market conditions."""
         if not self.actor.planet or not self.actor.planet.market:
-            return
+            return []
 
         market = self.actor.planet.market
+        commands = []
         
         # Cancel all existing orders before creating new ones
         existing_orders = market.get_actor_orders(self.actor)
         for order in existing_orders["buy"] + existing_orders["sell"]:
-            market.cancel_order(order.order_id)
-        
-        # Track overall actions
-        all_buy_actions = []
-        all_sell_actions = []
+            commands.append(CancelOrderCommand(order.order_id))
         
         food_commodity = self.actor.sim.commodity_registry["food"]
         fuel_commodity = self.actor.sim.commodity_registry["nova_fuel"]
@@ -406,8 +292,6 @@ class MarketMakerBrain(ActorBrain):
             if target_buy_price >= target_sell_price:
                 target_sell_price = target_buy_price + 1
     
-            buy_actions = []
-            sell_actions = []
     
             if market.has_history(commodity_type):
                 # --- Sell Orders ---
@@ -431,12 +315,7 @@ class MarketMakerBrain(ActorBrain):
                             break
                         order_size = min(amount_remaining, target_order_size * count)
                         amount_remaining -= order_size
-                        order_id = market.place_sell_order(self.actor, commodity_type, order_size, price)
-                        if order_id:
-                            action = f"{commodity_type.id} {order_size}@{price}"
-                            sell_actions.append(action)
-                            all_sell_actions.append(action)
-                            self.actor.active_orders[order_id] = f"sell {commodity_type.id}"
+                        commands.append(PlaceSellOrderCommand(commodity_type, order_size, price))
     
                 # --- Buy Orders ---
                 # Allocate 15% of funds per commodity (30% total for two commodities)
@@ -461,31 +340,13 @@ class MarketMakerBrain(ActorBrain):
                         order_size = min(funds_remaining // price, target_order_size * count)
                         if order_size > 0:
                             funds_remaining -= order_size * price
-                            order_id = market.place_buy_order(self.actor, commodity_type, order_size, price)
-                            if order_id:
-                                action = f"{commodity_type.id} {order_size}@{price}"
-                                buy_actions.append(action)
-                                all_buy_actions.append(action)
-                                self.actor.active_orders[order_id] = f"buy {commodity_type.id}"
+                            commands.append(PlaceBuyOrderCommand(commodity_type, order_size, price))
             else:
                 # --- Bootstrapping Orders ---
                 # In bootstrapping mode (market has no history)
                 allocated_funds = int(self.actor.money * 0.15)
                 for i in [1, 2, 4]:
                     if allocated_funds // i > 0:
-                        order_id = market.place_buy_order(self.actor, commodity_type, 1, allocated_funds // i)
-                        if order_id:
-                            action = f"{commodity_type.id} 1@{allocated_funds // i}"
-                            buy_actions.append(action)
-                            all_buy_actions.append(action)
-                            self.actor.active_orders[order_id] = f"buy {commodity_type.id}"
+                        commands.append(PlaceBuyOrderCommand(commodity_type, 1, allocated_funds // i))
 
-        # Update the actor's last market action summary.
-        existing_orders = market.get_actor_orders(self.actor)
-        buy_count = len(existing_orders["buy"])
-        sell_count = len(existing_orders["sell"])
-        buy_summary = ", ".join(all_buy_actions) if all_buy_actions else "none"
-        sell_summary = ", ".join(all_sell_actions) if all_sell_actions else "none"
-        self.actor.last_market_action = (
-            f"Market maker: {buy_count} buy orders, {sell_count} sell orders - Buy [{buy_summary}], Sell [{sell_summary}]"
-        )
+        return commands

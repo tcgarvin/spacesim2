@@ -22,8 +22,10 @@ def test_actor_government_work() -> None:
     actor = Actor("Test Actor", initial_money=0.0)
     initial_money = actor.money
     
-    # Direct call to government work rather than take_turn
-    actor.brain._do_government_work()
+    # Test via command pattern
+    from spacesim2.core.commands import GovernmentWorkCommand
+    command = GovernmentWorkCommand()
+    command.execute(actor)
     assert actor.money > initial_money
 
 
@@ -100,7 +102,14 @@ class SimulationTestHelper:
             transportable=True,
             description="Basic nourishment required by actors."
         )
+        fuel_commodity = CommodityDefinition(
+            id="nova_fuel",
+            name="Nova Fuel",
+            transportable=True,
+            description="High-energy fuel for starships."
+        )
         sim.commodity_registry._commodities["food"] = food_commodity
+        sim.commodity_registry._commodities["nova_fuel"] = fuel_commodity
         market.commodity_registry = sim.commodity_registry
         
         # Create a test actor that does government work
@@ -118,9 +127,9 @@ class SimulationTestHelper:
         # so the actor will always do government work in tests
         actor.brain.should_produce_food = lambda: False
         
-        # Override government work to guarantee pay
-        original_govt_work = actor.brain._do_government_work
-        actor.brain._do_government_work = lambda: setattr(actor, 'money', actor.money + 10)
+        # Override decide_economic_action to always return government work
+        from spacesim2.core.commands import GovernmentWorkCommand
+        actor.brain.decide_economic_action = lambda: GovernmentWorkCommand(10)
         
         sim.actors.append(actor)
         planet.add_actor(actor)
@@ -142,7 +151,9 @@ def test_simulation_run_turn() -> None:
     initial_turn = sim.current_turn
     
     # Manually set up the actor to earn money
-    actor.brain._do_government_work()
+    from spacesim2.core.commands import GovernmentWorkCommand
+    command = GovernmentWorkCommand(10)
+    command.execute(actor)
     assert actor.money == 10
     
     # Reset money to test the turn
@@ -154,6 +165,5 @@ def test_simulation_run_turn() -> None:
     # Verify turn incremented
     assert sim.current_turn == initial_turn + 1
     
-    # Manually invoke government work to verify it happens in the turn
-    actor.brain._do_government_work()
-    assert actor.money == 10
+    # The actor should have earned money during the turn (from overridden decide_economic_action)
+    assert actor.money == 10  # Should have earned 10 from the turn
