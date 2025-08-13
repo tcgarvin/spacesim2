@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, List, Optional, Dict, Tuple
+from typing import TYPE_CHECKING, List, Dict, Tuple
 
 if TYPE_CHECKING:
     from spacesim2.core.actor import Actor
@@ -9,13 +9,13 @@ if TYPE_CHECKING:
 class Planet:
     """Represents a planet in the simulation."""
 
-    def __init__(self, name: str, x: float = 0.0, y: float = 0.0) -> None:
+    def __init__(self, name: str, market: "Market", x: float = 0.0, y: float = 0.0) -> None:
         self.name = name
         self.x = x
         self.y = y
         self.actors: List["Actor"] = []
         self.ships: List["Ship"] = []  # Ships docked at this planet
-        self.market: Optional["Market"] = None  # Will be set by the simulation
+        self.market: "Market" = market
 
     def add_actor(self, actor: "Actor") -> None:
         """Add an actor to this planet."""

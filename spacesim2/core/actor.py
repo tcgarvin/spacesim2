@@ -25,15 +25,16 @@ class Actor:
     def __init__(
         self, 
         name: str, 
+        sim: 'Simulation',
         planet: Optional[Planet] = None,
         actor_type: ActorType = ActorType.REGULAR,
-        initial_money: Optional[int] = None,
+        initial_money: int = 50,
         initial_skills: Optional[Dict[str, float]] = None
     ) -> None:
         self.name = name
-        # Set default money based on actor type
-        if initial_money is None:
-            self.money = 200 if actor_type == ActorType.MARKET_MAKER else 50
+        # Market makers get more initial money
+        if actor_type == ActorType.MARKET_MAKER and initial_money == 50:
+            self.money = 200
         else:
             self.money = initial_money
         self.reserved_money = 0  # Money reserved for market orders
@@ -45,7 +46,7 @@ class Actor:
         self.food_consumed_this_turn = False  # Track if actor has consumed food this turn
         self.last_action = "None"  # Track the last action performed
         self.last_market_action = "None"  # Track the last market action
-        self.sim: Optional['Simulation'] = None  # Reference to the simulation
+        self.sim = sim  # Reference to the simulation
         
         # Initialize skills
         self.skills: Dict[str, float] = {}
@@ -112,10 +113,10 @@ class Actor:
         market_actions = []
         for command in market_commands:
             success = command.execute(self)
-            if success and hasattr(command, 'commodity_type') and hasattr(command, 'quantity') and hasattr(command, 'price'):
-                # Track market action for logging
-                action_type = "Buy" if hasattr(command, '__class__') and "Buy" in command.__class__.__name__ else "Sell"
-                commodity_name = command.commodity_type.id if hasattr(command.commodity_type, 'id') else str(command.commodity_type)
+            # Only log buy/sell order commands
+            if success and ('Buy' in command.__class__.__name__ or 'Sell' in command.__class__.__name__):
+                action_type = "Buy" if "Buy" in command.__class__.__name__ else "Sell"
+                commodity_name = command.commodity_type.id
                 market_actions.append(f"{action_type} {command.quantity} {commodity_name} at {command.price}")
         
         # Update the actor's last market action summary
@@ -127,10 +128,7 @@ class Actor:
     def _consume_food(self) -> None:
         """Consume 1 unit of food per turn if available."""
         # Check if the actor has food in inventory
-        if not self.sim or not hasattr(self.sim, 'commodity_registry'):
-            self.food_consumed_this_turn = False
-            return
-            
+        # Get commodity references - sim must be set before calling this
         food_commodity = self.sim.commodity_registry.get_commodity("food")
         if not food_commodity:
             self.food_consumed_this_turn = False

@@ -1,14 +1,17 @@
 import unittest
 from spacesim2.core.ship import Ship, ShipStatus
 from spacesim2.core.planet import Planet
+from spacesim2.core.market import Market
 from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
 
 
 class TestShip(unittest.TestCase):
     def setUp(self):
         # Create planets for testing
-        self.earth = Planet("Earth", 0, 0)
-        self.mars = Planet("Mars", 50, 0)  # 50 units away from Earth
+        self.earth_market = Market()
+        self.mars_market = Market()
+        self.earth = Planet("Earth", self.earth_market, 0, 0)
+        self.mars = Planet("Mars", self.mars_market, 50, 0)  # 50 units away from Earth
         
         # Create commodity registry with fuel
         self.commodity_registry = CommodityRegistry()
@@ -20,8 +23,13 @@ class TestShip(unittest.TestCase):
         )
         self.commodity_registry._commodities["nova_fuel"] = self.fuel
         
+        # Create a mock simulation
+        self.mock_sim = type('MockSimulation', (object,), {
+            'commodity_registry': self.commodity_registry
+        })()
+        
         # Create a ship
-        self.ship = Ship("TestShip", self.earth)
+        self.ship = Ship("TestShip", self.mock_sim, self.earth)
         self.earth.add_ship(self.ship)
         
         # Add fuel to the ship
@@ -43,11 +51,7 @@ class TestShip(unittest.TestCase):
         self.assertEqual(fuel_needed, 5)  # 50 / 10 = 5 units of fuel
 
     def test_journey_start_and_progress(self):
-        # Set up simulation reference for the ship
-        mock_sim = type('obj', (object,), {
-            'commodity_registry': self.commodity_registry
-        })
-        self.ship.simulation = mock_sim
+        # Simulation reference already set in constructor
         
         # Start a journey to Mars
         self.assertTrue(self.ship.start_journey(self.mars))

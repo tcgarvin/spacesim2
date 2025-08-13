@@ -7,6 +7,7 @@ from spacesim2.core.commodity import CommodityRegistry, CommodityDefinition
 from spacesim2.core.process import ProcessRegistry, ProcessDefinition
 from spacesim2.core.actor import Actor, ActorType
 from spacesim2.core.planet import Planet
+from spacesim2.core.market import Market
 from spacesim2.core.simulation import Simulation
 
 
@@ -121,9 +122,10 @@ def test_load_processes_from_yaml():
         os.unlink(process_file)
 
 
-def test_inventory_commodity_items():
+def test_inventory_commodity_items(mock_sim):
     """Test the Inventory class with string commodity IDs."""
-    actor = Actor("Test Actor")
+    mock_sim = mock_sim
+    actor = Actor("Test Actor", mock_sim)
     
     # Add and check commodity
     actor.inventory.add_commodity("test_commodity", 5)
@@ -195,11 +197,11 @@ def test_actor_execute_process():
     sim.process_registry._processes["test_process"] = process_def
     
     # Create planet
-    planet = Planet("Test Planet")
+    market = Market()
+    planet = Planet("Test Planet", market)
     
-    # Create actor with required inputs, tools, and facilities
-    actor = Actor("Test Actor", planet=planet)
-    actor.sim = sim
+    # Create actor with required inputs, tools, and facilities  
+    actor = Actor("Test Actor", sim, planet=planet)
     actor.inventory.add_commodity("input_commodity", 5)
     actor.inventory.add_commodity("tool_commodity", 1)
     actor.inventory.add_commodity("facility_commodity", 1)  # Actor has the facility
@@ -260,11 +262,11 @@ def test_process_requires_facility():
     sim.process_registry._processes["test_process"] = process_def
     
     # Create planet
-    planet = Planet("Test Planet")
+    market = Market()
+    planet = Planet("Test Planet", market)
     
     # Create actor with required inputs but without facility
-    actor = Actor("Test Actor", planet=planet)
-    actor.sim = sim
+    actor = Actor("Test Actor", sim, planet=planet)
     actor.inventory.add_commodity("input_commodity", 5)
     
     # Try to execute process - should fail because actor doesn't have the facility

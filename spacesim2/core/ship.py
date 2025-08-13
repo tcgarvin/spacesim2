@@ -36,18 +36,16 @@ class TraderBrain(ShipBrain):
     
     def decide_trade_actions(self) -> None:
         """Trade actions at current planet: buy low, sell high."""
-        if not self.ship.planet or not self.ship.planet.market:
+        if not self.ship.planet:
             return
         
         market = self.ship.planet.market
         
         # Get commodity references
         food_commodity = None
-        fuel_commodity = None
-        
-        if self.ship.simulation and hasattr(self.ship.simulation, 'commodity_registry'):
-            food_commodity = self.ship.simulation.commodity_registry.get_commodity("food")
-            fuel_commodity = self.ship.simulation.commodity_registry.get_commodity("nova_fuel")
+        # Ship always has simulation reference
+        food_commodity = self.ship.simulation.commodity_registry.get_commodity("food")
+        fuel_commodity = self.ship.simulation.commodity_registry.get_commodity("nova_fuel")
         
         if not food_commodity or not fuel_commodity:
             # Can't trade without commodity references
@@ -131,16 +129,14 @@ class TraderBrain(ShipBrain):
             return None
         
         # Don't travel if we don't have a planet or planets to travel to
-        if not self.ship.planet or not self.ship.simulation or not self.ship.simulation.planets:
+        if not self.ship.planet or not self.ship.simulation.planets:
             return None
         
         # Get commodity references
         fuel_commodity = None
-        food_commodity = None
-        
-        if self.ship.simulation and hasattr(self.ship.simulation, 'commodity_registry'):
-            fuel_commodity = self.ship.simulation.commodity_registry.get_commodity("nova_fuel")
-            food_commodity = self.ship.simulation.commodity_registry.get_commodity("food")
+        # Ship always has simulation reference
+        fuel_commodity = self.ship.simulation.commodity_registry.get_commodity("nova_fuel")
+        food_commodity = self.ship.simulation.commodity_registry.get_commodity("food")
         
         if not fuel_commodity or not food_commodity:
             return None
@@ -173,7 +169,7 @@ class TraderBrain(ShipBrain):
             best_price = 0
             
             for planet, _ in reachable_planets:
-                if planet.market:
+                # Market is guaranteed to exist
                     price = planet.market.get_avg_price(food_commodity)
                     if price > best_price:
                         best_price = price
@@ -187,7 +183,7 @@ class TraderBrain(ShipBrain):
             best_price = float('inf')
             
             for planet, _ in reachable_planets:
-                if planet.market:
+                # Market is guaranteed to exist
                     price = planet.market.get_avg_price(food_commodity)
                     if 0 < price < best_price:  # Ensure price is positive
                         best_price = price
@@ -206,6 +202,7 @@ class Ship:
     def __init__(
         self,
         name: str,
+        simulation: 'Simulation',
         planet: Optional[Planet] = None,
         cargo_capacity: int = 100,
         fuel_capacity: int = 50,
@@ -228,7 +225,7 @@ class Ship:
         self.last_action = "None"  # Track the last action performed
         self.maintenance_needed = False  # Whether maintenance is required
         self.status = ShipStatus.DOCKED
-        self.simulation = None  # Reference to the simulation
+        self.simulation = simulation  # Reference to the simulation
         self.market_history = []  # Track market activity for compatibility with market code
         self.food_consumed_this_turn = True  # Ships don't eat, but needed for compatibility
         
@@ -261,10 +258,8 @@ class Ship:
         Returns:
             True if maintenance was successful, False if we lack resources.
         """
-        # Get fuel commodity
-        fuel_commodity = None
-        if self.simulation and hasattr(self.simulation, 'commodity_registry'):
-            fuel_commodity = self.simulation.commodity_registry.get_commodity("nova_fuel")
+        # Get fuel commodity - simulation always available
+        fuel_commodity = self.simulation.commodity_registry.get_commodity("nova_fuel")
         
         if not fuel_commodity:
             self.last_action = "Cannot perform maintenance - fuel commodity not defined"
@@ -299,7 +294,7 @@ class Ship:
             return False
             
         # Set origin planet before starting journey - make sure the planet knows this ship
-        if self.planet and hasattr(self.planet, 'ships') and self not in self.planet.ships:
+        if self.planet and self not in self.planet.ships:
             self.planet.ships.append(self)
             
         # Check for maintenance needs
@@ -309,10 +304,8 @@ class Ship:
             self.last_action = "Maintenance required before departure"
             return False
             
-        # Get fuel commodity
-        fuel_commodity = None
-        if self.simulation and hasattr(self.simulation, 'commodity_registry'):
-            fuel_commodity = self.simulation.commodity_registry.get_commodity("nova_fuel")
+        # Get fuel commodity - simulation always available
+        fuel_commodity = self.simulation.commodity_registry.get_commodity("nova_fuel")
         
         if not fuel_commodity:
             self.last_action = "Cannot start journey - fuel commodity not defined"
@@ -367,13 +360,12 @@ class Ship:
             self.travel_progress = 0
             
             # Update ship's planet reference - transfer from old planet to new planet
-            if old_planet and hasattr(old_planet, 'ships') and self in old_planet.ships:
+            if old_planet and self in old_planet.ships:
                 old_planet.ships.remove(self)
             
             # Make sure destination planet has a ships list and add this ship to it
             if self.planet:
-                if not hasattr(self.planet, 'ships'):
-                    self.planet.ships = []
+                # Planet should always have ships list initialized
                 if self not in self.planet.ships:
                     self.planet.ships.append(self)
             

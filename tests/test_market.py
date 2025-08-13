@@ -27,11 +27,11 @@ def test_market_initialization() -> None:
     assert len(market.transaction_history) == 0
 
 
-def test_place_buy_order(commodity_registry, food_commodity) -> None:
+def test_place_buy_order(commodity_registry, food_commodity, mock_sim) -> None:
     """Test that a buy order can be placed in the market."""
     market = Market()
     market.commodity_registry = commodity_registry
-    actor = Actor("Buyer", initial_money=100)
+    actor = Actor("Buyer", mock_sim, initial_money=100)
     
     market.place_buy_order(actor, food_commodity, 10, 5)
     
@@ -44,11 +44,11 @@ def test_place_buy_order(commodity_registry, food_commodity) -> None:
     assert order.is_buy is True
 
 
-def test_place_sell_order(commodity_registry, food_commodity) -> None:
+def test_place_sell_order(commodity_registry, food_commodity, mock_sim) -> None:
     """Test that a sell order can be placed in the market."""
     market = Market()
     market.commodity_registry = commodity_registry
-    actor = Actor("Seller")
+    actor = Actor("Seller", mock_sim)
     
     # Add some food to inventory
     actor.inventory.add_commodity(food_commodity, 10)
@@ -64,14 +64,14 @@ def test_place_sell_order(commodity_registry, food_commodity) -> None:
     assert order.is_buy is False
 
 
-def test_order_matching(commodity_registry, food_commodity) -> None:
+def test_order_matching(commodity_registry, food_commodity, mock_sim) -> None:
     """Test that orders can be matched and transactions executed."""
     market = Market()
     market.commodity_registry = commodity_registry
     
     # Create actors
-    buyer = Actor("Buyer", initial_money=100)
-    seller = Actor("Seller")
+    buyer = Actor("Buyer", mock_sim, initial_money=100)
+    seller = Actor("Seller", mock_sim)
     
     # Give seller some food
     seller.inventory.add_commodity(food_commodity, 10)
@@ -101,14 +101,14 @@ def test_order_matching(commodity_registry, food_commodity) -> None:
     assert seller.inventory.get_quantity(food_commodity) == 5
 
 
-def test_order_partial_matching(commodity_registry, food_commodity) -> None:
+def test_order_partial_matching(commodity_registry, food_commodity, mock_sim) -> None:
     """Test that orders can be partially matched."""
     market = Market()
     market.commodity_registry = commodity_registry
     
     # Create actors
-    buyer = Actor("Buyer", initial_money=100)
-    seller = Actor("Seller")
+    buyer = Actor("Buyer", mock_sim, initial_money=100)
+    seller = Actor("Seller", mock_sim)
     
     # Give seller more food than will be sold
     seller.inventory.add_commodity(food_commodity, 10)
@@ -134,13 +134,13 @@ def test_order_partial_matching(commodity_registry, food_commodity) -> None:
     assert market.sell_orders[food_commodity][0].quantity == 5  # 8 - 3
 
 
-def test_no_match_when_bid_too_low(commodity_registry, food_commodity) -> None:
+def test_no_match_when_bid_too_low(commodity_registry, food_commodity, mock_sim) -> None:
     """Test that orders don't match when the bid is lower than the ask."""
     market = Market()
     market.commodity_registry = commodity_registry
     
-    buyer = Actor("Buyer", initial_money=100)
-    seller = Actor("Seller")
+    buyer = Actor("Buyer", mock_sim, initial_money=100)
+    seller = Actor("Seller", mock_sim)
     
     seller.inventory.add_commodity(food_commodity, 10)
     
@@ -174,13 +174,13 @@ def test_get_avg_price(commodity_registry, food_commodity) -> None:
     assert market.get_avg_price(food_commodity) == 9
 
 
-def test_clear_orders(commodity_registry, food_commodity) -> None:
+def test_clear_orders(commodity_registry, food_commodity, mock_sim) -> None:
     """Test that orders can be cleared from the market."""
     market = Market()
     market.commodity_registry = commodity_registry
     
-    buyer = Actor("Buyer", initial_money=100)
-    seller = Actor("Seller")
+    buyer = Actor("Buyer", mock_sim, initial_money=100)
+    seller = Actor("Seller", mock_sim)
     
     seller.inventory.add_commodity(food_commodity, 10)
     

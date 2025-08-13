@@ -66,13 +66,11 @@ class Simulation:
         # Create the planets with their markets
         for i in range(num_planets):
             name, x, y = planet_data[i]
-            planet = Planet(name, x=x, y=y)
-            self.planets.append(planet)
-            
             # Create and initialize the market for the planet
             planet_market = Market()
             planet_market.commodity_registry = self.commodity_registry  # Give market access to commodity registry
-            planet.market = planet_market
+            planet = Planet(name, planet_market, x=x, y=y)
+            self.planets.append(planet)
             
             # Create actors for each planet
             self._setup_planet_actors(
@@ -85,9 +83,7 @@ class Simulation:
         # Create ships and distribute them across planets
         self._setup_ships(num_ships)
         
-        # Set simulation reference in all actors
-        for actor in self.actors:
-            actor.sim = self
+        # Simulation references already set in constructors
                 
     def _setup_planet_actors(self, planet: Planet, num_regular_actors: int, 
                          num_market_makers: int, actor_name_prefix: str) -> None:
@@ -119,7 +115,8 @@ class Simulation:
                     initial_skills[skill_id] = random.uniform(0.5, 1.0)
             
             actor = Actor(
-                name=f"{actor_name_prefix}Colonist-{i}", 
+                name=f"{actor_name_prefix}Colonist-{i}",
+                sim=self,
                 planet=planet,
                 actor_type=ActorType.REGULAR,
                 initial_money=50,
@@ -134,7 +131,8 @@ class Simulation:
             initial_skills = {skill_id: 1.0 for skill_id in self.skills_registry._skills.keys()}
             
             actor = Actor(
-                name=f"{actor_name_prefix}MarketMaker-{i+1}", 
+                name=f"{actor_name_prefix}MarketMaker-{i+1}",
+                sim=self,
                 planet=planet,
                 actor_type=ActorType.MARKET_MAKER,
                 initial_money=200,
@@ -165,6 +163,7 @@ class Simulation:
             
             ship = Ship(
                 name=f"Trader-{i+1}",
+                simulation=self,
                 planet=planet,
                 fuel_efficiency=efficiency,
                 initial_money=1000
@@ -178,8 +177,7 @@ class Simulation:
             self.ships.append(ship)
             planet.add_ship(ship)
             
-            # Set simulation reference
-            ship.simulation = self
+            # Simulation reference already set in constructor
     
     def run_turn(self) -> None:
         """Run a single turn of the simulation."""
@@ -188,7 +186,7 @@ class Simulation:
 
         # Update market turn counters
         for planet in self.planets:
-            if planet.market:
+            # Market is guaranteed to exist
                 planet.market.set_current_turn(self.current_turn)
 
         # Randomize actor order
@@ -214,7 +212,7 @@ class Simulation:
     def _process_markets(self) -> None:
         """Process all markets at the end of the turn."""
         for planet in self.planets:
-            if planet.market:
+            # Market is guaranteed to exist
                 # Execute trades
                 planet.market.match_orders()
                 

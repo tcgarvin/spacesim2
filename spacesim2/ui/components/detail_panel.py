@@ -73,7 +73,7 @@ class DetailPanel:
             Whether the click was handled by this component
         """
         # Check if we're in planet details with a market
-        if self.selected_planet and self.selected_planet.market:
+        if self.selected_planet:
             # Calculate the commodity list area
             panel_rect = Rect(
                 self.x + 20,
@@ -118,7 +118,7 @@ class DetailPanel:
             Whether the key was handled by this component
         """
         # When in planet details, allow commodity selection
-        if self.selected_planet and self.selected_planet.market:
+        if self.selected_planet:
             # Get list of available commodities
             commodity_registry = self.simulation.commodity_registry if self.simulation else None
             if not commodity_registry:
@@ -452,7 +452,7 @@ class DetailPanel:
         y += line_height * 2
         
         # Market information
-        if planet.market:
+        # Market is guaranteed to exist
             market_title, market_title_rect = text_renderer.render_text(
                 "Market Information:", "normal", self.colors["text"]["header"]
             )
@@ -498,7 +498,7 @@ class DetailPanel:
                     y += line_height
             
             # If a commodity is selected, show orders
-            if self.selected_commodity and planet.market:
+            if self.selected_commodity:
                 y += line_height
                 self._render_commodity_orders(panel_rect, x, y, text_renderer)
         else:
@@ -537,9 +537,8 @@ class DetailPanel:
         
         # Get only current turn's transactions for this commodity
         current_transactions = []
-        if hasattr(market, "transaction_history") and self.simulation:
-            current_transactions = [tx for tx in market.transaction_history 
-                                  if tx.commodity_type == commodity and tx.turn == self.simulation.current_turn]
+        current_transactions = [tx for tx in market.transaction_history 
+                              if tx.commodity_type == commodity and tx.turn == self.simulation.current_turn]
         
         # Draw column headers
         col_width = (panel_rect.width - 40) // 2

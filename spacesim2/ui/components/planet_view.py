@@ -208,7 +208,7 @@ class PlanetViewPanel:
                 self.screen.blit(name_surface, name_rect)
                 
                 # Draw ship count if any
-                if hasattr(planet, 'ships') and planet.ships:
+                if planet.ships:
                     ship_count = len([s for s in planet.ships if s.status == ShipStatus.DOCKED])
                     if ship_count > 0:
                         ship_count_text, ship_count_rect = text_renderer.render_text(
@@ -220,5 +220,5 @@ class PlanetViewPanel:
                         self.screen.blit(ship_count_text, ship_count_rect)
                 
                 # Draw ships in orbit around this planet
-                if self.ship_renderer and hasattr(planet, 'ships') and planet.ships:
+                if self.ship_renderer and planet.ships:
                     self.ship_renderer.draw_ships_in_orbit(planet, planet.ships, self.selected_ship)

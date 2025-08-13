@@ -40,8 +40,7 @@ class ColonistBrain(ActorBrain):
     def decide_economic_action(self) -> Optional[EconomicCommand]:
         """Decide which economic action to take this turn."""
         # First, try to satisfy basic needs (food)
-        if not hasattr(self.actor, 'sim') or not self.actor.sim:
-            return GovernmentWorkCommand()
+        # Actor always has sim reference
             
         food_commodity = self.actor.sim.commodity_registry.get_commodity("food")
         biomass_commodity = self.actor.sim.commodity_registry.get_commodity("biomass")
@@ -61,22 +60,20 @@ class ColonistBrain(ActorBrain):
                 return ProcessCommand("gather_biomass")
 
         # Try to find the most profitable process
-        if hasattr(self.actor, 'sim') and self.actor.sim and hasattr(self.actor.sim, 'process_registry'):
-            market = self.actor.planet.market if self.actor.planet else None
-            if market:
-                best_process = self._find_most_profitable_process(market)
-                
-                # Return the most profitable process if better than government work
-                if best_process and self._can_execute_process(best_process.id):
-                    return ProcessCommand(best_process.id)
+        market = self.actor.planet.market if self.actor.planet else None
+        if market:
+            best_process = self._find_most_profitable_process(market)
+            
+            # Return the most profitable process if better than government work
+            if best_process and self._can_execute_process(best_process.id):
+                return ProcessCommand(best_process.id)
         
         # If no processes can be executed, do government work
         return GovernmentWorkCommand()
     
     def _find_most_profitable_process(self, market) -> Optional['ProcessDefinition']:
         """Find the most profitable process based on current market prices and available resources."""
-        if not hasattr(self.actor, 'sim') or not self.actor.sim or not hasattr(self.actor.sim, 'process_registry'):
-            return None
+        # Actor always has sim reference
             
         best_process = None
         best_profit = 10  # Must exceed government work profit
@@ -104,8 +101,7 @@ class ColonistBrain(ActorBrain):
     
     def _can_execute_process(self, process_id: str) -> bool:
         """Check if actor can execute a process without actually executing it."""
-        if not hasattr(self.actor, 'sim') or not self.actor.sim:
-            return False
+        # Actor always has sim reference
             
         process = self.actor.sim.process_registry.get_process(process_id)
         if not process:
@@ -135,7 +131,7 @@ class ColonistBrain(ActorBrain):
     
     def decide_market_actions(self) -> List[MarketCommand]:
         """Regular actors buy what they need and sell excess, matching existing orders when possible."""
-        if not self.actor.planet or not self.actor.planet.market:
+        if not self.actor.planet:
             return []
         
         market = self.actor.planet.market
@@ -149,12 +145,9 @@ class ColonistBrain(ActorBrain):
             commands.append(CancelOrderCommand(order.order_id))
         
         # Get commodity references
-        food_commodity = None
-        fuel_commodity = None
-        
-        if self.actor.sim:
-            food_commodity = self.actor.sim.commodity_registry["food"]
-            fuel_commodity = self.actor.sim.commodity_registry["nova_fuel"]
+        # Actor always has sim reference
+        food_commodity = self.actor.sim.commodity_registry["food"]
+        fuel_commodity = self.actor.sim.commodity_registry["nova_fuel"]
         
         # Handle food trading
         food_commands = self._get_trade_commands(market, food_commodity, min_keep=6)
@@ -254,7 +247,7 @@ class MarketMakerBrain(ActorBrain):
     
     def decide_market_actions(self) -> List[MarketCommand]:
         """Market makers provide liquidity by placing both buy and sell orders based on inventory and market conditions."""
-        if not self.actor.planet or not self.actor.planet.market:
+        if not self.actor.planet:
             return []
 
         market = self.actor.planet.market

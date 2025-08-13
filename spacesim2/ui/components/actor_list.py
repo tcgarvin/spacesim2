@@ -631,8 +631,7 @@ class ActorListPanel:
         if self.context == "market" and self.selected_commodity:
             # Get the actual quantity of the selected commodity
             quantity = 0
-            if hasattr(actor, "inventory"):
-                for commodity in actor.inventory.commodities:
+            for commodity in actor.inventory.commodities:
                     if commodity.id == self.selected_commodity.id:
                         quantity = actor.inventory.get_quantity(commodity)
                         break
@@ -657,7 +656,7 @@ class ActorListPanel:
     def _draw_actor_status_indicators(self, actor: Actor, x: int, y: int) -> None:
         """Draw small status indicators in the corners of the actor square."""
         # Top-left: Food status
-        food_status = actor.food_consumed_this_turn if hasattr(actor, "food_consumed_this_turn") else False
+        food_status = actor.food_consumed_this_turn
         food_color = self.colors["text"]["food"] if food_status else (150, 50, 50)  # Green if fed, red if hungry
         pygame.draw.circle(
             self.screen,
@@ -667,7 +666,7 @@ class ActorListPanel:
         )
         
         # Top-right: Market activity (e.g., has active orders)
-        has_orders = len(actor.active_orders) > 0 if hasattr(actor, "active_orders") else False
+        has_orders = len(actor.active_orders) > 0
         order_color = (50, 200, 50) if has_orders else (100, 100, 100)  # Green if has orders
         pygame.draw.circle(
             self.screen,
@@ -692,7 +691,7 @@ class ActorListPanel:
         )
         
         # Bottom-right: Activity status (from last_action)
-        if hasattr(actor, "last_action"):
+        if actor.last_action:
             if "Failed" in actor.last_action:
                 activity_color = (200, 50, 50)  # Red if failed
             elif "Government work" in actor.last_action:
@@ -740,7 +739,7 @@ class ActorListPanel:
                         
             # Check market history for recent transactions (last 2 turns)
             if self.selected_commodity:
-                current_turn = ship.simulation.current_turn if hasattr(ship, "simulation") and ship.simulation else 0
+                current_turn = ship.simulation.current_turn if ship.simulation else 0
                 for transaction in reversed(ship.market_history):
                     if current_turn - transaction['turn'] > 0:
                         break
@@ -806,8 +805,7 @@ class ActorListPanel:
         if self.context == "market" and self.selected_commodity:
             # Get the actual quantity of the selected commodity
             quantity = 0
-            if hasattr(ship, "cargo"):
-                for commodity in ship.cargo.commodities:
+            for commodity in ship.cargo.commodities:
                     if commodity.id == self.selected_commodity.id:
                         quantity = ship.cargo.get_quantity(commodity)
                         break
@@ -930,7 +928,7 @@ class ActorListPanel:
                 y += line_height
         
         # Skills section (only show skills with significant deviation) - actors only
-        if not isinstance(display_entity, Ship) and hasattr(display_entity, "skills") and display_entity.skills:
+        if not isinstance(display_entity, Ship) and display_entity.skills:
             # Filter to only skills with significant deviation
             significant_skills = {
                 skill_id: rating for skill_id, rating in display_entity.skills.items()
@@ -1025,7 +1023,7 @@ class ActorListPanel:
         y += line_height
         
         # Display last action if available
-        if hasattr(display_entity, "last_action") and display_entity.last_action:
+        if display_entity.last_action:
             action_text, action_rect = text_renderer.render_text(
                 f"• {display_entity.last_action}", "small", self.colors["text"]["normal"]
             )
@@ -1034,7 +1032,7 @@ class ActorListPanel:
             y += line_height - 4
             
         # Display last market action if available
-        if hasattr(display_entity, "last_market_action") and display_entity.last_market_action:
+        if display_entity.last_market_action:
             # Truncate if too long for display
             market_action = display_entity.last_market_action
             if len(market_action) > 60:

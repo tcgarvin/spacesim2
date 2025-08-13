@@ -21,13 +21,13 @@ def nova_fuel(commodity_registry):
 
 
 @pytest.fixture
-def market_with_actors(commodity_registry, nova_fuel) -> Tuple[Market, Actor, Actor]:
+def market_with_actors(commodity_registry, nova_fuel, mock_sim) -> Tuple[Market, Actor, Actor]:
     """Set up a market with buyer and seller actors."""
     market = Market()
     market.commodity_registry = commodity_registry
     
-    buyer = Actor("Buyer", initial_money=1000)
-    seller = Actor("Seller", initial_money=500)
+    buyer = Actor("Buyer", mock_sim, initial_money=1000)
+    seller = Actor("Seller", mock_sim, initial_money=500)
     
     # Give the seller some nova_fuel
     seller.inventory.add_commodity(nova_fuel, 20)

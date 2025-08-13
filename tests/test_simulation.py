@@ -19,7 +19,11 @@ def food_commodity():
 
 def test_actor_government_work() -> None:
     """Test that an actor earns money from government work."""
-    actor = Actor("Test Actor", initial_money=0.0)
+    # Create mock sim
+    mock_sim = type('MockSimulation', (object,), {
+        'commodity_registry': CommodityRegistry()
+    })()
+    actor = Actor("Test Actor", mock_sim, initial_money=0)
     initial_money = actor.money
     
     # Test via command pattern
@@ -31,8 +35,13 @@ def test_actor_government_work() -> None:
 
 def test_planet_add_actor() -> None:
     """Test that an actor can be added to a planet."""
-    planet = Planet("Test Planet")
-    actor = Actor("Test Actor")
+    market = Market()
+    planet = Planet("Test Planet", market)
+    # Create mock sim
+    mock_sim = type('MockSimulation', (object,), {
+        'commodity_registry': CommodityRegistry()
+    })()
+    actor = Actor("Test Actor", mock_sim)
 
     planet.add_actor(actor)
 
@@ -88,7 +97,8 @@ class SimulationTestHelper:
         sim = Simulation()
         
         # Create planet and market
-        planet = Planet("TestPlanet")
+        market = Market()
+        planet = Planet("TestPlanet", market)
         sim.planets.append(planet)
         
         market = Market()
@@ -115,13 +125,13 @@ class SimulationTestHelper:
         # Create a test actor that does government work
         actor = Actor(
             name="TestWorker",
+            sim=sim,
             planet=planet,
             initial_money=0,
             actor_type=ActorType.REGULAR
         )
         
-        # Give simulation reference to actor
-        actor.sim = sim
+        # Simulation reference already set in constructor
         
         # Override the should_produce_food method to always return False
         # so the actor will always do government work in tests
@@ -129,7 +139,7 @@ class SimulationTestHelper:
         
         # Override decide_economic_action to always return government work
         from spacesim2.core.commands import GovernmentWorkCommand
-        actor.brain.decide_economic_action = lambda: GovernmentWorkCommand(10)
+        actor.brain.decide_economic_action = lambda: GovernmentWorkCommand()
         
         sim.actors.append(actor)
         planet.add_actor(actor)
@@ -152,7 +162,7 @@ def test_simulation_run_turn() -> None:
     
     # Manually set up the actor to earn money
     from spacesim2.core.commands import GovernmentWorkCommand
-    command = GovernmentWorkCommand(10)
+    command = GovernmentWorkCommand()
     command.execute(actor)
     assert actor.money == 10
     

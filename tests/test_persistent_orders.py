@@ -17,14 +17,14 @@ def food_commodity():
     )
 
 
-def test_order_reservation_system(food_commodity) -> None:
+def test_order_reservation_system(food_commodity, mock_sim) -> None:
     """Test that resources are properly reserved when placing orders."""
     market = Market()
     market.commodity_registry = CommodityRegistry()
     market.commodity_registry._commodities["food"] = food_commodity
     
     # Create buyer with 100 money
-    buyer = Actor("Buyer", initial_money=100)
+    buyer = Actor("Buyer", mock_sim, initial_money=100)
     
     # Place a buy order for 5 food at 10 credits each
     order_id = market.place_buy_order(buyer, food_commodity, 5, 10)
@@ -35,7 +35,7 @@ def test_order_reservation_system(food_commodity) -> None:
     assert order_id is not None and order_id != ""
     
     # Create seller with 10 food
-    seller = Actor("Seller")
+    seller = Actor("Seller", mock_sim)
     seller.inventory.add_commodity(food_commodity, 10)
     
     # Before placing order, check inventory
@@ -66,14 +66,14 @@ def test_order_reservation_system(food_commodity) -> None:
     assert seller.inventory.get_reserved_quantity(food_commodity) == 0  # All reserved was sold
 
 
-def test_cancel_order(food_commodity) -> None:
+def test_cancel_order(food_commodity, mock_sim) -> None:
     """Test that orders can be canceled and resources unreserved."""
     market = Market()
     market.commodity_registry = CommodityRegistry()
     market.commodity_registry._commodities["food"] = food_commodity
     
     # Create buyer with 100 money
-    buyer = Actor("Buyer", initial_money=100)
+    buyer = Actor("Buyer", mock_sim, initial_money=100)
     
     # Place a buy order
     order_id = market.place_buy_order(buyer, food_commodity, 5, 10)
@@ -94,7 +94,7 @@ def test_cancel_order(food_commodity) -> None:
     assert order_id not in market.orders_by_id
     
     # Test with sell order
-    seller = Actor("Seller")
+    seller = Actor("Seller", mock_sim)
     seller.inventory.add_commodity(food_commodity, 10)
     
     # Place sell order
@@ -112,14 +112,14 @@ def test_cancel_order(food_commodity) -> None:
     assert seller.inventory.get_reserved_quantity(food_commodity) == 0
 
 
-def test_modify_order(food_commodity) -> None:
+def test_modify_order(food_commodity, mock_sim) -> None:
     """Test that order modification works correctly."""
     market = Market()
     market.commodity_registry = CommodityRegistry()
     market.commodity_registry._commodities["food"] = food_commodity
     
     # Create buyer with 100 money
-    buyer = Actor("Buyer", initial_money=100)
+    buyer = Actor("Buyer", mock_sim, initial_money=100)
     
     # Place a buy order
     order_id = market.place_buy_order(buyer, food_commodity, 5, 10)
@@ -146,15 +146,15 @@ def test_modify_order(food_commodity) -> None:
     assert market.orders_by_id[order_id].price == 8
 
 
-def test_order_persistence(food_commodity) -> None:
+def test_order_persistence(food_commodity, mock_sim) -> None:
     """Test that orders persist across market cycles."""
     market = Market()
     market.commodity_registry = CommodityRegistry()
     market.commodity_registry._commodities["food"] = food_commodity
     
     # Create buyer and seller
-    buyer = Actor("Buyer", initial_money=100)
-    seller = Actor("Seller")
+    buyer = Actor("Buyer", mock_sim, initial_money=100)
+    seller = Actor("Seller", mock_sim)
     seller.inventory.add_commodity(food_commodity, 10)
     
     # Place non-matching orders
@@ -184,14 +184,14 @@ def test_order_persistence(food_commodity) -> None:
     assert len(market.sell_orders.get(food_commodity, [])) == 0
 
 
-def test_actor_order_tracking(food_commodity) -> None:
+def test_actor_order_tracking(food_commodity, mock_sim) -> None:
     """Test that actors can track their orders."""
     market = Market()
     market.commodity_registry = CommodityRegistry()
     market.commodity_registry._commodities["food"] = food_commodity
     
     # Create buyer
-    buyer = Actor("Buyer", initial_money=100)
+    buyer = Actor("Buyer", mock_sim, initial_money=100)
     
     # Place buy order
     order_id = market.place_buy_order(buyer, food_commodity, 5, 10)
@@ -216,12 +216,11 @@ def test_actor_order_tracking(food_commodity) -> None:
     assert len(actor_orders["buy"]) == 0
 
 
-def test_market_maker_strategy(food_commodity) -> None:
+def test_market_maker_strategy(food_commodity, mock_sim) -> None:
     """Test that market makers manage their orders effectively."""
     # Create a planet with a market
-    planet = Planet("Test Planet")
     market = Market()
-    planet.market = market
+    planet = Planet("Test Planet", market)
     
     # Create commodity registry
     commodity_registry = CommodityRegistry()
@@ -238,7 +237,7 @@ def test_market_maker_strategy(food_commodity) -> None:
     market.commodity_registry = commodity_registry
     
     # Create a market maker with some initial inventory
-    market_maker = Actor("MM-1", planet=planet, actor_type=ActorType.MARKET_MAKER)
+    market_maker = Actor("MM-1", mock_sim, planet=planet, actor_type=ActorType.MARKET_MAKER)
     market_maker.inventory.add_commodity(food_commodity, 20)
     market_maker.sim = type('obj', (object,), {
         'commodity_registry': commodity_registry,
@@ -279,12 +278,11 @@ def test_market_maker_strategy(food_commodity) -> None:
         pass
 
 
-def test_regular_actor_strategy(food_commodity) -> None:
+def test_regular_actor_strategy(food_commodity, mock_sim) -> None:
     """Test that regular actors manage their orders effectively."""
     # Create a planet with a market
-    planet = Planet("Test Planet")
     market = Market()
-    planet.market = market
+    planet = Planet("Test Planet", market)
     
     # Create commodity registry
     commodity_registry = CommodityRegistry()
@@ -300,14 +298,14 @@ def test_regular_actor_strategy(food_commodity) -> None:
     market.commodity_registry = commodity_registry
     
     # Create a regular actor with not enough food
-    actor = Actor("Actor-1", planet=planet)
+    actor = Actor("Actor-1", mock_sim, planet=planet)
     actor.inventory.add_commodity(food_commodity, 3)  # Below threshold of 6 (new value)
     actor.sim = type('obj', (object,), {
         'commodity_registry': commodity_registry,
     })
     
     # Create a seller with enough food
-    seller = Actor("Seller", planet=planet)
+    seller = Actor("Seller", mock_sim, planet=planet)
     seller.inventory.add_commodity(food_commodity, 20)
     
     # Place a sell order in the market for the actor to match against
@@ -341,7 +339,7 @@ def test_regular_actor_strategy(food_commodity) -> None:
     actor.inventory.add_commodity(food_commodity, 10)  # Now has 13+ food
     
     # Create a buyer with money
-    buyer = Actor("Buyer", planet=planet, initial_money=200)
+    buyer = Actor("Buyer", mock_sim, planet=planet, initial_money=200)
     
     # Place a buy order in the market for the actor to match against
     market.place_buy_order(buyer, food_commodity, 5, 10)
@@ -367,7 +365,7 @@ def test_regular_actor_strategy(food_commodity) -> None:
     assert sold_food or has_sell_order
 
 
-def test_integrated_market_simulation() -> None:
+def test_integrated_market_simulation(mock_sim) -> None:
     """Test full market simulation with multiple actors trading."""
     # Instead of running a full simulation which is complex,
     # we'll manually set up a simple market and verify the reservation system
@@ -394,17 +392,16 @@ def test_integrated_market_simulation() -> None:
     market.commodity_registry = commodity_registry
     
     # Create a planet
-    planet = Planet("Test Planet")
-    planet.market = market
+    planet = Planet("Test Planet", market)
     
     # Create a seller and buyer
-    seller = Actor("Seller", planet=planet)
+    seller = Actor("Seller", mock_sim, planet=planet)
     seller.inventory.add_commodity(food_commodity, 20)
     seller.sim = type('obj', (object,), {
         'commodity_registry': commodity_registry,
     })
     
-    buyer = Actor("Buyer", planet=planet, initial_money=200)
+    buyer = Actor("Buyer", mock_sim, planet=planet, initial_money=200)
     buyer.sim = type('obj', (object,), {
         'commodity_registry': commodity_registry,
     })

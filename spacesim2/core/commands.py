@@ -44,9 +44,6 @@ class ProcessCommand(EconomicCommand):
         Returns:
             bool: True if process was executed successfully, False otherwise
         """
-        if not hasattr(actor, 'sim') or not actor.sim:
-            return False
-            
         process = actor.sim.process_registry.get_process(self.process_id)
         if not process:
             return False
@@ -123,7 +120,7 @@ class GovernmentWorkCommand(EconomicCommand):
     def execute(self, actor: 'Actor') -> bool:
         """Perform government work to earn a fixed wage."""
         actor.money += GOVERNMENT_WAGE
-        actor.last_action = f"Government work for {self.wage} credits"
+        actor.last_action = f"Government work for {GOVERNMENT_WAGE} credits"
         return True
 
 
@@ -135,7 +132,7 @@ class CancelOrderCommand(MarketCommand):
     
     def execute(self, actor: 'Actor') -> bool:
         """Cancel a market order."""
-        if not actor.planet or not actor.planet.market:
+        if not actor.planet:
             return False
         
         return actor.planet.market.cancel_order(self.order_id)
@@ -151,7 +148,7 @@ class PlaceBuyOrderCommand(MarketCommand):
     
     def execute(self, actor: 'Actor') -> bool:
         """Place a buy order on the market."""
-        if not actor.planet or not actor.planet.market:
+        if not actor.planet:
             return False
         
         order_id = actor.planet.market.place_buy_order(
@@ -159,7 +156,7 @@ class PlaceBuyOrderCommand(MarketCommand):
         )
         
         if order_id:
-            commodity_name = self.commodity_type.id if hasattr(self.commodity_type, 'id') else str(self.commodity_type)
+            commodity_name = self.commodity_type.id
             actor.active_orders[order_id] = f"buy {commodity_name}"
             return True
         
@@ -176,7 +173,7 @@ class PlaceSellOrderCommand(MarketCommand):
     
     def execute(self, actor: 'Actor') -> bool:
         """Place a sell order on the market."""
-        if not actor.planet or not actor.planet.market:
+        if not actor.planet:
             return False
         
         order_id = actor.planet.market.place_sell_order(
@@ -184,7 +181,7 @@ class PlaceSellOrderCommand(MarketCommand):
         )
         
         if order_id:
-            commodity_name = self.commodity_type.id if hasattr(self.commodity_type, 'id') else str(self.commodity_type)
+            commodity_name = self.commodity_type.id
             actor.active_orders[order_id] = f"sell {commodity_name}"
             return True
         
