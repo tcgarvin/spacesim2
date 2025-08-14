@@ -175,3 +175,6 @@ class Actor:
         
         # If we get here, there's not enough food
         self.food_consumed_this_turn = False
+
+    def __repr__(self):
+        return f"Actor(name={self.name})"

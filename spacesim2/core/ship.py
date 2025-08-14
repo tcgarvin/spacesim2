@@ -65,7 +65,7 @@ class TraderBrain(ShipBrain):
         actions = []
         
         # If we have cargo to sell, sell it
-        if cargo_quantity > 0:
+        if cargo_quantity > 0 and False:  #disable for the moment
             # Get market price information
             avg_price = market.get_avg_price(food_commodity)
             # Aim to sell above average price if possible
@@ -98,23 +98,23 @@ class TraderBrain(ShipBrain):
             # Buy commodities with remaining space and money
             if cargo_space_available > 0 and self.ship.money > 0:
                 # Get market price information
-                avg_price = market.get_avg_price(food_commodity)
-                # Aim to buy below average price if possible
-                buy_price = max(int(avg_price * 0.9), 1)
+                market_ask = market.get_bid_ask_spread(food_commodity)[0]
+                if market_ask is not None:
+                    buy_price = market_ask + 1 # we're on a schedule, will pay
                 
-                # Calculate how much we can afford and fit
-                affordable_quantity = min(
-                    cargo_space_available,
-                    self.ship.money // buy_price
-                )
-                
-                if affordable_quantity > 0:
-                    order_id = market.place_buy_order(
-                        self.ship, food_commodity, affordable_quantity, buy_price
+                    # Calculate how much we can afford and fit
+                    affordable_quantity = min(
+                        cargo_space_available,
+                        self.ship.money // buy_price
                     )
-                    if order_id:
-                        actions.append(f"Bidding for {affordable_quantity} food at {buy_price} credits each")
-                        self.ship.active_orders[order_id] = f"buy food"
+                    
+                    if affordable_quantity > 0:
+                        order_id = market.place_buy_order(
+                            self.ship, food_commodity, affordable_quantity, buy_price
+                        )
+                        if order_id:
+                            actions.append(f"Bidding for {affordable_quantity} food at {buy_price} credits each")
+                            self.ship.active_orders[order_id] = f"buy food"
         
         # Update the ship's last action summary
         if actions:

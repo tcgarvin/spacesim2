@@ -1,5 +1,6 @@
 from collections import defaultdict
 from dataclasses import dataclass
+from itertools import count
 from typing import Dict, List, Optional, Tuple, Union, TYPE_CHECKING, Any
 import statistics
 import uuid
@@ -185,56 +186,36 @@ class Market:
 
     def match_orders(self) -> None:
         """Match buy and sell orders for all commodities and update market history."""
-        # Record daily volumes for each commodity
-        daily_volumes = defaultdict(int)
-        daily_prices = defaultdict(list)
-
         self._trim_transaction_history()
 
         # Process orders for all commodity types (both enum and string IDs)
-        all_commodities = set(list(self.buy_orders.keys()) + list(self.sell_orders.keys()))
+        all_commodities = set(list(self.buy_orders.keys())).union(self.sell_orders.keys()).union(self.volume_history.keys())
         
         # Process orders
         for commodity_type in all_commodities:
             before_count = len(self.transaction_history)
             self._match_orders_for_commodity(commodity_type)
             after_count = len(self.transaction_history)
+
+            # Record daily volumes for each commodity
+            daily_volume = 0
+            average_price_numerator = 0
             
             # Calculate volume and prices for this turn
             new_transactions = self.transaction_history[before_count:after_count]
             for tx in new_transactions:
                 if tx.commodity_type == commodity_type:
-                    daily_volumes[commodity_type] += tx.quantity
-                    daily_prices[commodity_type].append(tx.price)
+                    daily_volume += tx.quantity
+                    average_price_numerator += tx.total_amount
         
-        # Update history
-        for commodity_type, volume in daily_volumes.items():
-            self.volume_history[commodity_type].append(volume)
-            
-            # Average price for the day (or base price if no trades)
-            if daily_prices[commodity_type]:
-                avg_daily_price = int(statistics.mean(daily_prices[commodity_type]))
-                self.price_history[commodity_type].append(avg_daily_price)
-            elif self.price_history.get(commodity_type):
-                # If no trades today but we have history, use the last price
+            if daily_volume > 0:
+                self.volume_history[commodity_type].append(daily_volume)
+                self.price_history[commodity_type].append(average_price_numerator // daily_volume)
+
+            elif len(self.volume_history[commodity_type]) > 0:
+                # Append 0 volume and last known price
+                self.volume_history[commodity_type].append(0)
                 self.price_history[commodity_type].append(self.price_history[commodity_type][-1])
-            else:
-                # No trades ever, use base price
-                # Get a default base price
-                base_price = 10  # Default base price
-                
-                # Try to get a better base price from previous history if available
-                if len(self.price_history.values()) > 0:
-                    # Use the average of all known commodity prices
-                    all_prices = []
-                    for price_history in self.price_history.values():
-                        if price_history:
-                            all_prices.append(price_history[-1])
-                    
-                    if all_prices:
-                        base_price = int(sum(all_prices) / len(all_prices))
-                
-                self.price_history[commodity_type].append(base_price)
 
     def _match_orders_for_commodity(self, commodity_type: 'CommodityDefinition') -> None:
         """Match buy and sell orders for a specific commodity."""
@@ -264,7 +245,7 @@ class Market:
                 # Determine the transaction quantity
                 quantity = min(buy_order.quantity, sell_order.quantity)
                 
-                # Use the higher of the two prices (sell price) for the transaction
+                # Use the lower of the two prices (sell price) for the transaction
                 # This is a very simple pricing model - could be improved
                 transaction_price = sell_order.price
                 
@@ -471,13 +452,11 @@ class Market:
         except statistics.StatisticsError:
             return 1.0  # Default in case of error
     
-    def has_history(self, commodity_type: Optional['CommodityDefinition'] = None) -> bool:
+    def has_history(self, commodity_type: 'CommodityDefinition') -> bool:
         """Check if there is sufficient price history for sophisticated market making."""
-        if commodity_type is None:
-            # Check if any commodity has history
-            return any(len(prices) >= 5 for prices in self.price_history.values())
-        
-        return len(self.price_history.get(commodity_type, [])) >= 5
+        # Need activity in any 5 of the last 30 days
+        commodity_volume_history = self.volume_history[commodity_type]
+        return len([v for v in commodity_volume_history if v > 0]) >= 5
     
     def set_current_turn(self, turn: int) -> None:
         """Update the current turn for timestamping new orders."""
@@ -494,7 +473,7 @@ class Market:
         """
         if order_id not in self.orders_by_id:
             return False
-            
+
         order = self.orders_by_id[order_id]
         actor = order.actor
         commodity_type = order.commodity_type

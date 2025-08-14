@@ -1,11 +1,14 @@
 import random
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Literal
+from typing import Dict, List, Optional, Literal, TYPE_CHECKING
 
 from spacesim2.core.actor_brain import ActorBrain
 from spacesim2.core.actor import Actor
 from spacesim2.core.commands import PlaceBuyOrderCommand, PlaceSellOrderCommand, CancelOrderCommand, GovernmentWorkCommand, EconomicCommand, MarketCommand
 from spacesim2.core.commodity import CommodityDefinition
+
+if TYPE_CHECKING:
+    from spacesim2.core.market import Market
 
 # Assumed available from your codebase:
 # - ActorBrain, Actor
@@ -13,19 +16,6 @@ from spacesim2.core.commodity import CommodityDefinition
 # - GovernmentWorkCommand
 # - CommodityDefinition
 # - EconomicCommand, MarketCommand
-
-# ---- Your market fill record -------------------------------------------------
-
-@dataclass
-class Transaction:
-    """Represents a completed transaction in the market."""
-    buyer: 'Actor'
-    seller: 'Actor'
-    commodity_type: 'CommodityDefinition'  # Must be a CommodityDefinition
-    quantity: int
-    price: int
-    total_amount: int
-    turn: int = 0  # The turn when this transaction occurred
 
 
 # ---- Maker internal state ----------------------------------------------------
@@ -85,7 +75,7 @@ class MarketMakerBrain(ActorBrain):
     LADDER_LEVELS: int = 5                          # depth per side in MAKER
     CASH_ALLOC_PER_COMMODITY: float = 0.15          # fraction of wallet in maker mode
     VOLATILITY_WIDENER: float = 0.5                 # widen spread by (1 + VOL * sigma/mid)
-    INVENTORY_SKEW_CAP: float = 0.10                # cap skew at ±10% of mid
+    INVENTORY_SKEW_CAP: float = 0.50                # cap skew at ±10% of mid
     MAX_NOTIONAL_FRACTION: float = 0.60             # cap exposure vs. cash-only net worth
     MIN_ORDER_QUANTITY: int = 1
 
@@ -152,7 +142,7 @@ class MarketMakerBrain(ActorBrain):
 
     # -------- Transaction ingestion ------------------------------------------
 
-    def _consume_new_transactions(self, actor, market) -> Dict[str, Dict[str, List[int]]]:
+    def _consume_new_transactions(self, actor, market:'Market') -> Dict[str, Dict[str, List[int]]]:
         """
         Read the actor's full transaction history, slice out only the NEW items since
         the last tick, and group prices by commodity and our side of the trade.
@@ -205,6 +195,7 @@ class MarketMakerBrain(ActorBrain):
         sigma: Optional[float] = None
         if market.has_history(commodity):
             sigma = max(market.get_30_day_standard_deviation(commodity), 1.0)
+            state.phase = "MAKER"
 
         if state.phase == "DISCOVERY":
             if price_lists:
@@ -323,7 +314,7 @@ class MarketMakerBrain(ActorBrain):
 
     # -------- Maker mode ------------------------------------------------------
 
-    def _maker_quotes(self, actor:Actor, market, commodity: 'CommodityDefinition', state: MarketMakerState) -> List['MarketCommand']:
+    def _maker_quotes(self, actor:Actor, market:'Market', commodity: 'CommodityDefinition', state: MarketMakerState) -> List['MarketCommand']:
         """
         Quote a small ladder around a volatility‑adjusted, inventory‑skewed midpoint.
         """
@@ -336,7 +327,7 @@ class MarketMakerBrain(ActorBrain):
             average_price = market.get_30_day_average_price(commodity)
             sigma = max(market.get_30_day_standard_deviation(commodity), 1.0)
             if average_price is not None:
-                midpoint = int(round(0.5 * midpoint + 0.5 * average_price)) if midpoint else int(round(average_price))
+                midpoint = int(round(0.5 * midpoint + 0.5 * average_price)) if midpoint > 1 else int(round(average_price))
         midpoint = max(self.MIN_PRICE, midpoint)
 
         # --- Spread with volatility widener ---
@@ -403,7 +394,7 @@ class MarketMakerBrain(ActorBrain):
 
     # -------- Shared helpers --------------------------------------------------
 
-    def _target_inventory(self, market, commodity: 'CommodityDefinition') -> int:
+    def _target_inventory(self, market:'Market', commodity: 'CommodityDefinition') -> int:
         """Desired inventory ≈ 30 days of average flow (or small neutral target if thin history)."""
         if market.has_history(commodity):
             average_volume = market.get_30_day_average_volume(commodity) or 0
@@ -419,6 +410,6 @@ class MarketMakerBrain(ActorBrain):
         if target_qty <= 0:
             return midpoint
         ratio = current_qty / target_qty  # 1.0 == on-target
-        raw_skew = -0.25 * (ratio - 1.0)  # gentle slope
+        raw_skew = -0.5 * (ratio - 1.0)  # gentle slope
         clamped_skew = max(-self.INVENTORY_SKEW_CAP, min(self.INVENTORY_SKEW_CAP, raw_skew))
         return max(self.MIN_PRICE, int(round(midpoint * (1.0 + clamped_skew))))

@@ -73,16 +73,16 @@ class ColonistBrain(ActorBrain):
         
         return best_process
     
-    def decide_market_actions(self) -> List[MarketCommand]:
+    def decide_market_actions(self, actor:'Actor') -> List[MarketCommand]:
         """Regular actors buy what they need and sell excess, matching existing orders when possible."""
-        if not self.actor.planet:
+        if not actor.planet:
             return []
         
-        market = self.actor.planet.market
+        market = actor.planet.market
         commands = []
         
         # Get existing actor's orders
-        existing_orders = market.get_actor_orders(self.actor)
+        existing_orders = market.get_actor_orders(actor)
         
         # Cancel all existing orders
         for order in existing_orders["buy"] + existing_orders["sell"]:
@@ -90,20 +90,20 @@ class ColonistBrain(ActorBrain):
         
         # Get commodity references
         # Actor always has sim reference
-        food_commodity = self.actor.sim.commodity_registry["food"]
-        fuel_commodity = self.actor.sim.commodity_registry["nova_fuel"]
+        food_commodity = actor.sim.commodity_registry["food"]
+        fuel_commodity = actor.sim.commodity_registry["nova_fuel"]
         
         # Handle food trading
-        food_commands = self._get_trade_commands(market, food_commodity, min_keep=6)
+        food_commands = self._get_trade_commands(actor, market, food_commodity, min_keep=6)
         commands.extend(food_commands)
         
         # Handle fuel trading - we don't need to keep any fuel for ourselves
-        fuel_commands = self._get_trade_commands(market, fuel_commodity, min_keep=0)
+        fuel_commands = self._get_trade_commands(actor, market, fuel_commodity, min_keep=0)
         commands.extend(fuel_commands)
         
         return commands
     
-    def _get_trade_commands(self, market, commodity_type, min_keep=0) -> List[MarketCommand]:
+    def _get_trade_commands(self, actor:Actor, market, commodity_type, min_keep=0) -> List[MarketCommand]:
         """Helper method to generate trading commands for a specific commodity.
         
         Args:
@@ -117,8 +117,8 @@ class ColonistBrain(ActorBrain):
         commands = []
         
         # Track inventory
-        quantity = self.actor.inventory.get_quantity(commodity_type)
-        available_inventory = self.actor.inventory.get_available_quantity(commodity_type)
+        quantity = actor.inventory.get_quantity(commodity_type)
+        available_inventory = actor.inventory.get_available_quantity(commodity_type)
         
         # Handle buying if we're below our minimum
         if quantity < min_keep:
@@ -127,7 +127,7 @@ class ColonistBrain(ActorBrain):
             
             # Get existing sell orders in the market (excluding our own)
             market_sell_orders = sorted(
-                [o for o in market.sell_orders.get(commodity_type, []) if o.actor != self.actor],
+                [o for o in market.sell_orders.get(commodity_type, []) if o.actor != actor],
                 key=lambda o: (o.price, o.timestamp)  # Sort by price (lowest first)
             )
             
@@ -139,7 +139,7 @@ class ColonistBrain(ActorBrain):
                 # Check if we can afford it
                 max_affordable_quantity = min(
                     quantity_to_buy,
-                    self.actor.money // best_sell_order.price
+                    actor.money // best_sell_order.price
                 )
                 
                 if max_affordable_quantity > 0:
@@ -155,7 +155,7 @@ class ColonistBrain(ActorBrain):
             
             # Get existing buy orders in the market (excluding our own)
             market_buy_orders = sorted(
-                [o for o in market.buy_orders.get(commodity_type, []) if o.actor != self.actor],
+                [o for o in market.buy_orders.get(commodity_type, []) if o.actor != actor],
                 key=lambda o: (-o.price, o.timestamp)  # Sort by price (highest first)
             )
             
