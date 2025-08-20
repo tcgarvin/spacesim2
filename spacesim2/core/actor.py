@@ -8,6 +8,7 @@ from spacesim2.core.commodity import Inventory
 if TYPE_CHECKING:
     from spacesim2.core.actor_brain import ActorBrain
     from spacesim2.core.simulation import Simulation
+    from spacesim2.core.drives.actor_drive import ActorDrive
 
 
 class ActorType(enum.Enum):
@@ -25,6 +26,7 @@ class Actor:
         name: str, 
         sim: 'Simulation',
         actor_type: ActorType,
+        drives: List['ActorDrive'],
         brain: 'ActorBrain',
         planet: Optional[Planet] = None,
         initial_money: int = 50,
@@ -46,6 +48,7 @@ class Actor:
         self.last_action = "None"  # Track the last action performed
         self.last_market_action = "None"  # Track the last market action
         self.sim = sim  # Reference to the simulation
+        self.drives = drives  # List of ActorDrive instances
         
         # Initialize skills
         self.skills: Dict[str, float] = {}
@@ -119,6 +122,11 @@ class Actor:
             self.last_market_action = "; ".join(market_actions)
         else:
             self.last_market_action = "No market actions"
+
+        for drive in self.drives:
+            drive.tick(self)
+
+        self.sim.data_logger.log_actor_metrics(self)
 
     def can_execute_process(self, process_id: str) -> bool:
         """Check if actor can execute a process without actually executing it."""

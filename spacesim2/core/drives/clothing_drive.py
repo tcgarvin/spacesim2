@@ -10,6 +10,15 @@ BUFFER_TARGET_DAYS  = 60.0         # "good" wardrobe cushion
 BUFFER_MAX_DAYS     = 180.0        # saturates near ~6 months
 CLOTHING_NAME       = "clothing"
 URGENCY = 1.0  # fixed urgency for clothing drive
+DRIVE_NAME = "clothing"
+
+class ClothingDriveMetrics(DriveMetrics):
+    def get_name(self):
+        return DRIVE_NAME
+
+    def get_score(self):
+        # Score is based solely on debt
+        return 1 - self.debt
 
 class ClothingDrive(ActorDrive):
     """
@@ -25,9 +34,10 @@ class ClothingDrive(ActorDrive):
     """
 
     def __init__(self, commodity_registry: CommodityRegistry):
-        super().__init__()
+        super().__init__(commodity_registry=commodity_registry)
         self.clothing_good = commodity_registry.get_commodity(CLOTHING_NAME)
-        self._update_metrics(health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY) 
+        # Initialize drive-specific metrics instance
+        self.metrics = ClothingDriveMetrics(health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY)
 
     def tick(self, actor) -> DriveMetrics:
         p_event = BASE_EVENT_PROB

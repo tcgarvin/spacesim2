@@ -1,12 +1,13 @@
 import random
-import os
 import math
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Tuple
 
 from spacesim2.core.actor import Actor, ActorType
 from spacesim2.core.brains import ColonistBrain, MarketMakerBrain
 from spacesim2.core.commodity import CommodityRegistry
+from spacesim2.core.data_logger import DataLogger
+from spacesim2.core.drives import FoodDrive, ClothingDrive, ShelterDrive
 from spacesim2.core.process import ProcessRegistry
 from spacesim2.core.market import Market
 from spacesim2.core.planet import Planet
@@ -39,6 +40,8 @@ class Simulation:
             
         self.skills_registry = SkillsRegistry()
         self.skills_registry.load_from_file(skills_path)
+
+        self.data_logger = DataLogger()
         
     def _generate_fictional_planets(self, num_planets: int) -> List[Tuple[str, float, float]]:
         """Generate fictional planet names and positions with minimum 10 unit separation.
@@ -171,13 +174,18 @@ class Simulation:
                 else:
                     # Other skills get lower ratings (0.5 to 1.0)
                     initial_skills[skill_id] = random.uniform(0.5, 1.0)
-            
+
+            # Initialize actor drives
+            drives = [Drive(commodity_registry=self.commodity_registry) 
+                      for Drive in (FoodDrive, ClothingDrive, ShelterDrive)]
+
             actor = Actor(
                 name=f"{actor_name_prefix}Colonist-{i}",
                 sim=self,
                 planet=planet,
                 actor_type=ActorType.REGULAR,
                 brain=ColonistBrain(),
+                drives=drives,
                 initial_money=50,
                 initial_skills=initial_skills
             )
@@ -188,11 +196,16 @@ class Simulation:
         for i in range(num_market_makers):
             # Market makers get average skill levels
             initial_skills = {skill_id: 1.0 for skill_id in self.skills_registry._skills.keys()}
+
+            # Initialize actor drives
+            drives = [Drive(commodity_registry=self.commodity_registry) 
+                      for Drive in (FoodDrive, ClothingDrive, ShelterDrive)]
             
             actor = Actor(
                 name=f"{actor_name_prefix}MarketMaker-{i+1}",
                 sim=self,
                 planet=planet,
+                drives=[],
                 actor_type=ActorType.MARKET_MAKER,
                 brain=MarketMakerBrain(),
                 initial_money=200,
@@ -242,6 +255,7 @@ class Simulation:
     def run_turn(self) -> None:
         """Run a single turn of the simulation."""
         self.current_turn += 1
+        self.data_logger.set_turn(self.current_turn)
         print(f"\n=== Turn {self.current_turn} ===")
 
         # Update market turn counters

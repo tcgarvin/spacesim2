@@ -7,18 +7,6 @@ from spacesim2.ui.headless import HeadlessUI
 from spacesim2.core.actor import ActorType
 
 
-def modify_simulation_params(simulation):
-    """Modify simulation parameters for better market dynamics."""
-    # Update regular actors to be more willing to sell excess food
-    for actor in simulation.actors:
-        if actor.actor_type == ActorType.REGULAR:
-            # Randomize production efficiency to create more varied supply
-            actor.production_efficiency = random.uniform(0.8, 1.5)
-            
-            # Give some initial money variation
-            actor.money = random.randint(40, 70)
-
-
 def main() -> None:
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Run a headless simulation")
@@ -35,10 +23,15 @@ def main() -> None:
         num_regular_actors=args.actors, 
         num_market_makers=args.makers
     )
-    
-    # Modify simulation parameters for more dynamic markets
-    modify_simulation_params(simulation)
 
+    # pick a random actor to log (but not a market maker)
+    actor = random.choice(simulation.actors)
+    while actor.actor_type == ActorType.MARKET_MAKER:
+        actor = random.choice(simulation.actors)
+
+    simulation.data_logger.add_actor_to_log(actor)
+
+    
     # Run in headless mode
     ui = HeadlessUI(simulation)
     ui.run(args.turns)

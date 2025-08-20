@@ -1,6 +1,6 @@
 import random
 
-from spacesim2.core.drives.actor_drive import ActorDrive, generate_linear_plateau, DriveMetrics, clamp01, log_norm_ratio
+from spacesim2.core.drives.actor_drive import ActorDrive, generate_piecewise_mapping, DriveMetrics, clamp01, log_norm_ratio
 from spacesim2.core.commodity import CommodityRegistry
 
 # Bernoulli chance of a maintenance event each day under mild climate.
@@ -15,10 +15,24 @@ DEBT_MISS_PENALTY      = 0.2         # 0.8*debt + 0.2*(miss) => <= 1.0
 
 # Buffer mapping (expected days of coverage = stock / expected_events_per_day)
 BUFFER_TARGET_DAYS     = 1/BASE_EVENT_PROB
-BUFFER_MAX_DAYS        = 3/BASE_EVENT_PROB
+BUFFER_MAX_DAYS        = 5/BASE_EVENT_PROB
+DRIVE_NAME             = "shelter"
 
 STRUCTURAL_NAME        = "structural_component"   # commodity key
 
+buffer_mapping = generate_piecewise_mapping([
+    (0, 0),
+    (BUFFER_TARGET_DAYS, 0.2),
+    (BUFFER_MAX_DAYS, 1),
+])
+
+class ShelterDriveMetrics(DriveMetrics):
+    def get_name(self):
+        return DRIVE_NAME
+
+    def get_score(self):
+        # Score is based on debt (damage to house) plus buffer (ability to repair)
+        return clamp01(1 - self.debt + self.buffer)
 
 class ShelterDrive(ActorDrive):
     """
@@ -36,14 +50,9 @@ class ShelterDrive(ActorDrive):
     """
 
     def __init__(self, commodity_registry: CommodityRegistry):
-        super().__init__()
+        super().__init__(commodity_registry)
         self.structural_good = commodity_registry.get_commodity(STRUCTURAL_NAME)
-        self._update_metrics(
-            health=1.0,
-            debt=0.0,
-            buffer=0.0,
-            urgency=0.0,
-        )
+        self.metrics = ShelterDriveMetrics(health=1.0, debt=0.0, buffer=0.0, urgency=0.0)
 
     def tick(self, actor) -> DriveMetrics:
         urgency01 = clamp01(PLANET_EXPOSURE_RISK * URGENCY_FACTOR)
@@ -65,14 +74,14 @@ class ShelterDrive(ActorDrive):
             health = 1.0 if did_maintain else 0.0
 
         else:
-            debt *= (DEBT_DECAY_FACTOR if remaining_units > 0 else 1)
+            debt = self.metrics.debt * (DEBT_DECAY_FACTOR if remaining_units > 0 else 1.0)
             health = 1.0
 
         # Buffer from inventory → expected days of coverage
         # expected events/day is p_event; avoid div-by-zero
         exp_events_per_day = max(p_event, 1e-9)
         expected_coverage_days = remaining_units / exp_events_per_day
-        buffer = log_norm_ratio(expected_coverage_days, BUFFER_TARGET_DAYS, BUFFER_MAX_DAYS)
+        buffer = buffer_mapping(expected_coverage_days)
 
         # Emit metrics
         self._update_metrics(

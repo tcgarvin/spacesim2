@@ -7,11 +7,22 @@ DEBT_MISS_PENALTY = 0.2 # decay vs penalty should keep us lte 1.0 always.
 PANTRY_TARGET = 7.0
 PANTRY_MAX = 30.0
 URGENCY = 1
+DRIVE_NAME = "food"
+
+class FoodDriveMetrics(DriveMetrics):
+
+    def get_name(self):
+        return DRIVE_NAME
+
+    def get_score(self):
+        # Score is based wholy on hunger as measured by the debt metric.
+        return 1 - self.debt
+
 
 class FoodDrive(ActorDrive):
     def __init__(self, commodity_registry:CommodityRegistry):
-        super().__init__()
-        self._update_metrics(health = 1.0, debt = 0.0, buffer = 0.0, urgency=URGENCY)
+        super().__init__(commodity_registry=commodity_registry)
+        self.metrics = FoodDriveMetrics(health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY)
         self.food_commodity = commodity_registry.get_commodity("food")
 
     def tick(self, actor) -> DriveMetrics: 
@@ -28,4 +39,5 @@ class FoodDrive(ActorDrive):
         )
 
         return self.metrics
+
 

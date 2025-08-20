@@ -39,6 +39,10 @@ class CommodityRegistry:
         except Exception as e:
             print(f"Error loading commodities from {filepath}: {e}")
     
+    def add_commodity(self, commodity_def: CommodityDefinition) -> None:
+        """Add a commodity definition to the registry."""
+        self._commodities[commodity_def.id] = commodity_def
+    
     def get_commodity(self, commodity_id: str) -> Optional[CommodityDefinition]:
         """Get a commodity definition by ID."""
         return self._commodities.get(commodity_id)
