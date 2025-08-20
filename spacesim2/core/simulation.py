@@ -54,13 +54,16 @@ class Simulation:
         """
         # Collection of fictional planet names from various sci-fi sources
         fictional_names = [
-            "Tatooine", "Coruscant", "Naboo", "Alderaan", "Hoth", "Endor", "Bespin", "Dagobah",
-            "Arrakis", "Caladan", "Giedi Prime", "Kaitain", "Ix", "Tleilax", "Salusa Secundus",
-            "Pandora", "Polyphemus", "LV-426", "LV-223", "Fiorina 161", "Origae-6",
-            "Vulcan", "Romulus", "Qo'noS", "Risa", "Bajor", "Cardassia", "Ferenginar", "Andoria",
-            "Caprica", "Gemenon", "Tauron", "Picon", "Leonis", "Virgon", "Canceron", "Aerilon",
-            "Reach", "Installation 04", "High Charity", "Sanghelios", "Harvest", "Arcadia",
-            "Kepler-438b", "Proxima b", "Gliese 667Cc", "TRAPPIST-1e", "K2-18b", "TOI-715b"
+            "Drakoon", "Veyrahn", "Korrith", "Jandrak", "Thazuun", "Marrakos", "Zethar", "Xoroq", "Bal’drahn", "Quorrin",
+            "Endahlis", "Veyndor", "Liranna", "Koshava", "Bren’drel", "Orivaan", "Sylith", "Quenara", "Thaelwyn", "Yorrak",
+            "Thalassa", "Myrren", "Korvannis", "Aelithar", "Voruna", "Kalyss", "Drennok", "Oquara", "Zorathis", "Fen’lor",
+            "Vrynnos", "Shalvek", "Droskaar", "Arveth", "Krylos", "Vintarra", "Malqor", "Zeyrik", "Korenth", "Thaazek",
+            "Dravik", "Corvenn", "Helkross", "Tyrranos", "Velcorra", "Oxenn Prime", "Grenthis", "Calbrak", "Drosmir", "Xyphara",
+            "Zalith", "Onakorr", "Yrivaan", "Votharis", "Kaelthuun", "Ombera", "Kythorr", "Ruunas", "Elvorra", "Shyrrak",
+            "Branoth", "Jekarra", "Zyndralis", "Vornakk", "Pellosh", "Quorrahn", "Tavrelis", "Korrithos", "Drethuun", "Xeylon",
+            "Alvara", "Serenith", "Valdorei", "Olyssian", "Trinorra", "Eryllan", "Feyriss", "Solvane", "Quenalis", "Marrosyn",
+            "Krassith", "Vondrak", "Barrekos", "Dravoss", "Ulthar", "Zorran Prime", "Makreth", "Syrrik", "Kolthuun", "Vashrik",
+            "Iyora", "Qethar", "Zhaluun", "Drevari", "Othwyn", "Pyrassos", "Venorra", "Kyrathis", "Jorvess", "Thaelkor"
         ]
         
         # Ensure we don't request more planets than we have names

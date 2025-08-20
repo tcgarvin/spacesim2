@@ -17,6 +17,11 @@ class HeadlessUI:
                     actor=actor
                 )
                 print(f"Turn {self.simulation.current_turn} log for actor {actor.name}:")
+                print(f"  Inventory:")
+                for commodity in sorted(turn_log.inventory.keys()):
+                    quantity = turn_log.inventory[commodity]
+                    if quantity > 0:
+                        print(f"    {commodity}: {quantity}")
                 print(f"  Notes: {turn_log.notes}")
                 print(f"  Commands: {turn_log.commands}")
                 print(f"  Metrics:")

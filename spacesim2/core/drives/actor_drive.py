@@ -98,7 +98,7 @@ def get_zero_metrics() -> DriveMetrics:
 
 class ActorDrive:
     def __init__(self, commodity_registry:CommodityRegistry):
-        self.metrics = get_zero_metrics()
+        pass
 
     def _update_metrics(
             self,

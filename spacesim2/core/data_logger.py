@@ -14,6 +14,7 @@ class ActorTurnLog:
     notes: list[str] = field(default_factory=list)
     metrics: list[DriveMetrics] = field(default_factory=list)
     commands: list[Command] = field(default_factory=list)
+    inventory: dict[str, int] = field(default_factory=dict)
 
 
 class DataLogger:
@@ -57,6 +58,14 @@ class DataLogger:
 
         turn_log = self._actor_sim_log[(self.current_turn, self._get_actor_sim_log_key(actor))]
         turn_log.commands.append(action)
+
+    def log_actor_inventory(self, actor:Actor):
+        if not self.is_actor_logged(actor):
+            return
+
+        turn_log = self._actor_sim_log[(self.current_turn, self._get_actor_sim_log_key(actor))]
+        # Convert inventory to dict with commodity names as keys
+        turn_log.inventory = {commodity.id: quantity for commodity, quantity in actor.inventory.commodities.items()}
 
     def get_actor_turn_log(self, actor:Actor, turn:int = None) -> ActorTurnLog:
         if turn is None:

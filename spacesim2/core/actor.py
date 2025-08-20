@@ -130,6 +130,7 @@ class Actor:
             drive.tick(self)
 
         self.sim.data_logger.log_actor_metrics(self)
+        self.sim.data_logger.log_actor_inventory(self)
 
     def can_execute_process(self, process_id: str) -> bool:
         """Check if actor can execute a process without actually executing it."""
