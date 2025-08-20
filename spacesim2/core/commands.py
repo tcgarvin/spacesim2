@@ -38,6 +38,9 @@ class ProcessCommand(EconomicCommand):
     def __init__(self, process_id: str) -> None:
         self.process_id = process_id
     
+    def __repr__(self) -> str:
+        return f"ProcessCommand(process_id={self.process_id!r})"
+    
     def execute(self, actor: 'Actor') -> bool:
         """Execute a production process.
         
@@ -117,6 +120,9 @@ GOVERNMENT_WAGE = 10
 class GovernmentWorkCommand(EconomicCommand):
     """Command to perform government work for a wage."""
     
+    def __repr__(self) -> str:
+        return f"GovernmentWorkCommand(wage={GOVERNMENT_WAGE})"
+    
     def execute(self, actor: 'Actor') -> bool:
         """Perform government work to earn a fixed wage."""
         actor.money += GOVERNMENT_WAGE
@@ -129,6 +135,9 @@ class CancelOrderCommand(MarketCommand):
     
     def __init__(self, order_id: str) -> None:
         self.order_id = order_id
+    
+    def __repr__(self) -> str:
+        return f"CancelOrderCommand(order_id={self.order_id!r})"
     
     def execute(self, actor: 'Actor') -> bool:
         """Cancel a market order."""
@@ -145,6 +154,9 @@ class PlaceBuyOrderCommand(MarketCommand):
         self.commodity_type = commodity_type
         self.quantity = quantity
         self.price = price
+    
+    def __repr__(self) -> str:
+        return f"PlaceBuyOrderCommand(commodity={self.commodity_type.id!r}, quantity={self.quantity}, price={self.price})"
     
     def execute(self, actor: 'Actor') -> bool:
         """Place a buy order on the market."""
@@ -170,6 +182,9 @@ class PlaceSellOrderCommand(MarketCommand):
         self.commodity_type = commodity_type
         self.quantity = quantity
         self.price = price
+    
+    def __repr__(self) -> str:
+        return f"PlaceSellOrderCommand(commodity={self.commodity_type.id!r}, quantity={self.quantity}, price={self.price})"
     
     def execute(self, actor: 'Actor') -> bool:
         """Place a sell order on the market."""
