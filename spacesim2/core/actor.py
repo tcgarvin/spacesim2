@@ -59,6 +59,7 @@ class Actor:
                 self.skills[skill_id] = rating
         
         self.brain = brain
+        self.last_market_check_turn: int = 0  # Track when actor last checked market status
     
     def get_skill_rating(self, skill_id: str) -> float:
         """Get the actor's rating for a specific skill.
@@ -98,9 +99,6 @@ class Actor:
         2. One economic action (e.g., government work, production)
         3. Optional market actions
         """
-        # Step 1: Consume food if available
-        self._consume_food()
-        
         # Step 2: Perform economic action
         economic_command = self.brain.decide_economic_action(self)
         if economic_command:
@@ -131,6 +129,7 @@ class Actor:
 
         self.sim.data_logger.log_actor_metrics(self)
         self.sim.data_logger.log_actor_inventory(self)
+        self.sim.data_logger.log_actor_market_status(self)
 
     def can_execute_process(self, process_id: str) -> bool:
         """Check if actor can execute a process without actually executing it."""
@@ -187,6 +186,50 @@ class Actor:
         
         # If we get here, there's not enough food
         self.food_consumed_this_turn = False
+    
+    def get_market_activity_since_last_check(self) -> Dict:
+        """Actor decides what's relevant - since they last checked."""
+        if not self.planet:
+            return {}
+        
+        market = self.planet.market
+        current_orders = market.get_actor_current_orders(self)
+        events = market.get_actor_order_events(self, since_turn=self.last_market_check_turn)
+        transactions = market.get_actor_transactions_range(self, since_turn=self.last_market_check_turn)
+        
+        # Update context
+        self.last_market_check_turn = self.sim.current_turn
+        
+        return {
+            "current_orders": current_orders,
+            "events_since_last_check": events,
+            "transactions_since_last_check": transactions
+        }
+    
+    def get_market_activity_this_turn(self) -> Dict:
+        """Actor decides: just this turn's activity."""
+        if not self.planet:
+            return {}
+        
+        market = self.planet.market
+        return {
+            "current_orders": market.get_actor_current_orders(self),
+            "events_this_turn": market.get_actor_order_events(self, since_turn=self.sim.current_turn),
+            "transactions_this_turn": market.get_actor_transactions_range(self, since_turn=self.sim.current_turn)
+        }
+    
+    def get_market_activity_last_n_turns(self, n: int) -> Dict:
+        """Actor decides: last N turns."""
+        if not self.planet:
+            return {}
+        
+        market = self.planet.market
+        since_turn = max(0, self.sim.current_turn - n)
+        return {
+            "current_orders": market.get_actor_current_orders(self),
+            "events_last_n_turns": market.get_actor_order_events(self, since_turn=since_turn),
+            "transactions_last_n_turns": market.get_actor_transactions_range(self, since_turn=since_turn)
+        }
 
     def __repr__(self):
         return f"Actor(name={self.name})"

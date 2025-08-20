@@ -15,6 +15,7 @@ class ActorTurnLog:
     metrics: list[DriveMetrics] = field(default_factory=list)
     commands: list[Command] = field(default_factory=list)
     inventory: dict[str, int] = field(default_factory=dict)
+    market_status: dict = field(default_factory=dict)
 
 
 class DataLogger:
@@ -66,6 +67,50 @@ class DataLogger:
         turn_log = self._actor_sim_log[(self.current_turn, self._get_actor_sim_log_key(actor))]
         # Convert inventory to dict with commodity names as keys
         turn_log.inventory = {commodity.id: quantity for commodity, quantity in actor.inventory.commodities.items()}
+
+    def log_actor_market_status(self, actor: Actor):
+        if not self.is_actor_logged(actor):
+            return
+        
+        # Use actor's method to get this turn's market activity
+        market_data = actor.get_market_activity_this_turn()
+        
+        # Serialize the data for logging
+        turn_log = self._actor_sim_log[(self.current_turn, self._get_actor_sim_log_key(actor))]
+        turn_log.market_status = {
+            "current_orders": market_data.get("current_orders", {}),
+            "events_this_turn": [self._serialize_order_event(event) for event in market_data.get("events_this_turn", [])],
+            "transactions_this_turn": [self._serialize_transaction(tx, actor) for tx in market_data.get("transactions_this_turn", [])]
+        }
+    
+    def _serialize_order_event(self, event) -> dict:
+        """Convert an OrderEvent to a serializable dict."""
+        return {
+            "order_id": event.order_id,
+            "event_type": event.event_type,
+            "turn": event.turn,
+            "order_details": {
+                "commodity": event.order.commodity_type.id,
+                "quantity": event.order.quantity,
+                "price": event.order.price,
+                "type": "buy" if event.order.is_buy else "sell"
+            }
+        }
+    
+    def _serialize_transaction(self, transaction, actor) -> dict:
+        """Convert a Transaction to a serializable dict."""
+        role = "buyer" if transaction.buyer == actor else "seller"
+        counterparty = transaction.seller.name if transaction.buyer == actor else transaction.buyer.name
+        
+        return {
+            "commodity": transaction.commodity_type.id,
+            "quantity": transaction.quantity,
+            "price": transaction.price,
+            "total_amount": transaction.total_amount,
+            "counterparty": counterparty,
+            "role": role,
+            "turn": transaction.turn
+        }
 
     def get_actor_turn_log(self, actor:Actor, turn:int = None) -> ActorTurnLog:
         if turn is None:

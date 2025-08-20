@@ -1,5 +1,5 @@
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import count
 from typing import Dict, List, Optional, Tuple, Union, TYPE_CHECKING, Any
 import statistics
@@ -31,6 +31,16 @@ class Order:
 
 
 @dataclass
+class OrderEvent:
+    """Represents an order lifecycle event."""
+    order_id: str
+    actor_name: str
+    event_type: str  # "created", "filled", "cancelled"
+    turn: int
+    order: Order  # Direct reference to the order object
+
+
+@dataclass
 class Transaction:
     """Represents a completed transaction in the market."""
 
@@ -41,6 +51,8 @@ class Transaction:
     price: int
     total_amount: int
     turn: int = 0  # The turn when this transaction occurred
+    buy_order_id: Optional[str] = None  # Order ID for the buy order that was filled
+    sell_order_id: Optional[str] = None  # Order ID for the sell order that was filled
 
 
 class Market:
@@ -60,6 +72,10 @@ class Market:
         # Track completed trades
         self.transaction_history: List[Transaction] = []
         self.actor_transaction_history: Dict[str, List[Transaction]] = defaultdict(list)
+        
+        # Track order lifecycle events
+        self.order_events: List[OrderEvent] = []  # Chronologically ordered
+        self.order_events_by_actor: Dict[str, List[OrderEvent]] = defaultdict(list)
         
         # Track current turn for timestamping orders
         self.current_turn = 0
@@ -87,6 +103,82 @@ class Market:
     def get_actor_transaction_history(self, actor: Actor) -> List[Transaction]:
         """Get the transaction history for a specific actor."""
         return self.actor_transaction_history.get(actor.name, [])
+    
+    def _record_order_event(self, event_type: str, order: Order) -> None:
+        """Internal: record order lifecycle events."""
+        event = OrderEvent(
+            order_id=order.order_id,
+            actor_name=order.actor.name,
+            event_type=event_type,
+            turn=self.current_turn,
+            order=order
+        )
+        self.order_events.append(event)
+        self.order_events_by_actor[order.actor.name].append(event)
+    
+    def get_actor_current_orders(self, actor: Actor) -> Dict[str, Dict]:
+        """Market's authority: what orders are currently open for this actor."""
+        result = {}
+        
+        # Get buy orders
+        for order_id in self.actor_orders[actor]["buy"]:
+            if order_id in self.orders_by_id:  # Still active
+                order = self.orders_by_id[order_id]
+                result[order_id] = {
+                    "type": "buy",
+                    "commodity": order.commodity_type.id,
+                    "quantity": order.quantity,
+                    "price": order.price,
+                    "created_turn": order.created_turn
+                }
+        
+        # Get sell orders  
+        for order_id in self.actor_orders[actor]["sell"]:
+            if order_id in self.orders_by_id:  # Still active
+                order = self.orders_by_id[order_id]
+                result[order_id] = {
+                    "type": "sell",
+                    "commodity": order.commodity_type.id,
+                    "quantity": order.quantity,
+                    "price": order.price,
+                    "created_turn": order.created_turn
+                }
+        
+        return result
+    
+    def get_actor_order_events(self, actor: Actor, since_turn: int = 0, until_turn: Optional[int] = None) -> List[OrderEvent]:
+        """Efficient time-range query for actor order events using chronological ordering."""
+        actor_events = self.order_events_by_actor[actor.name]
+        
+        if until_turn is None:
+            until_turn = self.current_turn
+        
+        result = []
+        # Use reverse iteration + early stopping for efficiency
+        for event in reversed(actor_events):
+            if event.turn < since_turn:
+                break  # Stop - everything before is older
+            if event.turn <= until_turn:
+                result.append(event)
+        
+        return list(reversed(result))  # Return in chronological order
+    
+    def get_actor_transactions_range(self, actor: Actor, since_turn: int = 0, until_turn: Optional[int] = None) -> List[Transaction]:
+        """Efficient time-range query for actor transactions using chronological ordering."""
+        actor_transactions = self.actor_transaction_history[actor.name]
+        
+        if until_turn is None:
+            until_turn = self.current_turn
+        
+        result = []
+        # Use reverse iteration + early stopping for efficiency
+        for transaction in reversed(actor_transactions):
+            if transaction.turn < since_turn:
+                break  # Stop - everything before is older
+            if transaction.turn <= until_turn:
+                result.append(transaction)
+        
+        return list(reversed(result))  # Return in chronological order
 
     def place_buy_order(
         self, actor: Actor, commodity_type: 'CommodityDefinition', quantity: int, price: int
@@ -135,6 +227,9 @@ class Market:
         # Add to actor's active orders
         actor.active_orders[order.order_id] = f"buy {commodity_type.id}"
         
+        # Record order creation event
+        self._record_order_event("created", order)
+        
         return order.order_id
 
     def place_sell_order(
@@ -181,6 +276,9 @@ class Market:
         
         # Add to actor's active orders
         actor.active_orders[order.order_id] = f"sell {commodity_type.id}"
+        
+        # Record order creation event
+        self._record_order_event("created", order)
         
         return order.order_id
 
@@ -273,6 +371,9 @@ class Market:
                 
                 # Handle filled orders
                 if buy_order.quantity <= 0:
+                    # Record filled event before removing
+                    self._record_order_event("filled", buy_order)
+                    
                     # Remove from master order list
                     if buy_order.order_id in self.orders_by_id:
                         del self.orders_by_id[buy_order.order_id]
@@ -290,6 +391,9 @@ class Market:
                     buy_orders.pop(0)
                 
                 if sell_order.quantity <= 0:
+                    # Record filled event before removing
+                    self._record_order_event("filled", sell_order)
+                    
                     # Remove from master order list
                     if sell_order.order_id in self.orders_by_id:
                         del self.orders_by_id[sell_order.order_id]
@@ -388,7 +492,9 @@ class Market:
             quantity=actual_quantity,
             price=price,
             total_amount=total_amount,
-            turn=self.current_turn
+            turn=self.current_turn,
+            buy_order_id=buy_order.order_id,
+            sell_order_id=sell_order.order_id
         )
         self.transaction_history.append(transaction)
         self.actor_transaction_history[buyer.name].append(transaction)
@@ -477,6 +583,9 @@ class Market:
         order = self.orders_by_id[order_id]
         actor = order.actor
         commodity_type = order.commodity_type
+        
+        # Record order cancellation event before removing
+        self._record_order_event("cancelled", order)
         
         # Remove from orders by ID
         del self.orders_by_id[order_id]
