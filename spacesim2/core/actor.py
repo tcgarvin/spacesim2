@@ -105,13 +105,16 @@ class Actor:
         economic_command = self.brain.decide_economic_action(self)
         if economic_command:
             economic_command.execute(self)
+            self.sim.data_logger.log_actor_command(self, economic_command)
         
         # Step 3: Perform market actions
         market_commands = self.brain.decide_market_actions(self)
         market_actions = []
         for command in market_commands:
             success = command.execute(self)
-            # Only log buy/sell order commands
+            # Log all market commands to data logger
+            self.sim.data_logger.log_actor_command(self, command)
+            # Only log buy/sell order commands for market action summary
             if success and ('Buy' in command.__class__.__name__ or 'Sell' in command.__class__.__name__):
                 action_type = "Buy" if "Buy" in command.__class__.__name__ else "Sell"
                 commodity_name = command.commodity_type.id
