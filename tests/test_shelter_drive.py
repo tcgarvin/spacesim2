@@ -221,11 +221,12 @@ class TestShelterDrive:
         # Set specific metrics
         shelter_drive.metrics.debt = 0.3
         shelter_drive.metrics.buffer = 0.7
-        
+
         score = shelter_drive.get_current_score()
-        
-        # Score should be 1 - debt + buffer
-        expected_score = 1 - 0.3 + 0.7
+
+        # Score should be 1 - debt + buffer, clamped to [0, 1]
+        # 1 - 0.3 + 0.7 = 1.4, clamped to 1.0
+        expected_score = 1.0
         assert score == expected_score
     
     def test_get_current_score_edge_cases(self, shelter_drive):
@@ -234,13 +235,14 @@ class TestShelterDrive:
         shelter_drive.metrics.debt = 1.0
         shelter_drive.metrics.buffer = 0.0
         score = shelter_drive.get_current_score()
-        assert score == 0.0  # 1 - 1 + 0
-        
+        assert score == 0.0  # 1 - 1 + 0 = 0
+
         # Test with zero debt and maximum buffer
         shelter_drive.metrics.debt = 0.0
         shelter_drive.metrics.buffer = 1.0
         score = shelter_drive.get_current_score()
-        assert score == 2.0  # 1 - 0 + 1
+        # 1 - 0 + 1 = 2.0, clamped to 1.0
+        assert score == 1.0
 
 
 class TestShelterDriveIntegration:

@@ -27,6 +27,7 @@ def get_actor(name="DefaultTestActor", sim=None, actor_type=ActorType.REGULAR, b
         name,
         sim,
         actor_type,
+        [],  # drives
         brain,
         planet,
         initial_money,

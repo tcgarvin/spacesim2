@@ -22,7 +22,7 @@ def food_commodity():
 
 def test_actor_initialization(mock_sim, mock_brain) -> None:
     """Test that an actor can be initialized correctly."""
-    actor = Actor("Test Actor", mock_sim, ActorType.REGULAR, mock_brain, initial_money=50)
+    actor = Actor("Test Actor", mock_sim, ActorType.REGULAR, [], mock_brain, initial_money=50)
     assert actor.name == "Test Actor"
     assert actor.money == 50
     assert actor.inventory is not None

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple
 
 from spacesim2.core.actor import Actor, ActorType
-from spacesim2.core.brains import ColonistBrain, MarketMakerBrain
+from spacesim2.core.brains import ColonistBrain, IndustrialistBrain, MarketMakerBrain
 from spacesim2.core.commodity import CommodityRegistry
 from spacesim2.core.data_logger import DataLogger
 from spacesim2.core.drives import FoodDrive, ClothingDrive, ShelterDrive
@@ -160,7 +160,12 @@ class Simulation:
             actor_name_prefix: Prefix for actor names
         """
         # Create regular actors with varying production efficiencies and skills
-        for i in range(1, num_regular_actors + 1):
+        # Split 50/50 between Colonists and Industrialists
+        num_colonists = num_regular_actors // 2
+        num_industrialists = num_regular_actors - num_colonists
+        
+        # Create Colonist actors
+        for i in range(1, num_colonists + 1):
             # Generate random initial skills
             initial_skills = {}
             
@@ -188,6 +193,42 @@ class Simulation:
                 planet=planet,
                 actor_type=ActorType.REGULAR,
                 brain=ColonistBrain(),
+                drives=drives,
+                initial_money=50,
+                initial_skills=initial_skills
+            )
+            self.actors.append(actor)
+            planet.add_actor(actor)
+        
+        # Create Industrialist actors
+        for i in range(1, num_industrialists + 1):
+            # Generate random initial skills
+            initial_skills = {}
+            
+            # Pick 1-3 skills to specialize in (skills above 1.0)
+            num_specialties = random.randint(1, 3)
+            all_skills = list(self.skills_registry._skills.keys())
+            specialty_skills = random.sample(all_skills, num_specialties)
+            
+            # Give each actor random skill levels
+            for skill_id in all_skills:
+                if skill_id in specialty_skills:
+                    # Specialties get higher ratings (1.0 to 2.0)
+                    initial_skills[skill_id] = random.uniform(1.0, 2.0)
+                else:
+                    # Other skills get lower ratings (0.5 to 1.0)
+                    initial_skills[skill_id] = random.uniform(0.5, 1.0)
+
+            # Initialize actor drives
+            drives = [Drive(commodity_registry=self.commodity_registry) 
+                      for Drive in (FoodDrive, ClothingDrive, ShelterDrive)]
+
+            actor = Actor(
+                name=f"{actor_name_prefix}Industrialist-{i}",
+                sim=self,
+                planet=planet,
+                actor_type=ActorType.REGULAR,
+                brain=IndustrialistBrain(),
                 drives=drives,
                 initial_money=50,
                 initial_skills=initial_skills

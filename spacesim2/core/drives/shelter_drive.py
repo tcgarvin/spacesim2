@@ -91,3 +91,7 @@ class ShelterDrive(ActorDrive):
             urgency=urgency01,
         )
         return self.metrics
+
+    def get_current_score(self):
+        """Return the current score from metrics."""
+        return self.metrics.get_score()
