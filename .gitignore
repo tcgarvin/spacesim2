@@ -1,5 +1,6 @@
 # examples dir is just for augmenting prompts
 examples/
+data/
 
 # Python
 __pycache__/

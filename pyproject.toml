@@ -1,6 +1,6 @@
 [project]
 name = "spacesim2"
-version = "0.1.0"
+version = "0.2.0"
 description = "A turn-based economic simulation modeling interplanetary trade"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -9,7 +9,11 @@ dependencies = [
     "pygame>=2.5.0; platform_system != 'Windows' or python_version < '3.12'",
     "pyyaml>=6.0.2",
     "scipy>=1.15.2",
+    "typing-extensions>=4.15.0",
 ]
+
+[project.scripts]
+spacesim2 = "spacesim2.cli.main:main"
 
 [project.optional-dependencies]
 dev = [
@@ -17,7 +21,24 @@ dev = [
     "mypy>=1.0.0",
     "ruff>=0.0.270",
     "black>=23.0.0",
+    "rich>=13.0.0",
 ]
+analysis = [
+    "polars>=0.20.0", # Fast DataFrame library
+    "pyarrow>=14.0.0", # Parquet support
+    "plotly>=5.18.0", # Interactive visualizations
+    "marimo>=0.1.0", # Modern reactive notebook
+    "tqdm>=4.66.0", # Progress bars
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["spacesim2*"]
+exclude = ["tests*", "temp*", "data*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

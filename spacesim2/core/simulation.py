@@ -1,7 +1,7 @@
 import random
 import math
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, TYPE_CHECKING, Optional
 
 from spacesim2.core.actor import Actor, ActorType
 from spacesim2.core.brains import ColonistBrain, IndustrialistBrain, MarketMakerBrain
@@ -13,6 +13,9 @@ from spacesim2.core.market import Market
 from spacesim2.core.planet import Planet
 from spacesim2.core.ship import Ship, ShipStatus
 from spacesim2.core.skill import SkillsRegistry
+
+if TYPE_CHECKING:
+    from spacesim2.analysis.export.exporter import SimulationExporter
 
 
 class Simulation:
@@ -42,6 +45,7 @@ class Simulation:
         self.skills_registry.load_from_file(skills_path)
 
         self.data_logger = DataLogger()
+        self.exporter: Optional['SimulationExporter'] = None
         
     def _generate_fictional_planets(self, num_planets: int) -> List[Tuple[str, float, float]]:
         """Generate fictional planet names and positions with minimum 10 unit separation.
@@ -323,6 +327,10 @@ class Simulation:
             
         # Process markets
         self._process_markets()
+
+        # Export data if exporter is attached
+        if self.exporter:
+            self.exporter.export_turn(self, self.current_turn)
 
         # Print status after the turn
         self._print_status()
