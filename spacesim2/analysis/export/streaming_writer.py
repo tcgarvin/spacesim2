@@ -75,3 +75,7 @@ class StreamingParquetWriter:
         if self.writer:
             self.writer.close()
             self.writer = None
+        elif not self.filepath.exists():
+            # Create empty file if no data was written
+            empty_table = pa.table({field.name: [] for field in self.schema}, schema=self.schema)
+            pq.write_table(empty_table, self.filepath, compression='snappy')

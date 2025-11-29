@@ -1,6 +1,6 @@
 # examples dir is just for augmenting prompts
 examples/
-data/
+data/runs/
 
 # Python
 __pycache__/
@@ -31,6 +31,7 @@ env/
 venv/
 ENV/
 .python-version
+__marimo__/
 
 # Unit test / coverage reports
 htmlcov/

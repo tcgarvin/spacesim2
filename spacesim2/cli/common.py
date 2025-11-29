@@ -62,7 +62,10 @@ def configure_actor_logging(
     if log_all:
         for actor in sim.actors:
             sim.data_logger.add_actor_to_log(actor)
-        return len(sim.actors)
+        # Also log all ships
+        for ship in sim.ships:
+            sim.data_logger.add_actor_to_log(ship)
+        return len(sim.actors) + len(sim.ships)
 
     if log_sample:
         eligible_actors = [
@@ -96,6 +99,13 @@ def configure_actor_logging(
             if should_log:
                 sim.data_logger.add_actor_to_log(actor)
                 count += 1
+
+        # Also log ships if requested
+        if "ship" in log_actor_types or "trader" in log_actor_types:
+            for ship in sim.ships:
+                sim.data_logger.add_actor_to_log(ship)
+                count += 1
+
         return count
 
     # Default: log one random non-market-maker actor

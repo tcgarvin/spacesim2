@@ -44,3 +44,33 @@ Run `uv run spacesim2 --help` for all options.
 - Implement small, focused changes that maintain a working simulation
 - Add tests for new functionality before implementation
 - Follow the design document in docs/sim-design.md for simulation details
+
+## Notebook Development
+marimo notebooks are Python files that can be debugged efficiently using headless execution:
+
+- **Debug notebooks**: Export to HTML for headless execution with immediate error feedback
+  ```bash
+  SPACESIM_RUN_PATH=data/runs/test_run marimo export html notebooks/analysis_template.py -o /tmp/test.html
+  ```
+- **Validate data**: Check parquet files exist and have correct schema before running
+  ```bash
+  python dev-tools/validate_run_data.py data/runs/test_run
+  ```
+- **Quick notebook test**: Run both validation and export in one command
+  ```bash
+  ./dev-tools/test_notebook.sh data/runs/test_run
+  ```
+- **Quick check**: Lint notebook before execution
+  ```bash
+  marimo check notebooks/analysis_template.py
+  ```
+- **Interactive editing**: Auto-reload on file changes during development
+  ```bash
+  marimo edit notebooks/analysis_template.py --watch
+  ```
+- **Test notebooks**: Run automated tests (when implemented)
+  ```bash
+  uv run pytest tests/test_notebooks.py
+  ```
+
+**Key Insight**: Use `marimo export html` instead of `marimo run` for debugging - it executes the notebook headlessly and shows errors immediately in the terminal, avoiding server management overhead.

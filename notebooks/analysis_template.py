@@ -5,18 +5,18 @@ app = marimo.App()
 
 
 @app.cell
-def __():
+def _():
     import os
     import marimo as mo
     import polars as pl
     import plotly.express as px
     from spacesim2.analysis.loading.loader import SimulationData
     from pathlib import Path
-    return mo, os, pl, px, SimulationData, Path
+    return Path, SimulationData, mo, os, pl, px
 
 
 @app.cell
-def __(mo, os, Path):
+def _(mo, os):
     # Load run path from environment or use default
     default_run = "data/runs/test_run"  # placeholder
     run_path_str = os.getenv("SPACESIM_RUN_PATH", default_run)
@@ -28,18 +28,18 @@ def __(mo, os, Path):
         full_width=True
     )
     mo.md(f"# SpaceSim2 Analysis\n\n{run_selector}")
-    return run_path_str, run_selector
+    return (run_selector,)
 
 
 @app.cell
-def __(SimulationData, Path, run_selector):
+def _(Path, SimulationData, run_selector):
     # Load data
     data = SimulationData(Path(run_selector.value))
-    return data,
+    return (data,)
 
 
 @app.cell
-def __(mo, data):
+def _(data, mo):
     # Show basic stats
     mo.md(f"""
     ## Simulation Overview
@@ -48,15 +48,19 @@ def __(mo, data):
     - **Transactions:** {len(data.market_transactions)}
     - **Market Snapshots:** {len(data.market_snapshots)}
     """)
+    return
 
 
 @app.cell
-def __(mo):
-    mo.md("## Actor Behavior Over Time")
+def _(mo):
+    mo.md("""
+    ## Actor Behavior Over Time
+    """)
+    return
 
 
 @app.cell
-def __(data, px):
+def _(data, px):
     # Example: Money over time for actors
     if len(data.actor_turns) > 0:
         actor_money = data.actor_turns.select(['turn', 'actor_id', 'actor_name', 'money'])
@@ -71,58 +75,67 @@ def __(data, px):
         fig_money
     else:
         "No actor turn data available"
+    return
 
 
 @app.cell
-def __(mo):
-    mo.md("## Market Dynamics")
+def _(mo):
+    mo.md("""
+    ## Market Dynamics
+    """)
+    return
 
 
 @app.cell
-def __(data, px):
+def _(data, px):
     # Example: Average price per commodity over time
     if len(data.market_snapshots) > 0:
-        price_trends = data.market_snapshots.select(['turn', 'commodity', 'avg_price'])
+        price_trends = data.market_snapshots.select(['turn', 'commodity_id', 'avg_price'])
         fig_prices = px.line(
             price_trends.to_pandas(),
             x='turn',
             y='avg_price',
-            color='commodity',
+            color='commodity_id',
             title='Commodity Prices Over Time',
             labels={'avg_price': 'Average Price ($)', 'turn': 'Turn'}
         )
         fig_prices
     else:
         "No market snapshot data available"
+    return
 
 
 @app.cell
-def __(data, px):
+def _(data, pl, px):
     # Example: Transaction volume per commodity
     if len(data.market_transactions) > 0:
-        volume_by_commodity = data.market_transactions.group_by('commodity').agg(
+        volume_by_commodity = data.market_transactions.group_by('commodity_id').agg(
             pl.col('quantity').sum().alias('total_volume')
         ).sort('total_volume', descending=True)
 
         fig_volume = px.bar(
             volume_by_commodity.to_pandas(),
-            x='commodity',
+            x='commodity_id',
             y='total_volume',
             title='Total Transaction Volume by Commodity',
-            labels={'total_volume': 'Total Quantity', 'commodity': 'Commodity'}
+            labels={'total_volume': 'Total Quantity', 'commodity_id': 'Commodity'}
         )
         fig_volume
     else:
         "No transaction data available"
+    return
 
 
 @app.cell
-def __(mo):
-    mo.md("## Economic Health Metrics")
+def _(mo):
+    mo.md("""
+    ## Economic Health Metrics
+    """)
+    return
 
 
 @app.cell
-def __(data, px, pl):
+def _(data, pl, px):
     # Example: Drive health over time
     if len(data.actor_drives) > 0:
         drive_health = data.actor_drives.select(['turn', 'drive_name', 'health'])
@@ -140,10 +153,11 @@ def __(data, px, pl):
         fig_drives
     else:
         "No drive data available"
+    return
 
 
 @app.cell
-def __(data, px, pl):
+def _(data, pl, px):
     # Example: Drive debt over time
     if len(data.actor_drives) > 0:
         drive_debt = data.actor_drives.select(['turn', 'drive_name', 'debt'])
@@ -161,6 +175,7 @@ def __(data, px, pl):
         fig_debt
     else:
         "No drive data available"
+    return
 
 
 if __name__ == "__main__":

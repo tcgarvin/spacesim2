@@ -59,7 +59,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
     parser.add_argument(
         "--log-actor-types",
         nargs="+",
-        choices=["colonist", "industrialist", "market_maker"],
+        choices=["colonist", "industrialist", "market_maker", "ship", "trader"],
         help="Log specific actor types only",
     )
 
