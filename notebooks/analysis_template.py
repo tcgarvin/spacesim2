@@ -16,38 +16,74 @@ def _():
 
 
 @app.cell
-def _(mo, os):
-    # Load run path from environment or use default
-    default_run = "data/runs/test_run"  # placeholder
-    run_path_str = os.getenv("SPACESIM_RUN_PATH", default_run)
+def _(mo, os, Path):
+    from spacesim2.analysis.loading import (
+        get_run_path_with_fallback,
+        NoRunsFoundError,
+    )
 
-    # UI to select different runs if needed
+    try:
+        auto_run_path = get_run_path_with_fallback()
+        run_path_str = str(auto_run_path)
+        status_msg = f"✓ Using run: **{auto_run_path.name}**"
+
+        # Check if from env var or auto-detected
+        if os.getenv("SPACESIM_RUN_PATH"):
+            status_msg += " (from SPACESIM_RUN_PATH)"
+        else:
+            status_msg += " (auto-detected)"
+
+    except NoRunsFoundError as e:
+        run_path_str = ""
+        status_msg = f"⚠️ **No runs found**\n\n```\n{str(e)}\n```"
+
     run_selector = mo.ui.text(
         value=run_path_str,
-        label="Run Path:",
-        full_width=True
+        label="Run Path (edit to override):",
+        full_width=True,
     )
-    mo.md(f"# SpaceSim2 Analysis\n\n{run_selector}")
+
+    mo.md(f"""
+    # SpaceSim2 Analysis
+
+    {status_msg}
+
+    {run_selector}
+    """)
+
     return (run_selector,)
 
 
 @app.cell
-def _(Path, SimulationData, run_selector):
-    # Load data
-    data = SimulationData(Path(run_selector.value))
+def _(Path, SimulationData, mo, run_selector):
+    # Only load if path is valid
+    if not run_selector.value:
+        mo.md("⚠️ No run path specified. Run `spacesim2 analyze` first.")
+        data = None
+    else:
+        try:
+            data = SimulationData(Path(run_selector.value))
+            mo.md(f"✓ Data loaded successfully")
+        except Exception as e:
+            mo.md(f"❌ Error loading data: {e}")
+            data = None
+
     return (data,)
 
 
 @app.cell
 def _(data, mo):
-    # Show basic stats
-    mo.md(f"""
-    ## Simulation Overview
-    - **Turns:** {data.actor_turns['turn'].max() if len(data.actor_turns) > 0 else 'N/A'}
-    - **Actors:** {data.actor_turns['actor_id'].n_unique() if len(data.actor_turns) > 0 else 'N/A'}
-    - **Transactions:** {len(data.market_transactions)}
-    - **Market Snapshots:** {len(data.market_snapshots)}
-    """)
+    if data is None:
+        mo.md("## Simulation Overview\n\nNo data loaded")
+    else:
+        # Show basic stats
+        mo.md(f"""
+        ## Simulation Overview
+        - **Turns:** {data.actor_turns['turn'].max() if len(data.actor_turns) > 0 else 'N/A'}
+        - **Actors:** {data.actor_turns['actor_id'].n_unique() if len(data.actor_turns) > 0 else 'N/A'}
+        - **Transactions:** {len(data.market_transactions)}
+        - **Market Snapshots:** {len(data.market_snapshots)}
+        """)
     return
 
 
@@ -61,8 +97,10 @@ def _(mo):
 
 @app.cell
 def _(data, px):
-    # Example: Money over time for actors
-    if len(data.actor_turns) > 0:
+    if data is None:
+        "No data loaded"
+    elif len(data.actor_turns) > 0:
+        # Example: Money over time for actors
         actor_money = data.actor_turns.select(['turn', 'actor_id', 'actor_name', 'money'])
         fig_money = px.line(
             actor_money.to_pandas(),
@@ -88,8 +126,10 @@ def _(mo):
 
 @app.cell
 def _(data, px):
-    # Example: Average price per commodity over time
-    if len(data.market_snapshots) > 0:
+    if data is None:
+        "No data loaded"
+    elif len(data.market_snapshots) > 0:
+        # Example: Average price per commodity over time
         price_trends = data.market_snapshots.select(['turn', 'commodity_id', 'avg_price'])
         fig_prices = px.line(
             price_trends.to_pandas(),
@@ -107,8 +147,10 @@ def _(data, px):
 
 @app.cell
 def _(data, pl, px):
-    # Example: Transaction volume per commodity
-    if len(data.market_transactions) > 0:
+    if data is None:
+        "No data loaded"
+    elif len(data.market_transactions) > 0:
+        # Example: Transaction volume per commodity
         volume_by_commodity = data.market_transactions.group_by('commodity_id').agg(
             pl.col('quantity').sum().alias('total_volume')
         ).sort('total_volume', descending=True)
@@ -136,8 +178,10 @@ def _(mo):
 
 @app.cell
 def _(data, pl, px):
-    # Example: Drive health over time
-    if len(data.actor_drives) > 0:
+    if data is None:
+        "No data loaded"
+    elif len(data.actor_drives) > 0:
+        # Example: Drive health over time
         drive_health = data.actor_drives.select(['turn', 'drive_name', 'health'])
         avg_health = drive_health.group_by(['turn', 'drive_name']).agg(
             pl.col('health').mean().alias('avg_health')
@@ -158,8 +202,10 @@ def _(data, pl, px):
 
 @app.cell
 def _(data, pl, px):
-    # Example: Drive debt over time
-    if len(data.actor_drives) > 0:
+    if data is None:
+        "No data loaded"
+    elif len(data.actor_drives) > 0:
+        # Example: Drive debt over time
         drive_debt = data.actor_drives.select(['turn', 'drive_name', 'debt'])
         avg_debt = drive_debt.group_by(['turn', 'drive_name']).agg(
             pl.col('debt').mean().alias('avg_debt')

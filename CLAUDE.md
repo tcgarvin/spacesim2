@@ -74,3 +74,34 @@ marimo notebooks are Python files that can be debugged efficiently using headles
   ```
 
 **Key Insight**: Use `marimo export html` instead of `marimo run` for debugging - it executes the notebook headlessly and shows errors immediately in the terminal, avoiding server management overhead.
+
+## Notebook Run Path Management
+
+Notebooks automatically detect the most recent simulation run:
+
+1. **Environment Variable** (explicit override):
+   ```bash
+   SPACESIM_RUN_PATH=data/runs/run_20251130_120000 marimo edit notebooks/analysis_template.py
+   ```
+
+2. **Auto-detection** (when env var not set):
+   - Scans `data/runs/` for directories matching `run_YYYYMMDD_HHMMSS`
+   - Uses the most recent based on parsed timestamp
+   - Raises clear error if no runs found
+
+3. **Manual Override**:
+   - Edit the "Run Path" text field in the notebook UI
+   - Useful for comparing different runs
+
+**Workflow**:
+```bash
+# Generate data
+uv run spacesim2 analyze --turns 100 --progress
+
+# Later: analyze in notebook (auto-detects most recent)
+marimo edit notebooks/analysis_template.py
+```
+
+**Troubleshooting**:
+- **"No valid runs found"**: Run `spacesim2 analyze` first
+- **Wrong run selected**: Check directory timestamps or use `SPACESIM_RUN_PATH` to override
