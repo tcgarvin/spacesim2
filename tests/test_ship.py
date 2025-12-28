@@ -48,7 +48,7 @@ class TestShip(unittest.TestCase):
     def test_fuel_calculation(self):
         distance = 50.0
         fuel_needed = Ship.calculate_fuel_needed(distance)
-        self.assertEqual(fuel_needed, 5)  # 50 / 10 = 5 units of fuel
+        self.assertEqual(fuel_needed, 3)  # 50 / 20 = 2.5, rounded up to 3 units of fuel
 
     def test_journey_start_and_progress(self):
         # Simulation reference already set in constructor
@@ -59,7 +59,7 @@ class TestShip(unittest.TestCase):
         self.assertEqual(self.ship.destination, self.mars)
         
         # Check fuel was consumed
-        fuel_consumed = 5  # For a distance of 50 units
+        fuel_consumed = 3  # For a distance of 50 units (50/20 = 2.5, rounded to 3)
         self.assertEqual(self.ship.cargo.get_quantity(self.fuel), 50 - fuel_consumed)
         
         # Journey should take 3 turns (50 / 20 = 2.5, rounded to 3)
