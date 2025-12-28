@@ -104,23 +104,34 @@ class IndustrialistBrain(ActorBrain):
     
     def _is_recipe_viable(self, actor: 'Actor', market, process: 'ProcessDefinition') -> bool:
         """Check if a recipe is economically viable given current market conditions."""
-        # Calculate input costs based on market prices
+        # Calculate input costs based on actual market ask prices
         total_input_cost = 0
         for commodity, quantity in process.inputs.items():
-            # Check if we can buy this input from the market
-            avg_price = market.get_avg_price(commodity.id)
-            if avg_price <= 0:  # No market data or no supply
-                return False
-            total_input_cost += avg_price * quantity
-        
-        # Calculate output value based on market prices
+            # Use ask price (what we'd pay to buy) if available
+            bid, ask = market.get_bid_ask_spread(commodity)
+            if ask is not None:
+                price = ask
+            else:
+                # Fall back to avg price, but require some market activity
+                price = market.get_avg_price(commodity)
+                if price <= 0:
+                    return False
+            total_input_cost += price * quantity
+
+        # Calculate output value based on actual market bid prices
         total_output_value = 0
         for commodity, quantity in process.outputs.items():
-            avg_price = market.get_avg_price(commodity.id)
-            if avg_price <= 0:  # No market demand
-                return False
-            total_output_value += avg_price * quantity
-        
+            # Use bid price (what buyers will pay) if available
+            bid, ask = market.get_bid_ask_spread(commodity)
+            if bid is not None:
+                price = bid
+            else:
+                # Fall back to avg price, but require some market activity
+                price = market.get_avg_price(commodity)
+                if price <= 0:
+                    return False
+            total_output_value += price * quantity
+
         # Recipe is viable if profit margin is at least 20% above input costs
         min_required_value = total_input_cost * 1.2
         return total_output_value >= min_required_value

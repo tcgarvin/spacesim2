@@ -48,29 +48,35 @@ class ColonistBrain(ActorBrain):
     def _find_most_profitable_process(self, actor:Actor, market) -> Optional['ProcessDefinition']:
         """Find the most profitable process based on current market prices and available resources."""
         # Actor always has sim reference
-            
+
         best_process = None
         best_profit = 10  # Must exceed government work profit
-        
+
         for process in actor.sim.process_registry.all_processes():
-            # Calculate potential profit
+            # Calculate potential profit using actual market bid/ask prices
             input_cost = 0
-            for commodity_id, quantity in process.inputs.items():
-                input_cost += market.get_avg_price(commodity_id) * quantity
-                
+            for commodity, quantity in process.inputs.items():
+                # Use ask price (what we'd pay to buy) if available
+                bid, ask = market.get_bid_ask_spread(commodity)
+                price = ask if ask is not None else market.get_avg_price(commodity)
+                input_cost += price * quantity
+
             output_value = 0
-            for commodity_id, quantity in process.outputs.items():
-                output_value += market.get_avg_price(commodity_id) * quantity
-                
+            for commodity, quantity in process.outputs.items():
+                # Use bid price (what buyers will pay) if available
+                bid, ask = market.get_bid_ask_spread(commodity)
+                price = bid if bid is not None else market.get_avg_price(commodity)
+                output_value += price * quantity
+
             potential_profit = output_value - input_cost
-            
+
             # Check if we can execute this process
             can_execute = actor.can_execute_process(process.id)
-            
+
             if can_execute and potential_profit > best_profit:
                 best_process = process
                 best_profit = potential_profit
-        
+
         return best_process
     
     def decide_market_actions(self, actor:'Actor') -> List[MarketCommand]:
@@ -92,15 +98,20 @@ class ColonistBrain(ActorBrain):
         # Actor always has sim reference
         food_commodity = actor.sim.commodity_registry["food"]
         fuel_commodity = actor.sim.commodity_registry["nova_fuel"]
-        
+        fuel_ore_commodity = actor.sim.commodity_registry["nova_fuel_ore"]
+
         # Handle food trading
         food_commands = self._get_trade_commands(actor, market, food_commodity, min_keep=6)
         commands.extend(food_commands)
-        
+
         # Handle fuel trading - we don't need to keep any fuel for ourselves
         fuel_commands = self._get_trade_commands(actor, market, fuel_commodity, min_keep=0)
         commands.extend(fuel_commands)
-        
+
+        # Handle fuel ore trading - sell excess ore we mine
+        fuel_ore_commands = self._get_trade_commands(actor, market, fuel_ore_commodity, min_keep=0)
+        commands.extend(fuel_ore_commands)
+
         return commands
     
     def _get_trade_commands(self, actor:Actor, market, commodity_type, min_keep=0) -> List[MarketCommand]:

@@ -25,8 +25,9 @@ class FoodDrive(ActorDrive):
         self.metrics = FoodDriveMetrics(health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY)
         self.food_commodity = commodity_registry.get_commodity("food")
 
-    def tick(self, actor) -> DriveMetrics: 
+    def tick(self, actor) -> DriveMetrics:
         did_eat = actor.inventory.remove_commodity(self.food_commodity, DAILY_CONSUMPTION)
+        actor.food_consumed_this_turn = did_eat
 
         remaining_food = actor.inventory.get_available_quantity(self.food_commodity)
         pantry_days = remaining_food / DAILY_CONSUMPTION

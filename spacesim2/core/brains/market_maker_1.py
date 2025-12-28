@@ -17,11 +17,11 @@ class MarketMakerBrain(ActorBrain):
         """Initialize the market maker brain."""
         self.spread_percentage = random.uniform(0.1, 0.3)  # 10-30% spread
     
-    def decide_economic_action(self, actor:Actor) -> Optional[EconomicCommand]:
+    def decide_economic_action(self, actor: 'Actor') -> Optional[EconomicCommand]:
         """Market makers only do government work."""
         return GovernmentWorkCommand()
     
-    def decide_market_actions(self, actor:Actor) -> List[MarketCommand]:
+    def decide_market_actions(self, actor: 'Actor') -> List[MarketCommand]:
         """Market makers provide liquidity by placing both buy and sell orders based on inventory and market conditions."""
         if not actor.planet:
             return []
@@ -36,9 +36,10 @@ class MarketMakerBrain(ActorBrain):
         
         food_commodity = actor.sim.commodity_registry["food"]
         fuel_commodity = actor.sim.commodity_registry["nova_fuel"]
-        
-        # Handle each commodity type
-        for commodity_type in [food_commodity, fuel_commodity]:
+        fuel_ore_commodity = actor.sim.commodity_registry["nova_fuel_ore"]
+
+        # Handle each commodity type (including intermediate goods to bootstrap supply chains)
+        for commodity_type in [food_commodity, fuel_commodity, fuel_ore_commodity]:
             # Get market statistics (30-day moving averages)
             average_volume = market.get_30_day_average_volume(commodity_type)
             average_price = market.get_30_day_average_price(commodity_type)

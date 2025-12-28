@@ -37,16 +37,16 @@
   description: Converts biomass into edible food using simple techniques.
 
 - id: mine_nova_fuel_ore
-  name: Mine Ore
+  name: Mine Nova Ore
   inputs: {}
   outputs:
-    nova_fuel_ore: 1
+    nova_fuel_ore: 2
   tools_required: []
   facilities_required: []
   labor: 1
   relevant_skills:
     - mining
-  description: Extracts various ores from the planetary crust.
+  description: Extracts volatile nova fuel ore from planetary deposits.
 
 - id: mine_common_metal_ore
   name: Mine Ore
@@ -77,19 +77,16 @@
 - id: refine_nova_fuel
   name: Refine NovaFuel
   inputs:
-    nova_fuel_ore: 2
+    nova_fuel_ore: 4
   outputs:
     nova_fuel: 1
-  tools_required: 
-    simple_tools: 2
-  facilities_required:
-    - smelting_facility
+  tools_required: []
+  facilities_required: []
   labor: 1
   relevant_skills:
     - chemistry
-    - aerospace
     - refining
-  description: Refines NovaFuel Ore into volatile high-energy fuel.
+  description: Refines volatile NovaFuel Ore into high-energy starship fuel using basic techniques.
 
 - id: make_simple_tools
   name: Make Simple Tools

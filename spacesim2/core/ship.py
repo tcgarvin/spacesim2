@@ -99,8 +99,7 @@ class TraderBrain(ShipBrain):
                 min_profitable_price = int(avg_purchase_price * 1.20)
 
                 # Check current market conditions
-                bid_ask = market.get_bid_ask_spread(food_commodity)
-                highest_bid = bid_ask[1]  # Best buy order price
+                highest_bid, lowest_ask = market.get_bid_ask_spread(food_commodity)
 
                 if highest_bid is not None and highest_bid >= min_profitable_price:
                     # We can sell profitably! Match the best bid
@@ -138,8 +137,7 @@ class TraderBrain(ShipBrain):
                 fuel_to_buy = min(cargo_space_available, self.ship.fuel_capacity - fuel_quantity)
 
                 # Try to match best ask (lowest sell order)
-                bid_ask = market.get_bid_ask_spread(fuel_commodity)
-                lowest_ask = bid_ask[0]
+                highest_bid, lowest_ask = market.get_bid_ask_spread(fuel_commodity)
 
                 if lowest_ask is not None:
                     buy_price = lowest_ask
@@ -156,8 +154,7 @@ class TraderBrain(ShipBrain):
 
         # Priority 3: Buy food cargo only if we expect to sell it profitably
         if cargo_space_available > 0 and self.ship.money > 0 and food_quantity == 0:
-            bid_ask = market.get_bid_ask_spread(food_commodity)
-            lowest_ask = bid_ask[0]
+            highest_bid, lowest_ask = market.get_bid_ask_spread(food_commodity)
 
             if lowest_ask is not None:
                 # Only buy if we think we can sell for 20%+ profit elsewhere
@@ -228,10 +225,10 @@ class TraderBrain(ShipBrain):
                 if fuel_available < fuel_needed:
                     continue
 
-                # What price can we expect at destination?
+                # What price can we expect at destination? (highest bid = what buyers will pay)
                 destination_market = planet.market
-                bid_ask = destination_market.get_bid_ask_spread(food_commodity)
-                expected_sell_price = bid_ask[1] if bid_ask[1] is not None else destination_market.get_avg_price(food_commodity)
+                highest_bid, lowest_ask = destination_market.get_bid_ask_spread(food_commodity)
+                expected_sell_price = highest_bid if highest_bid is not None else destination_market.get_avg_price(food_commodity)
 
                 if expected_sell_price is None or expected_sell_price <= 0:
                     continue
@@ -277,10 +274,10 @@ class TraderBrain(ShipBrain):
                 if fuel_available < fuel_needed:
                     continue
 
-                # What's the buying opportunity at destination?
+                # What's the buying opportunity at destination? (lowest ask = what sellers want)
                 destination_market = planet.market
-                bid_ask = destination_market.get_bid_ask_spread(food_commodity)
-                buy_price = bid_ask[0] if bid_ask[0] is not None else destination_market.get_avg_price(food_commodity)
+                highest_bid, lowest_ask = destination_market.get_bid_ask_spread(food_commodity)
+                buy_price = lowest_ask if lowest_ask is not None else destination_market.get_avg_price(food_commodity)
 
                 if buy_price is None or buy_price <= 0:
                     continue

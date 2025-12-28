@@ -157,36 +157,6 @@ class Actor:
         return True
     
 
-    def _consume_food(self) -> None:
-        """Consume 1 unit of food per turn if available."""
-        # Check if the actor has food in inventory
-        # Get commodity references - sim must be set before calling this
-        food_commodity = self.sim.commodity_registry.get_commodity("food")
-        if not food_commodity:
-            self.food_consumed_this_turn = False
-            return
-            
-        # Try to consume from available food
-        if self.inventory.has_quantity(food_commodity, 1):
-            self.inventory.remove_commodity(food_commodity, 1)
-            self.food_consumed_this_turn = True
-            return
-        
-        # Check if there's reserved food
-        reserved_food = self.inventory.get_reserved_quantity(food_commodity)
-        if reserved_food > 0:
-            # Unreserve 1 unit of food and consume it
-            self.inventory.unreserve_commodity(food_commodity, 1)
-            
-            # Now the food should be available to consume
-            if self.inventory.has_quantity(food_commodity, 1):
-                self.inventory.remove_commodity(food_commodity, 1)
-                self.food_consumed_this_turn = True
-                return
-        
-        # If we get here, there's not enough food
-        self.food_consumed_this_turn = False
-    
     def get_market_activity_since_last_check(self) -> Dict:
         """Actor decides what's relevant - since they last checked."""
         if not self.planet:

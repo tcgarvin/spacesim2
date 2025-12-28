@@ -80,7 +80,7 @@ class MarketMakerBrain(ActorBrain):
     MIN_ORDER_QUANTITY: int = 1
 
     # Discovery behavior
-    DISCOVERY_CASH_FRACTION: float = 0.02           # 2% of wallet per tick for probes
+    DISCOVERY_CASH_FRACTION: float = 0.05           # 5% of wallet per tick for probes
     DISCOVERY_TIGHTNESS_EPSILON: int = 2            # switch to maker when U-L <= epsilon
     DISCOVERY_MIN_TRADES: int = 6                   # or after N total fills (any side)
     REVERT_IF_QUIET_TICKS: int = 50                 # revert to discovery if no fills for N ticks
@@ -126,8 +126,9 @@ class MarketMakerBrain(ActorBrain):
         # Choose commodities (per your current world)
         food = actor.sim.commodity_registry["food"]
         fuel = actor.sim.commodity_registry["nova_fuel"]
+        fuel_ore = actor.sim.commodity_registry["nova_fuel_ore"]
 
-        for commodity in (food, fuel):
+        for commodity in (food, fuel, fuel_ore):
             state = self._ensure_state_for(commodity)
 
             # Update state from real fills (tighten bracket, decide phase transitions)
