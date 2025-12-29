@@ -123,13 +123,15 @@ def add_simulation_args(parser: argparse.ArgumentParser) -> None:
         parser: ArgumentParser to add arguments to
     """
     parser.add_argument(
-        "--turns", type=int, default=10, help="Number of turns to simulate"
+        "--turns", type=int, default=1000, help="Number of turns to simulate"
     )
-    parser.add_argument("--planets", type=int, default=2, help="Number of planets")
+    parser.add_argument("--planets", type=int, default=5, help="Number of planets")
     parser.add_argument(
-        "--actors", type=int, default=50, help="Number of regular actors per planet"
+        "--actors", type=int, default=100, help="Number of regular actors per planet"
     )
     parser.add_argument(
         "--makers", type=int, default=2, help="Number of market makers per planet"
     )
-    parser.add_argument("--ships", type=int, default=1, help="Number of ships")
+    parser.add_argument(
+        "--ships", type=int, default=1, help="Number of ships per planet"
+    )

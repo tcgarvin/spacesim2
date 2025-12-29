@@ -99,6 +99,9 @@ class ColonistBrain(ActorBrain):
         food_commodity = actor.sim.commodity_registry["food"]
         fuel_commodity = actor.sim.commodity_registry["nova_fuel"]
         fuel_ore_commodity = actor.sim.commodity_registry["nova_fuel_ore"]
+        wood_commodity = actor.sim.commodity_registry["wood"]
+        common_metal_commodity = actor.sim.commodity_registry["common_metal"]
+        common_metal_ore_commodity = actor.sim.commodity_registry["common_metal_ore"]
 
         # Handle food trading
         food_commands = self._get_trade_commands(actor, market, food_commodity, min_keep=6)
@@ -111,6 +114,16 @@ class ColonistBrain(ActorBrain):
         # Handle fuel ore trading - sell excess ore we mine
         fuel_ore_commands = self._get_trade_commands(actor, market, fuel_ore_commodity, min_keep=0)
         commands.extend(fuel_ore_commands)
+
+        # Handle shelter material trading
+        wood_commands = self._get_trade_commands(actor, market, wood_commodity, min_keep=0)
+        commands.extend(wood_commands)
+
+        common_metal_commands = self._get_trade_commands(actor, market, common_metal_commodity, min_keep=0)
+        commands.extend(common_metal_commands)
+
+        common_metal_ore_commands = self._get_trade_commands(actor, market, common_metal_ore_commodity, min_keep=0)
+        commands.extend(common_metal_ore_commands)
 
         return commands
     

@@ -127,8 +127,11 @@ class MarketMakerBrain(ActorBrain):
         food = actor.sim.commodity_registry["food"]
         fuel = actor.sim.commodity_registry["nova_fuel"]
         fuel_ore = actor.sim.commodity_registry["nova_fuel_ore"]
+        wood = actor.sim.commodity_registry["wood"]
+        common_metal = actor.sim.commodity_registry["common_metal"]
+        common_metal_ore = actor.sim.commodity_registry["common_metal_ore"]
 
-        for commodity in (food, fuel, fuel_ore):
+        for commodity in (food, fuel, fuel_ore, wood, common_metal, common_metal_ore):
             state = self._ensure_state_for(commodity)
 
             # Update state from real fills (tighten bracket, decide phase transitions)

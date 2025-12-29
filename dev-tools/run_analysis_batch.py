@@ -168,22 +168,22 @@ def main() -> None:
             print(f"⚠️  Notebook not found: {notebook_path}")
             print(f"   Please create the notebook first or use an existing one.")
             print(f"\nTo analyze manually:")
-            print(f"  SPACESIM_RUN_PATH='{output_path}' marimo edit {notebook_path}")
+            print(f"  SPACESIM_RUN_PATH='{output_path}' marimo edit --no-token {notebook_path}")
         else:
             try:
                 # Launch marimo edit with the notebook
                 subprocess.run(
-                    ["marimo", "edit", str(notebook_path)],
+                    ["marimo", "edit", "--no-token", str(notebook_path)],
                     env=env,
                     check=False  # Don't raise error if marimo exits normally
                 )
             except FileNotFoundError:
                 print("⚠️  marimo not found. Install with: uv pip install -e '.[analysis]'")
                 print(f"\nTo analyze manually:")
-                print(f"  SPACESIM_RUN_PATH='{output_path}' marimo edit {notebook_path}")
+                print(f"  SPACESIM_RUN_PATH='{output_path}' marimo edit --no-token {notebook_path}")
     else:
         print(f"\nTo analyze this run:")
-        print(f"  SPACESIM_RUN_PATH='{output_path}' marimo edit {args.notebook_path}")
+        print(f"  SPACESIM_RUN_PATH='{output_path}' marimo edit --no-token {args.notebook_path}")
         print(f"  # Or with auto-load: uv run scripts/run_analysis_batch.py --notebook")
 
 

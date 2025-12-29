@@ -3,14 +3,16 @@ name = "spacesim2"
 version = "0.2.0"
 description = "A turn-based economic simulation modeling interplanetary trade"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
     "altair>=6.0.0",
+    "marimo>=0.18.4",
     "matplotlib>=3.10.1",
     "pandas>=2.3.3",
     "pygame>=2.5.0; platform_system != 'Windows' or python_version < '3.12'",
     "pyyaml>=6.0.2",
     "scipy>=1.15.2",
+    "tqdm>=4.66.0",
     "typing-extensions>=4.15.0",
 ]
 
@@ -30,7 +32,6 @@ analysis = [
     "pyarrow>=14.0.0", # Parquet support
     "plotly>=5.18.0", # Interactive visualizations
     "marimo>=0.1.0", # Modern reactive notebook
-    "tqdm>=4.66.0", # Progress bars
 ]
 
 [build-system]
@@ -46,7 +47,7 @@ exclude = ["tests*", "temp*", "data*"]
 testpaths = ["tests"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.13"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -54,11 +55,11 @@ disallow_incomplete_defs = true
 
 [tool.black]
 line-length = 88
-target-version = ["py311"]
+target-version = ["py313"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py311"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]

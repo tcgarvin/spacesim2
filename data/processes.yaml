@@ -67,8 +67,7 @@
   outputs:
     common_metal: 2
   tools_required: []
-  facilities_required:
-    - smelting_facility
+  facilities_required: []
   labor: 2
   relevant_skills:
     - refining
@@ -128,3 +127,15 @@
     - advanced_manufacturing
     - simple_manufacturing
   description: Constructs a static metalworking facility for fabricating tools and shaping metals.
+
+- id: harvest_wood
+  name: Harvest Wood
+  inputs: {}
+  outputs:
+    wood: 3
+  tools_required: []
+  facilities_required: []
+  labor: 1
+  relevant_skills:
+    - agriculture
+  description: Harvest timber from planetary forests (requires planet with wood resources).

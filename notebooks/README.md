@@ -4,6 +4,15 @@ This directory contains Marimo notebooks for analyzing simulation data.
 
 ## Available Notebooks
 
+### `planetary_trade.py` - Planetary Import/Export Analysis
+
+Analysis of trade flows between planets via ships:
+- Net trade balance by planet (importers vs exporters)
+- Imports and exports over time (rolling averages)
+- Commodity breakdown by planet
+- Per-planet detailed trade patterns
+- Summary table of all trade statistics
+
 ### `ship_economics.py` - Ship Economic Activity and Profitability Analysis
 
 Comprehensive analysis of trading ship performance including:
@@ -35,7 +44,7 @@ uv sync --extra analysis
 2. **Launch the ship economics notebook:**
    ```bash
    # Use the run path from step 1
-   SPACESIM_RUN_PATH='data/runs/my_run/run_YYYYMMDD_HHMMSS' marimo edit notebooks/ship_economics.py
+   SPACESIM_RUN_PATH='data/runs/my_run/run_YYYYMMDD_HHMMSS' uv run marimo edit --no-token notebooks/ship_economics.py
    ```
 
 3. **View in your browser** - Marimo will open automatically at http://localhost:8080
@@ -127,7 +136,7 @@ Use `analysis_template.py` as a starting point for custom analysis:
 
 ```bash
 cp notebooks/analysis_template.py notebooks/my_analysis.py
-marimo edit notebooks/my_analysis.py
+uv run marimo edit --no-token notebooks/my_analysis.py
 ```
 
 The `SimulationData` loader provides easy access to all exported data via Polars DataFrames.

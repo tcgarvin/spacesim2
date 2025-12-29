@@ -47,3 +47,8 @@
   name: Metalworking Facility
   transportable: false
   description: Static infrastructure for shaping metals and fabricating tools.
+
+- id: wood
+  name: Wood
+  transportable: true
+  description: Timber harvested from planetary forests, used for basic shelter construction.

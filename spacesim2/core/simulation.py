@@ -127,7 +127,7 @@ class Simulation:
             num_planets: Number of planets to create
             num_regular_actors: Number of regular actors to create per planet
             num_market_makers: Number of market makers to create per planet
-            num_ships: Number of ships to create in the simulation
+            num_ships: Number of ships to create per planet
         """
         # Generate fictional planet data with random positions
         planet_data = self._generate_fictional_planets(num_planets)
@@ -264,18 +264,18 @@ class Simulation:
 
     def _setup_ships(self, num_ships: int) -> None:
         """Set up ships for the simulation.
-        
+
         Args:
-            num_ships: Number of ships to create
+            num_ships: Number of ships to create per planet
         """
         if not self.planets:
             return
-        
-        # Scale the number of ships based on the number of planets
-        adjusted_num_ships = num_ships * len(self.planets) // 2
-            
+
+        # Create num_ships per planet
+        total_ships = num_ships * len(self.planets)
+
         # Create ships with varying fuel efficiency
-        for i in range(adjusted_num_ships):
+        for i in range(total_ships):
             # Random fuel efficiency between 0.8 and 1.2
             efficiency = random.uniform(0.8, 1.2)
             

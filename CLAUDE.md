@@ -1,107 +1,158 @@
 # CLAUDE.md - Agent Instructions
 
 ## Project: SpaceSim2
-A turn-based economic simulation modeling interplanetary trade with actors, markets, and ships.  Design documents can be found in the docs/ directory.
+A turn-based economic simulation modeling interplanetary trade with actors, markets, and ships.
 
-## Build & Run Commands
-- **Install**: `uv sync`
-- **Install with Dependencies**: `uv sync --extra analysis` (for analysis features)
-- **Interactive UI**: `uv run spacesim2 ui`
-- **Headless Simulation**: `uv run spacesim2 run --turns 10`
-- **Batch Analysis**: `uv run spacesim2 analyze --turns 100 --progress`
-- **Dev Tools**: `uv run spacesim2 dev validate-market` or `uv run spacesim2 dev graph`
-- **Test**: `uv run -m pytest tests/`
-- **Run Single Test**: `uv run -m pytest tests/test_file.py::test_function -v`
-- **Type Check**: `uv run -m mypy .`
-- **Lint**: `uv run -m ruff check .`
-- **Format**: `uv run -m black .`
+## Commands
 
-## CLI Usage
-SpaceSim2 provides a unified CLI with subcommands:
-- `spacesim2 ui` - Launch Pygame graphical interface
-- `spacesim2 run` - Headless simulation with text output
-- `spacesim2 analyze` - Batch analysis with Parquet export for notebooks
-- `spacesim2 dev validate-market` - Market maker behavior validation
-- `spacesim2 dev graph` - Generate commodity/process dependency graphs
-
-Run `uv run spacesim2 --help` for all options.
-
-## Code Style Guidelines
-- **Python Version**: 3.11+
-- **Formatting**: Black (line length 88)
-- **Imports**: Organize in standard groups (stdlib, third-party, local)
-- **Types**: Use type annotations for all functions and classes
-- **Naming**: 
-  - snake_case for functions, variables, modules
-  - PascalCase for classes
-  - UPPER_CASE for constants
-- **Error Handling**: Use explicit exception handling with appropriate specificity
-- **Documentation**: Docstrings for all public functions, classes, and modules
-- **Architecture**: Follow domain-driven design with simulation entities as core abstractions
-- **Code structure**: While inheritence certainly makes sense sometimes, algorithms that can be stateless are prefered to be pure functions, whenever suitable.
-
-## Development Process
-- Implement small, focused changes that maintain a working simulation
-- Add tests for new functionality before implementation
-- Follow the design document in docs/sim-design.md for simulation details
-
-## Notebook Development
-marimo notebooks are Python files that can be debugged efficiently using headless execution:
-
-- **Debug notebooks**: Export to HTML for headless execution with immediate error feedback
-  ```bash
-  SPACESIM_RUN_PATH=data/runs/test_run marimo export html notebooks/analysis_template.py -o /tmp/test.html
-  ```
-- **Validate data**: Check parquet files exist and have correct schema before running
-  ```bash
-  python dev-tools/validate_run_data.py data/runs/test_run
-  ```
-- **Quick notebook test**: Run both validation and export in one command
-  ```bash
-  ./dev-tools/test_notebook.sh data/runs/test_run
-  ```
-- **Quick check**: Lint notebook before execution
-  ```bash
-  marimo check notebooks/analysis_template.py
-  ```
-- **Interactive editing**: Auto-reload on file changes during development
-  ```bash
-  marimo edit notebooks/analysis_template.py --watch
-  ```
-- **Test notebooks**: Run automated tests (when implemented)
-  ```bash
-  uv run pytest tests/test_notebooks.py
-  ```
-
-**Key Insight**: Use `marimo export html` instead of `marimo run` for debugging - it executes the notebook headlessly and shows errors immediately in the terminal, avoiding server management overhead.
-
-## Notebook Run Path Management
-
-Notebooks automatically detect the most recent simulation run:
-
-1. **Environment Variable** (explicit override):
-   ```bash
-   SPACESIM_RUN_PATH=data/runs/run_20251130_120000 marimo edit notebooks/analysis_template.py
-   ```
-
-2. **Auto-detection** (when env var not set):
-   - Scans `data/runs/` for directories matching `run_YYYYMMDD_HHMMSS`
-   - Uses the most recent based on parsed timestamp
-   - Raises clear error if no runs found
-
-3. **Manual Override**:
-   - Edit the "Run Path" text field in the notebook UI
-   - Useful for comparing different runs
-
-**Workflow**:
 ```bash
-# Generate data
-uv run spacesim2 analyze --turns 100 --progress
+# Build & Run
+uv sync                              # Install dependencies
+uv sync --extra analysis             # Install with analysis features
+uv run spacesim2 ui                  # Interactive UI (Pygame)
+uv run spacesim2 run                 # Headless sim with progress bar (default)
+uv run spacesim2 run --quiet         # Suppress all output
+uv run spacesim2 run --verbose       # Per-turn detailed output
+uv run spacesim2 run --no-export     # Quick run without data export
 
-# Later: analyze in notebook (auto-detects most recent)
-marimo edit notebooks/analysis_template.py
+# Development
+uv run pytest tests/                           # Run all tests
+uv run pytest tests/test_file.py::test_fn -v   # Run single test
+uv run mypy .                                  # Type check
+uv run black .                                 # Format
+uv run ruff check .                            # Lint
+
+# Dev Tools
+uv run spacesim2 dev validate-market   # Market maker validation
+uv run spacesim2 dev graph             # Commodity/process graphs
 ```
 
-**Troubleshooting**:
-- **"No valid runs found"**: Run `spacesim2 analyze` first
-- **Wrong run selected**: Check directory timestamps or use `SPACESIM_RUN_PATH` to override
+## Code Style
+- **Python**: 3.11+ with type annotations
+- **Formatting**: Black (88 char lines)
+- **Naming**: `snake_case` functions/vars, `PascalCase` classes, `UPPER_CASE` constants
+- **Architecture**: Domain-driven design; prefer pure functions over stateful classes when suitable
+
+## Documentation Index
+
+Read the relevant guide when working on specific areas:
+
+| Topic | Document | When to Read |
+|-------|----------|--------------|
+| Simulation design | `docs/sim-design.md` | Understanding game mechanics, rules |
+| Turn flow & testing | `docs/dev-guide-simulation.md` | Debugging AI, market mechanics, testing |
+| Ship trading AI | `docs/dev-guide-ships.md` | Developing ship brains, fuel/trade logic |
+| Notebook analysis | `docs/dev-guide-notebooks.md` | Working with marimo notebooks |
+| Needs/drives system | `docs/needs.md` | Actor consumption, hunger, clothing |
+| Skills system | `docs/skills.md` | Actor skill levels, production |
+| Commodities | `docs/commodities_implementation.md` | Adding/modifying tradeable goods |
+| UI grid | `docs/actor_grid_ui.md` | Pygame UI development |
+
+## Key Architecture Facts
+
+These apply to most tasks:
+
+- **Deferred market matching**: Orders execute at END of turn, not immediately
+- **Brain pattern**: Actors/ships delegate decisions to pluggable `Brain` classes
+- **Core files**: `core/simulation.py` (main loop), `core/actor.py`, `core/ship.py`, `core/market.py`
+
+## Common Implementation Patterns
+
+### Commodity System
+Commodities are defined in `data/commodities.yaml` with a simple structure:
+```yaml
+- id: commodity_name
+  name: Display Name
+  transportable: true/false
+  description: Text description
+```
+
+**Important**: Commodities have NO built-in "availability" or planet-specific attributes. All gathering/mining processes currently work on all planets equally (e.g., `gather_biomass`, `mine_nova_fuel_ore`).
+
+**Note**: `docs/sim-design.md` mentions "Resources distributed randomly; specialization can emerge naturally" but this is NOT yet implemented. Planet-specific resource availability would need to be added as a future enhancement.
+
+### Process Requirements
+Processes in `data/processes.yaml` can specify `tools_required` and `facilities_required`, but **most processes don't require them**:
+- Gathering processes (biomass, wood, ores): No requirements
+- Basic refining (food, fuel, iron, steel): No requirements
+- Only `refine_common_metal` requires `smelting_facility`
+
+When adding new processes, default to no tool/facility requirements unless there's a specific game design reason.
+
+### Drive (Needs) System
+Drives live in `core/drives/` and inherit from `ActorDrive`. Two consumption patterns:
+
+**Deterministic (FoodDrive)**:
+- Consume fixed amount every turn (1 food/turn)
+- Predictable, constant demand
+
+**Stochastic (ClothingDrive, ShelterDrive)**:
+- Random consumption events with probability `p` per turn
+- Example: `BASE_EVENT_PROB = 1.0 / 120.0` = ~3 events/year
+- Creates variable demand, more realistic for durable goods
+
+**Drive metrics** (all drives track these):
+- `health`: 0-1, immediate status (e.g., has materials available)
+- `debt`: 0-1, accumulated neglect from missed consumption
+- `buffer`: 0-1, log-normalized inventory coverage (days of supply)
+- `urgency`: 0-1, context-dependent priority multiplier
+
+**Material choice**: Drives can accept multiple commodities (e.g., wood OR steel for shelter). Implement `_choose_material()` to select based on availability and market prices.
+
+## Running Simulations - Notebook-First Approach
+
+**IMPORTANT**: When running simulations for analysis, testing, or debugging, ALWAYS use marimo notebooks instead of test scripts or one-off Python invocations.
+
+### Standard Workflow
+
+```bash
+# 1. Run simulation with data export (auto-opens notebook)
+uv run spacesim2 run --notebook
+
+# 2. Or run without auto-opening, then open manually
+uv run spacesim2 run
+uv run marimo edit --no-token notebooks/analysis_template.py  # Auto-detects latest run
+
+# 3. Use specific notebook for specialized analysis
+uv run spacesim2 run --notebook --notebook-path notebooks/ship_economics.py
+
+# 4. Quick sanity check without export
+uv run spacesim2 run --turns 10 --no-export --verbose
+```
+
+### Creating New Analysis Notebooks
+
+```bash
+# Copy template
+cp notebooks/analysis_template.py notebooks/my_analysis.py
+
+# Run simulation and open your notebook
+uv run spacesim2 run --notebook --notebook-path notebooks/my_analysis.py
+```
+
+### Why Notebooks?
+
+- **Persistent**: Results survive between runs, easy to revisit
+- **Interactive**: Modify analysis without re-running expensive simulations
+- **Integrated**: Auto-connects to simulation data via `SPACESIM_RUN_PATH`
+- **Reproducible**: Version-controlled, shareable analysis workflows
+- **MCP-friendly**: `--no-token` flag enables MCP server integration
+
+### When to Use Notebooks vs Tests
+
+**Use notebooks** anytime you want to examine the way the simulation is functioning:
+- Exploring actor behavior, market dynamics, or ship trading patterns
+- Debugging unexpected simulation outcomes
+- Performance analysis and optimization
+- Validating game mechanics
+- Economic analysis and visualization
+
+**Use pytest** for automated assertions on expected behavior:
+```python
+# tests/test_component.py
+def test_specific_behavior():
+    sim = Simulation()
+    sim.setup_simple(num_planets=2, num_regular_actors=10, num_market_makers=1, num_ships=1)
+    sim.run_turn()
+    # ... assertions
+```

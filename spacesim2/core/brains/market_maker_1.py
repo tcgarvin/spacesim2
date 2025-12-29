@@ -37,9 +37,12 @@ class MarketMakerBrain(ActorBrain):
         food_commodity = actor.sim.commodity_registry["food"]
         fuel_commodity = actor.sim.commodity_registry["nova_fuel"]
         fuel_ore_commodity = actor.sim.commodity_registry["nova_fuel_ore"]
+        wood_commodity = actor.sim.commodity_registry["wood"]
+        common_metal_commodity = actor.sim.commodity_registry["common_metal"]
+        common_metal_ore_commodity = actor.sim.commodity_registry["common_metal_ore"]
 
         # Handle each commodity type (including intermediate goods to bootstrap supply chains)
-        for commodity_type in [food_commodity, fuel_commodity, fuel_ore_commodity]:
+        for commodity_type in [food_commodity, fuel_commodity, fuel_ore_commodity, wood_commodity, common_metal_commodity, common_metal_ore_commodity]:
             # Get market statistics (30-day moving averages)
             average_volume = market.get_30_day_average_volume(commodity_type)
             average_price = market.get_30_day_average_price(commodity_type)

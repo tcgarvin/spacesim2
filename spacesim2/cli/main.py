@@ -4,7 +4,7 @@ import argparse
 import sys
 from typing import Optional
 
-from spacesim2.cli.commands import analyze, run, ui
+from spacesim2.cli.commands import run, ui
 from spacesim2.cli.commands.dev import graph, validate_market
 
 
@@ -31,7 +31,6 @@ def create_parser() -> argparse.ArgumentParser:
     # Main commands
     ui.add_parser(subparsers)
     run.add_parser(subparsers)
-    analyze.add_parser(subparsers)
 
     # Dev tools
     dev_parser = subparsers.add_parser("dev", help="Development tools")
