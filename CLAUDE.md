@@ -99,6 +99,30 @@ Drives live in `core/drives/` and inherit from `ActorDrive`. Two consumption pat
 
 **Material choice**: Drives can accept multiple commodities (e.g., wood OR steel for shelter). Implement `_choose_material()` to select based on availability and market prices.
 
+**Adding a new drive requires a complete supply chain:**
+1. **Commodities**: Add both raw material (e.g., `fiber`) and finished good (e.g., `clothing`) to `data/commodities.yaml`
+2. **Processes**: Add gathering process (e.g., `gather_fiber`) and production process (e.g., `make_clothing`) to `data/processes.yaml`
+3. **Drive class**: Create drive in `core/drives/` inheriting from `ActorDrive`
+4. **Actor brains**: Update `colonist.py` and `industrialist.py` to consider the new need in `decide_economic_action()`
+5. **Market trading**: Ensure actor brains trade the new commodities (use dynamic commodity iteration, not hardcoded lists)
+
+**Critical**: Drives silently fail if their expected commodity doesn't exist in the registry (`get_commodity()` returns `None`). Always verify commodities exist before implementing drives that depend on them.
+
+### Dynamic Commodity Handling
+
+**Market makers and actor brains should use dynamic commodity lists**, not hardcoded ones:
+
+```python
+# GOOD - handles all commodities automatically
+all_commodities = [c for c in actor.sim.commodity_registry.all_commodities() if c.transportable]
+for commodity in all_commodities:
+    # ... trade logic
+
+# BAD - requires manual updates when adding commodities
+for commodity in (food, fuel, wood):  # hardcoded list
+    # ... trade logic
+```
+
 ## Running Simulations - Notebook-First Approach
 
 **IMPORTANT**: When running simulations for analysis, testing, or debugging, ALWAYS use marimo notebooks instead of test scripts or one-off Python invocations.
@@ -129,6 +153,22 @@ cp notebooks/analysis_template.py notebooks/my_analysis.py
 # Run simulation and open your notebook
 uv run spacesim2 run --notebook --notebook-path notebooks/my_analysis.py
 ```
+
+### Notebook Validation and Delivery
+
+**Always validate notebooks before delivering them:**
+```bash
+uv run marimo check notebooks/my_notebook.py
+```
+
+Common issues to avoid:
+- **Multiple definitions**: Use `_` prefix for cell-local variables (`_fig`, `_data`)
+- **Branch expressions**: Assign conditional outputs to a named variable, then display it at cell end
+- **Unused returns**: Don't return variables that aren't used by other cells
+
+**When user requests a notebook, always:**
+1. Run `marimo check` to validate
+2. Start the notebook server for them: `uv run marimo edit --no-token notebooks/notebook.py`
 
 ### Why Notebooks?
 

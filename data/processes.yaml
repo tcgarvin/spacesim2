@@ -139,3 +139,28 @@
   relevant_skills:
     - agriculture
   description: Harvest timber from planetary forests (requires planet with wood resources).
+
+- id: gather_fiber
+  name: Gather Fiber
+  inputs: {}
+  outputs:
+    fiber: 3
+  tools_required: []
+  facilities_required: []
+  labor: 1
+  relevant_skills:
+    - agriculture
+  description: Gather plant fibers from local vegetation for textile production.
+
+- id: make_clothing
+  name: Make Clothing
+  inputs:
+    fiber: 4
+  outputs:
+    clothing: 2
+  tools_required: []
+  facilities_required: []
+  labor: 1
+  relevant_skills:
+    - simple_manufacturing
+  description: Weave and sew fiber into basic clothing.

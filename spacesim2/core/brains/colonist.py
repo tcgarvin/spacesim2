@@ -13,35 +13,58 @@ class ColonistBrain(ActorBrain):
     
     def decide_economic_action(self, actor:Actor) -> Optional[EconomicCommand]:
         """Decide which economic action to take this turn."""
-        # First, try to satisfy basic needs (food)
-        # Actor always has sim reference
-            
-        food_commodity = actor.sim.commodity_registry.get_commodity("food")
-        biomass_commodity = actor.sim.commodity_registry.get_commodity("biomass")
-        
+        # First, try to satisfy basic needs (food, clothing, shelter)
+        registry = actor.sim.commodity_registry
+
+        food_commodity = registry.get_commodity("food")
+        biomass_commodity = registry.get_commodity("biomass")
+        clothing_commodity = registry.get_commodity("clothing")
+        fiber_commodity = registry.get_commodity("fiber")
+        wood_commodity = registry.get_commodity("wood")
+
         if not food_commodity or not biomass_commodity:
             return GovernmentWorkCommand()
-            
+
+        # Check food needs first (most urgent)
         food_quantity = actor.inventory.get_quantity(food_commodity)
         if food_quantity < 5:
             # Try to make food
             if actor.can_execute_process("make_food"):
                 return ProcessCommand("make_food")
-                
+
             # If can't make food directly, try to gather biomass
             biomass_quantity = actor.inventory.get_quantity(biomass_commodity)
-            if biomass_quantity < 2 and actor.can_execute_process("gather_biomass"):
+            if biomass_quantity < 4 and actor.can_execute_process("gather_biomass"):
                 return ProcessCommand("gather_biomass")
+
+        # Check clothing needs
+        if clothing_commodity and fiber_commodity:
+            clothing_quantity = actor.inventory.get_quantity(clothing_commodity)
+            if clothing_quantity < 3:
+                # Try to make clothing
+                if actor.can_execute_process("make_clothing"):
+                    return ProcessCommand("make_clothing")
+
+                # If can't make clothing, try to gather fiber
+                fiber_quantity = actor.inventory.get_quantity(fiber_commodity)
+                if fiber_quantity < 4 and actor.can_execute_process("gather_fiber"):
+                    return ProcessCommand("gather_fiber")
+
+        # Check shelter needs (wood or metal)
+        if wood_commodity:
+            wood_quantity = actor.inventory.get_quantity(wood_commodity)
+            if wood_quantity < 2 and actor.can_execute_process("harvest_wood"):
+                return ProcessCommand("harvest_wood")
 
         # Try to find the most profitable process
         market = actor.planet.market if actor.planet else None
         if market:
             best_process = self._find_most_profitable_process(actor, market)
-            
+
             # Return the most profitable process if better than government work
             if best_process and actor.can_execute_process(best_process.id):
                 return ProcessCommand(best_process.id)
-        
+
         # If no processes can be executed, do government work
         return GovernmentWorkCommand()
     
@@ -83,47 +106,32 @@ class ColonistBrain(ActorBrain):
         """Regular actors buy what they need and sell excess, matching existing orders when possible."""
         if not actor.planet:
             return []
-        
+
         market = actor.planet.market
         commands = []
-        
+
         # Get existing actor's orders
         existing_orders = market.get_actor_orders(actor)
-        
+
         # Cancel all existing orders
         for order in existing_orders["buy"] + existing_orders["sell"]:
             commands.append(CancelOrderCommand(order.order_id))
-        
-        # Get commodity references
-        # Actor always has sim reference
-        food_commodity = actor.sim.commodity_registry["food"]
-        fuel_commodity = actor.sim.commodity_registry["nova_fuel"]
-        fuel_ore_commodity = actor.sim.commodity_registry["nova_fuel_ore"]
-        wood_commodity = actor.sim.commodity_registry["wood"]
-        common_metal_commodity = actor.sim.commodity_registry["common_metal"]
-        common_metal_ore_commodity = actor.sim.commodity_registry["common_metal_ore"]
 
-        # Handle food trading
-        food_commands = self._get_trade_commands(actor, market, food_commodity, min_keep=6)
-        commands.extend(food_commands)
+        # Define minimum inventory levels for needs-related commodities
+        min_keep_levels = {
+            "food": 6,
+            "clothing": 3,
+            "wood": 2,  # shelter material
+            "common_metal": 2,  # shelter material
+        }
 
-        # Handle fuel trading - we don't need to keep any fuel for ourselves
-        fuel_commands = self._get_trade_commands(actor, market, fuel_commodity, min_keep=0)
-        commands.extend(fuel_commands)
-
-        # Handle fuel ore trading - sell excess ore we mine
-        fuel_ore_commands = self._get_trade_commands(actor, market, fuel_ore_commodity, min_keep=0)
-        commands.extend(fuel_ore_commands)
-
-        # Handle shelter material trading
-        wood_commands = self._get_trade_commands(actor, market, wood_commodity, min_keep=0)
-        commands.extend(wood_commands)
-
-        common_metal_commands = self._get_trade_commands(actor, market, common_metal_commodity, min_keep=0)
-        commands.extend(common_metal_commands)
-
-        common_metal_ore_commands = self._get_trade_commands(actor, market, common_metal_ore_commodity, min_keep=0)
-        commands.extend(common_metal_ore_commands)
+        # Trade all transportable commodities
+        for commodity in actor.sim.commodity_registry.all_commodities():
+            if not commodity.transportable:
+                continue
+            min_keep = min_keep_levels.get(commodity.id, 0)
+            trade_commands = self._get_trade_commands(actor, market, commodity, min_keep=min_keep)
+            commands.extend(trade_commands)
 
         return commands
     

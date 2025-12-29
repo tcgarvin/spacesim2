@@ -23,36 +23,47 @@ class IndustrialistBrain(ActorBrain):
         if self._should_reevaluate_recipe():
             self.chosen_recipe_id = self._select_new_recipe(actor)
             self.turns_since_recipe_evaluation = 0
-            
+
         # If we don't have a recipe yet, select one
         if not self.chosen_recipe_id:
             self.chosen_recipe_id = self._select_new_recipe(actor)
             self.turns_since_recipe_evaluation = 0
-        
-        # Handle basic needs first - try to buy food from market
-        food_commodity = actor.sim.commodity_registry.get_commodity("food")
+
+        registry = actor.sim.commodity_registry
+
+        # Handle critical needs - food, clothing, shelter
+        food_commodity = registry.get_commodity("food")
+        biomass_commodity = registry.get_commodity("biomass")
+        clothing_commodity = registry.get_commodity("clothing")
+        fiber_commodity = registry.get_commodity("fiber")
+
         if not food_commodity:
             return GovernmentWorkCommand()
-            
+
+        # Critical food shortage - handle before recipe work
         food_quantity = actor.inventory.get_quantity(food_commodity)
-        if food_quantity < 5:
-            # Try to buy food from market first - this is handled in market actions
-            # If we still need food after market actions, we'll try to make it
-            if food_quantity < 2:  # Critical food shortage
-                # Try to make food ourselves as emergency
-                if actor.can_execute_process("make_food"):
-                    return ProcessCommand("make_food")
-                # Try to gather biomass for food production
-                biomass_commodity = actor.sim.commodity_registry.get_commodity("biomass")
-                if biomass_commodity:
-                    biomass_quantity = actor.inventory.get_quantity(biomass_commodity)
-                    if biomass_quantity < 4 and actor.can_execute_process("gather_biomass"):
-                        return ProcessCommand("gather_biomass")
-        
+        if food_quantity < 2:
+            if actor.can_execute_process("make_food"):
+                return ProcessCommand("make_food")
+            if biomass_commodity:
+                biomass_quantity = actor.inventory.get_quantity(biomass_commodity)
+                if biomass_quantity < 4 and actor.can_execute_process("gather_biomass"):
+                    return ProcessCommand("gather_biomass")
+
+        # Critical clothing shortage
+        if clothing_commodity and fiber_commodity:
+            clothing_quantity = actor.inventory.get_quantity(clothing_commodity)
+            if clothing_quantity < 1:
+                if actor.can_execute_process("make_clothing"):
+                    return ProcessCommand("make_clothing")
+                fiber_quantity = actor.inventory.get_quantity(fiber_commodity)
+                if fiber_quantity < 4 and actor.can_execute_process("gather_fiber"):
+                    return ProcessCommand("gather_fiber")
+
         # Try to execute our chosen recipe
         if self.chosen_recipe_id and actor.can_execute_process(self.chosen_recipe_id):
             return ProcessCommand(self.chosen_recipe_id)
-        
+
         # If we can't execute our recipe, fall back to government work
         return GovernmentWorkCommand()
     

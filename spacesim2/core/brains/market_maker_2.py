@@ -123,15 +123,13 @@ class MarketMakerBrain(ActorBrain):
         # Ingest NEW transactions and group by commodity + side
         new_fills_by_commodity = self._consume_new_transactions(actor, market)
 
-        # Choose commodities (per your current world)
-        food = actor.sim.commodity_registry["food"]
-        fuel = actor.sim.commodity_registry["nova_fuel"]
-        fuel_ore = actor.sim.commodity_registry["nova_fuel_ore"]
-        wood = actor.sim.commodity_registry["wood"]
-        common_metal = actor.sim.commodity_registry["common_metal"]
-        common_metal_ore = actor.sim.commodity_registry["common_metal_ore"]
+        # Market maker trades all transportable commodities
+        all_commodities = [
+            c for c in actor.sim.commodity_registry.all_commodities()
+            if c.transportable
+        ]
 
-        for commodity in (food, fuel, fuel_ore, wood, common_metal, common_metal_ore):
+        for commodity in all_commodities:
             state = self._ensure_state_for(commodity)
 
             # Update state from real fills (tighten bracket, decide phase transitions)

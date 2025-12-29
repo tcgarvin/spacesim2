@@ -52,3 +52,13 @@
   name: Wood
   transportable: true
   description: Timber harvested from planetary forests, used for basic shelter construction.
+
+- id: fiber
+  name: Fiber
+  transportable: true
+  description: Raw plant fibers gathered from local vegetation, used to make clothing.
+
+- id: clothing
+  name: Clothing
+  transportable: true
+  description: Basic garments needed for protection and comfort.
