@@ -1,3 +1,4 @@
+import random
 from abc import ABC, abstractmethod
 from typing import Optional, TYPE_CHECKING
 
@@ -93,15 +94,35 @@ class ProcessCommand(EconomicCommand):
             # Record failure
             actor.last_action = f"Failed process: {process.name}"
             return False
-        
+
+        # Check planet resource availability if process has resource_attribute
+        planet_multiplier = 1.0
+        if process.resource_attribute and actor.planet and actor.planet.attributes:
+            availability = actor.planet.attributes.get_availability(
+                process.resource_attribute.commodity
+            )
+
+            if process.resource_attribute.effect == "success":
+                # Availability affects whether process works at all
+                if random.random() > availability:
+                    actor.last_action = (
+                        f"Failed {process.name}: insufficient planetary resources"
+                    )
+                    return False
+            elif process.resource_attribute.effect == "output":
+                # Availability scales output quantity
+                planet_multiplier = availability
+
         # Process successful, apply multiplier
-        # Consume inputs (multiplied if multiplier > 1)
+        # Consume inputs (multiplied if skill multiplier > 1)
         for commodity, quantity in process.inputs.items():
             actor.inventory.remove_commodity(commodity, quantity * multiplier)
-            
-        # Add outputs (multiplied if multiplier > 1)
+
+        # Add outputs (apply both skill and planet multipliers)
         for commodity, quantity in process.outputs.items():
-            actor.inventory.add_commodity(commodity, quantity * multiplier)
+            # Combine skill multiplier (int, 1 or 2) with planet multiplier (float, 0-1)
+            output_quantity = max(1, round(quantity * multiplier * planet_multiplier))
+            actor.inventory.add_commodity(commodity, output_quantity)
             
         # Improve skills used in the process
         if process.relevant_skills:
@@ -111,8 +132,13 @@ class ProcessCommand(EconomicCommand):
                 actor.improve_skill(skill_id, skill_improvement)
         
         # Record action
-        multiplier_text = f" (×{multiplier})" if multiplier > 1 else ""
-        actor.last_action = f"Executed process: {process.name}{multiplier_text}"
+        modifiers = []
+        if multiplier > 1:
+            modifiers.append(f"skill ×{multiplier}")
+        if planet_multiplier < 1.0:
+            modifiers.append(f"planet {planet_multiplier:.0%}")
+        modifier_text = f" ({', '.join(modifiers)})" if modifiers else ""
+        actor.last_action = f"Executed process: {process.name}{modifier_text}"
         return True
 
 

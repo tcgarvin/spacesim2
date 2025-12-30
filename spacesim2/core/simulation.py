@@ -8,6 +8,7 @@ from spacesim2.core.brains import ColonistBrain, IndustrialistBrain, MarketMaker
 from spacesim2.core.commodity import CommodityRegistry
 from spacesim2.core.data_logger import DataLogger
 from spacesim2.core.drives import FoodDrive, ClothingDrive, ShelterDrive
+from spacesim2.core.planet_attributes import PlanetAttributes
 from spacesim2.core.process import ProcessRegistry
 from spacesim2.core.market import Market
 from spacesim2.core.planet import Planet
@@ -46,6 +47,7 @@ class Simulation:
 
         self.data_logger = DataLogger()
         self.exporter: Optional['SimulationExporter'] = None
+        self.planet_attributes_enabled: bool = False
         
     def _generate_fictional_planets(self, num_planets: int) -> List[Tuple[str, float, float]]:
         """Generate fictional planet names and positions with minimum 10 unit separation.
@@ -120,7 +122,14 @@ class Simulation:
         
         return positions
 
-    def setup_simple(self, num_planets: int = 2, num_regular_actors: int = 4, num_market_makers: int = 1, num_ships: int = 2) -> None:
+    def setup_simple(
+        self,
+        num_planets: int = 2,
+        num_regular_actors: int = 4,
+        num_market_makers: int = 1,
+        num_ships: int = 2,
+        enable_planet_attributes: bool = False,
+    ) -> None:
         """Set up a simple simulation with multiple planets, actors, and ships.
 
         Args:
@@ -128,16 +137,25 @@ class Simulation:
             num_regular_actors: Number of regular actors to create per planet
             num_market_makers: Number of market makers to create per planet
             num_ships: Number of ships to create per planet
+            enable_planet_attributes: If True, generate per-planet resource attributes
         """
+        self.planet_attributes_enabled = enable_planet_attributes
+
         # Generate fictional planet data with random positions
         planet_data = self._generate_fictional_planets(num_planets)
-        
+
         # Create the planets with their markets
         for name, x, y in planet_data:
             # Create and initialize the market for the planet
             planet_market = Market()
             planet_market.commodity_registry = self.commodity_registry  # Give market access to commodity registry
-            planet = Planet(name, planet_market, x=x, y=y)
+
+            # Generate planet attributes if feature is enabled
+            attributes = None
+            if enable_planet_attributes:
+                attributes = PlanetAttributes.generate_random()
+
+            planet = Planet(name, planet_market, x=x, y=y, attributes=attributes)
             self.planets.append(planet)
             
             # Create actors for each planet

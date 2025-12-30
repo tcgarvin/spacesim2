@@ -50,6 +50,11 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
     parser.add_argument(
         "--ships", type=int, default=1, help="Number of ships per planet"
     )
+    parser.add_argument(
+        "--planet-attributes",
+        action="store_true",
+        help="Enable per-planet resource attributes affecting gathering yields",
+    )
 
     # Logging configuration
     parser.add_argument(
@@ -139,7 +144,10 @@ def execute(args: argparse.Namespace) -> int:
         actors=args.actors,
         makers=args.makers,
         ships=args.ships,
+        enable_planet_attributes=args.planet_attributes,
     )
+    if args.planet_attributes:
+        print("  Planet attributes: enabled")
 
     # Configure logging
     print("Configuring actor logging...")

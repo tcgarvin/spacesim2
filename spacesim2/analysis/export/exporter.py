@@ -63,6 +63,10 @@ class SimulationExporter:
             batch_size=500
         )
 
+        # Export planet attributes if feature is enabled
+        if simulation.planet_attributes_enabled:
+            self._export_planet_attributes(simulation)
+
     def export_turn(self, simulation: 'Simulation', turn: int) -> None:
         """
         Export data for a single turn.
@@ -172,3 +176,18 @@ class SimulationExporter:
         metadata_path = self.output_dir / "metadata.json"
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
+
+    def _export_planet_attributes(self, simulation: 'Simulation') -> None:
+        """Export planet attributes to a JSON file.
+
+        Args:
+            simulation: Simulation instance with planet attributes
+        """
+        planet_data = {}
+        for planet in simulation.planets:
+            if planet.attributes:
+                planet_data[planet.name] = planet.attributes.to_dict()
+
+        attrs_path = self.output_dir / "planet_attributes.json"
+        with open(attrs_path, 'w') as f:
+            json.dump(planet_data, f, indent=2)

@@ -14,6 +14,7 @@ uv run spacesim2 run                 # Headless sim with progress bar (default)
 uv run spacesim2 run --quiet         # Suppress all output
 uv run spacesim2 run --verbose       # Per-turn detailed output
 uv run spacesim2 run --no-export     # Quick run without data export
+uv run spacesim2 run --planet-attributes  # Enable per-planet resource availability
 
 # Development
 uv run pytest tests/                           # Run all tests
@@ -46,6 +47,7 @@ Read the relevant guide when working on specific areas:
 | Needs/drives system | `docs/needs.md` | Actor consumption, hunger, clothing |
 | Skills system | `docs/skills.md` | Actor skill levels, production |
 | Commodities | `docs/commodities_implementation.md` | Adding/modifying tradeable goods |
+| Planet attributes | See "Planet Attributes System" below | Per-planet resource availability |
 | UI grid | `docs/actor_grid_ui.md` | Pygame UI development |
 
 ## Key Architecture Facts
@@ -55,6 +57,7 @@ These apply to most tasks:
 - **Deferred market matching**: Orders execute at END of turn, not immediately
 - **Brain pattern**: Actors/ships delegate decisions to pluggable `Brain` classes
 - **Core files**: `core/simulation.py` (main loop), `core/actor.py`, `core/ship.py`, `core/market.py`
+- **Feature flags**: Some features (like planet attributes) are toggled via CLI args and `setup_simple()` parameters
 
 ## Common Implementation Patterns
 
@@ -67,9 +70,51 @@ Commodities are defined in `data/commodities.yaml` with a simple structure:
   description: Text description
 ```
 
-**Important**: Commodities have NO built-in "availability" or planet-specific attributes. All gathering/mining processes currently work on all planets equally (e.g., `gather_biomass`, `mine_nova_fuel_ore`).
+Commodities themselves have no planet-specific attributes. Planet-specific resource availability is controlled separately via the **Planet Attributes** system (see below).
 
-**Note**: `docs/sim-design.md` mentions "Resources distributed randomly; specialization can emerge naturally" but this is NOT yet implemented. Planet-specific resource availability would need to be added as a future enhancement.
+### Planet Attributes System
+
+Planet attributes control resource availability per-planet. **Enabled via `--planet-attributes` CLI flag**.
+
+**Core file**: `core/planet_attributes.py` - `PlanetAttributes` dataclass
+
+**How it works**:
+1. Each planet gets randomly generated attributes (0.0-1.0) for extractable resources
+2. Gathering processes in `data/processes.yaml` specify a `resource_attribute` field
+3. `ProcessCommand.execute()` applies the effect when the process runs
+
+**Resource attributes** (defined on `PlanetAttributes`):
+- `biomass`, `fiber`, `wood` - organic resources (always ≥0.2 or ≥0.0)
+- `common_metal_ore`, `nova_fuel_ore` - mineral resources
+- `simple_building_materials` - surface materials (always ≥0.3)
+
+**Effect types** (per-process in `processes.yaml`):
+```yaml
+resource_attribute:
+  commodity: biomass      # Which planet attribute to check
+  effect: output          # "output" = reduced yield, "success" = may fail entirely
+```
+- `output`: Low availability reduces output quantity (e.g., 0.25 availability → 25% of base output)
+- `success`: Low availability causes random failure (e.g., 0.25 availability → 75% chance to fail)
+
+**Current assignments**:
+- Gathering processes (biomass, fiber, wood, building_materials): `effect: output`
+- Mining processes (nova_fuel_ore, common_metal_ore): `effect: success`
+
+**Generation distributions** (in `PlanetAttributes.generate_random()`):
+- `biomass`: uniform(0.2, 1.0) - always some organic life
+- `nova_fuel_ore`: bimodal - either rare (0.0-0.3) or abundant (0.7-1.0)
+- `simple_building_materials`: uniform(0.3, 1.0) - always some available
+- Others: uniform(0.0, 1.0)
+
+**Adding a new extractable resource**:
+1. Add attribute to `PlanetAttributes` dataclass with appropriate default (1.0)
+2. Update `__post_init__` validation list
+3. Update `generate_random()` with desired distribution
+4. Update `to_dict()` for export
+5. Add `resource_attribute` to the gathering process in `processes.yaml`
+
+**Export**: When enabled, `planet_attributes.json` is written alongside other export files.
 
 ### Process Requirements
 Processes in `data/processes.yaml` can specify `tools_required` and `facilities_required`, but **most processes don't require them**:

@@ -99,27 +99,47 @@ class TestIndustrialistBrain:
     
     def test_recipe_viability_calculation(self, brain, mock_actor):
         """Test that recipe viability is calculated correctly."""
+        # Create mock commodities with id attribute
+        input_commodity = Mock()
+        input_commodity.id = "input1"
+        output_commodity = Mock()
+        output_commodity.id = "output1"
+
         # Create a mock process with known inputs/outputs
         process = Mock(spec=ProcessDefinition)
-        process.inputs = {Mock(id="input1"): 2}  # Needs 2 units of input1
-        process.outputs = {Mock(id="output1"): 1}  # Produces 1 unit of output1
-        
+        process.inputs = {input_commodity: 2}  # Needs 2 units of input1
+        process.outputs = {output_commodity: 1}  # Produces 1 unit of output1
+        process.resource_attribute = None  # No planet attribute dependency
+
         market = mock_actor.planet.market
-        
+
+        # Mock get_bid_ask_spread to return None (no spread data)
+        market.get_bid_ask_spread.return_value = (None, None)
+
         # Test viable recipe (profitable)
-        market.get_avg_price.side_effect = lambda commodity_id: {
-            "input1": 10,  # Input costs 10 each, total cost = 20
-            "output1": 30  # Output sells for 30, profit = 30 - 20 = 10 (50% margin)
-        }.get(commodity_id, 0)
-        
+        # Input costs 10 each (total = 20), output sells for 30, margin = 50%
+        def viable_prices(commodity):
+            if commodity is input_commodity:
+                return 10
+            if commodity is output_commodity:
+                return 30
+            return 0
+
+        market.get_avg_price.side_effect = viable_prices
+
         assert brain._is_recipe_viable(mock_actor, market, process) == True
-        
+
         # Test non-viable recipe (unprofitable)
-        market.get_avg_price.side_effect = lambda commodity_id: {
-            "input1": 15,  # Input costs 15 each, total cost = 30
-            "output1": 25  # Output sells for 25, loss = 25 - 30 = -5
-        }.get(commodity_id, 0)
-        
+        # Input costs 15 each (total = 30), output sells for 25, loss
+        def unprofitable_prices(commodity):
+            if commodity is input_commodity:
+                return 15
+            if commodity is output_commodity:
+                return 25
+            return 0
+
+        market.get_avg_price.side_effect = unprofitable_prices
+
         assert brain._is_recipe_viable(mock_actor, market, process) == False
     
     def test_market_actions_cancel_existing_orders(self, brain, mock_actor):
@@ -171,3 +191,93 @@ class TestIndustrialistBrain:
         assert food_buy_command is not None
         assert food_buy_command.quantity == 3  # Need 3 more to reach target of 6
         assert food_buy_command.price == 5
+
+    def test_recipe_viability_considers_planet_attributes(self, brain, mock_actor):
+        """Test that recipe viability considers planet resource attributes."""
+        from spacesim2.core.process import ResourceAttribute
+
+        # Create mock commodity for a gathering process
+        output_commodity = Mock()
+        output_commodity.id = "biomass"
+
+        # Create a gathering process with resource_attribute
+        process = Mock(spec=ProcessDefinition)
+        process.inputs = {}  # Gathering process - no inputs
+        process.outputs = {output_commodity: 4}  # Produces 4 biomass
+        process.resource_attribute = ResourceAttribute(commodity="biomass", effect="output")
+
+        market = mock_actor.planet.market
+        market.get_bid_ask_spread.return_value = (None, None)
+        market.get_avg_price.return_value = 10  # Biomass sells for 10 each
+
+        # Test with good planet attributes (biomass = 0.9)
+        mock_actor.planet.attributes = Mock()
+        mock_actor.planet.attributes.get_availability.return_value = 0.9
+
+        # Expected output: 4 * 0.9 = 3.6, value = 3.6 * 10 = 36
+        score_good = brain._calculate_recipe_score(mock_actor, market, process)
+        assert score_good > 0
+        assert score_good == pytest.approx(36.0, rel=0.01)
+
+        # Test with poor planet attributes (biomass = 0.2)
+        mock_actor.planet.attributes.get_availability.return_value = 0.2
+
+        # Expected output: 4 * 0.2 = 0.8, value = 0.8 * 10 = 8
+        score_poor = brain._calculate_recipe_score(mock_actor, market, process)
+        assert score_poor > 0
+        assert score_poor == pytest.approx(8.0, rel=0.01)
+
+        # Good planet should have much higher score
+        assert score_good > score_poor * 4
+
+    def test_recipe_selection_prefers_profitable_recipes(self, brain, mock_actor):
+        """Test that recipe selection weights by profitability."""
+        from spacesim2.core.process import ResourceAttribute
+
+        # Create two gathering processes
+        biomass_commodity = Mock()
+        biomass_commodity.id = "biomass"
+        fiber_commodity = Mock()
+        fiber_commodity.id = "fiber"
+
+        biomass_process = Mock(spec=ProcessDefinition)
+        biomass_process.id = "gather_biomass"
+        biomass_process.inputs = {}
+        biomass_process.outputs = {biomass_commodity: 4}
+        biomass_process.resource_attribute = ResourceAttribute(commodity="biomass", effect="output")
+
+        fiber_process = Mock(spec=ProcessDefinition)
+        fiber_process.id = "gather_fiber"
+        fiber_process.inputs = {}
+        fiber_process.outputs = {fiber_commodity: 3}
+        fiber_process.resource_attribute = ResourceAttribute(commodity="fiber", effect="output")
+
+        mock_actor.sim.process_registry.all_processes.return_value = [biomass_process, fiber_process]
+
+        market = mock_actor.planet.market
+        market.get_bid_ask_spread.return_value = (None, None)
+        market.get_avg_price.return_value = 10  # Both sell for 10
+
+        # Planet is great for biomass, poor for fiber
+        def get_availability(commodity_id):
+            if commodity_id == "biomass":
+                return 0.9
+            if commodity_id == "fiber":
+                return 0.1
+            return 1.0
+
+        mock_actor.planet.attributes = Mock()
+        mock_actor.planet.attributes.get_availability.side_effect = get_availability
+
+        # Run recipe selection many times to check bias
+        import random
+        random.seed(42)
+
+        selections = {"gather_biomass": 0, "gather_fiber": 0}
+        for _ in range(100):
+            recipe = brain._select_new_recipe(mock_actor)
+            if recipe:
+                selections[recipe] += 1
+
+        # Biomass should be selected much more often (9x score advantage)
+        assert selections["gather_biomass"] > selections["gather_fiber"] * 3

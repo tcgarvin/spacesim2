@@ -98,23 +98,95 @@ class IndustrialistBrain(ActorBrain):
         return random.random() < 0.01
     
     def _select_new_recipe(self, actor: 'Actor') -> Optional[str]:
-        """Select a new recipe based on market viability."""
+        """Select a new recipe based on market viability and expected profit.
+
+        Weights recipes by expected profit margin, preferring more profitable ones.
+        This causes industrialists to specialize in what their planet is good at.
+        """
         if not actor.planet:
             return None
-            
+
         market = actor.planet.market
-        viable_recipes = []
-        
+        recipe_scores: list[tuple[str, float]] = []
+
         for process in actor.sim.process_registry.all_processes():
-            if self._is_recipe_viable(actor, market, process):
-                viable_recipes.append(process.id)
-        
-        if viable_recipes:
-            return random.choice(viable_recipes)
-        return None
+            score = self._calculate_recipe_score(actor, market, process)
+            if score > 0:
+                recipe_scores.append((process.id, score))
+
+        if not recipe_scores:
+            return None
+
+        # Weighted random selection based on score
+        # Higher scores = more likely to be chosen
+        total_score = sum(score for _, score in recipe_scores)
+        if total_score <= 0:
+            return None
+
+        roll = random.random() * total_score
+        cumulative = 0.0
+        for process_id, score in recipe_scores:
+            cumulative += score
+            if roll <= cumulative:
+                return process_id
+
+        # Fallback (shouldn't reach here)
+        return recipe_scores[-1][0]
+
+    def _calculate_recipe_score(self, actor: 'Actor', market, process: 'ProcessDefinition') -> float:
+        """Calculate a profitability score for a recipe.
+
+        Returns expected profit margin as a score. Higher = more profitable.
+        Returns 0 if recipe is not viable.
+        """
+        # Calculate input costs
+        total_input_cost = 0.0
+        for commodity, quantity in process.inputs.items():
+            bid, ask = market.get_bid_ask_spread(commodity)
+            if ask is not None:
+                price = ask
+            else:
+                price = market.get_avg_price(commodity)
+                if price <= 0:
+                    return 0.0
+            total_input_cost += price * quantity
+
+        # Determine planet attribute modifier
+        attribute_modifier = 1.0
+        if process.resource_attribute and actor.planet and actor.planet.attributes:
+            attr_value = actor.planet.attributes.get_availability(
+                process.resource_attribute.commodity
+            )
+            attribute_modifier = attr_value
+
+        # Calculate expected output value
+        total_output_value = 0.0
+        for commodity, quantity in process.outputs.items():
+            bid, ask = market.get_bid_ask_spread(commodity)
+            if bid is not None:
+                price = bid
+            else:
+                price = market.get_avg_price(commodity)
+                if price <= 0:
+                    return 0.0
+            expected_quantity = quantity * attribute_modifier
+            total_output_value += price * expected_quantity
+
+        # Require at least 20% margin
+        min_required_value = total_input_cost * 1.2
+        if total_output_value < min_required_value:
+            return 0.0
+
+        # Score is expected profit (output - input)
+        # For gathering (no inputs), this is just expected output value
+        return total_output_value - total_input_cost
     
     def _is_recipe_viable(self, actor: 'Actor', market, process: 'ProcessDefinition') -> bool:
-        """Check if a recipe is economically viable given current market conditions."""
+        """Check if a recipe is economically viable given current market conditions.
+
+        For processes with resource_attribute, adjusts expected output based on
+        planet attributes to reflect actual expected yield.
+        """
         # Calculate input costs based on actual market ask prices
         total_input_cost = 0
         for commodity, quantity in process.inputs.items():
@@ -129,6 +201,18 @@ class IndustrialistBrain(ActorBrain):
                     return False
             total_input_cost += price * quantity
 
+        # Determine planet attribute modifier for this process
+        # This affects expected output for gathering/mining processes
+        attribute_modifier = 1.0
+        if process.resource_attribute and actor.planet and actor.planet.attributes:
+            attr_value = actor.planet.attributes.get_availability(
+                process.resource_attribute.commodity
+            )
+            # Both "success" and "output" effects reduce expected value proportionally
+            # - "output": You get attr_value fraction of base output
+            # - "success": You succeed attr_value fraction of the time
+            attribute_modifier = attr_value
+
         # Calculate output value based on actual market bid prices
         total_output_value = 0
         for commodity, quantity in process.outputs.items():
@@ -141,7 +225,9 @@ class IndustrialistBrain(ActorBrain):
                 price = market.get_avg_price(commodity)
                 if price <= 0:
                     return False
-            total_output_value += price * quantity
+            # Apply attribute modifier to expected output
+            expected_quantity = quantity * attribute_modifier
+            total_output_value += price * expected_quantity
 
         # Recipe is viable if profit margin is at least 20% above input costs
         min_required_value = total_input_cost * 1.2

@@ -9,6 +9,9 @@
   relevant_skills:
     - agriculture
   description: Collects biomass from the natural environment.
+  resource_attribute:
+    commodity: biomass
+    effect: output
 
 - id: gather_building_materials
   name: Gather Building Materials
@@ -21,6 +24,9 @@
   relevant_skills:
     - simple_manufacturing
   description: Collects simple building materials from the natural environment.
+  resource_attribute:
+    commodity: simple_building_materials
+    effect: output
 
 - id: make_food
   name: Make Food
@@ -47,6 +53,9 @@
   relevant_skills:
     - mining
   description: Extracts volatile nova fuel ore from planetary deposits.
+  resource_attribute:
+    commodity: nova_fuel_ore
+    effect: success
 
 - id: mine_common_metal_ore
   name: Mine Ore
@@ -59,6 +68,9 @@
   relevant_skills:
     - mining
   description: Extracts various ores from the planetary crust.
+  resource_attribute:
+    commodity: common_metal_ore
+    effect: success
 
 - id: refine_common_metal
   name: Refine Common Metal
@@ -139,6 +151,9 @@
   relevant_skills:
     - agriculture
   description: Harvest timber from planetary forests (requires planet with wood resources).
+  resource_attribute:
+    commodity: wood
+    effect: output
 
 - id: gather_fiber
   name: Gather Fiber
@@ -151,6 +166,9 @@
   relevant_skills:
     - agriculture
   description: Gather plant fibers from local vegetation for textile production.
+  resource_attribute:
+    commodity: fiber
+    effect: output
 
 - id: make_clothing
   name: Make Clothing

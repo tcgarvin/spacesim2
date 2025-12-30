@@ -9,7 +9,11 @@ from spacesim2.core.actor import ActorType
 
 
 def create_and_setup_simulation(
-    planets: int, actors: int, makers: int, ships: int = 1
+    planets: int,
+    actors: int,
+    makers: int,
+    ships: int = 1,
+    enable_planet_attributes: bool = False,
 ) -> Simulation:
     """Create and configure a simulation with standard setup.
 
@@ -18,6 +22,7 @@ def create_and_setup_simulation(
         actors: Number of regular actors per planet
         makers: Number of market makers per planet
         ships: Number of ships to create
+        enable_planet_attributes: Enable per-planet resource attributes
 
     Returns:
         Configured Simulation instance
@@ -28,6 +33,7 @@ def create_and_setup_simulation(
         num_regular_actors=actors,
         num_market_makers=makers,
         num_ships=ships,
+        enable_planet_attributes=enable_planet_attributes,
     )
     return sim
 

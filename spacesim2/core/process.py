@@ -7,6 +7,26 @@ from spacesim2.core.commodity import CommodityRegistry, CommodityDefinition
 
 
 @dataclass
+class ResourceAttribute:
+    """Configuration for how planet resource availability affects a process.
+
+    Used by gathering processes to specify which planet attribute affects
+    the process and how (success probability vs output quantity).
+    """
+
+    commodity: str  # The commodity ID whose availability affects this process
+    effect: str  # "success" or "output"
+
+    def __post_init__(self) -> None:
+        """Validate effect type."""
+        valid_effects = ("success", "output")
+        if self.effect not in valid_effects:
+            raise ValueError(
+                f"effect must be one of {valid_effects}, got {self.effect!r}"
+            )
+
+
+@dataclass
 class ProcessDefinition:
     """Definition of a production process."""
     id: str
@@ -19,7 +39,9 @@ class ProcessDefinition:
     description: str
     # Skills that are relevant to this process
     relevant_skills: List[str] = field(default_factory=list)
-    
+    # Optional resource attribute configuration for gathering processes
+    resource_attribute: Optional[ResourceAttribute] = None
+
     def __str__(self) -> str:
         return self.name
 
@@ -77,7 +99,16 @@ class ProcessRegistry:
                 
                 # Get relevant skills with default empty list if not present
                 relevant_skills = process_data.get('relevant_skills', [])
-                
+
+                # Parse resource_attribute if present
+                resource_attribute = None
+                if 'resource_attribute' in process_data:
+                    ra_data = process_data['resource_attribute']
+                    resource_attribute = ResourceAttribute(
+                        commodity=ra_data['commodity'],
+                        effect=ra_data['effect'],
+                    )
+
                 process_def = ProcessDefinition(
                     id=process_data['id'],
                     name=process_data['name'],
@@ -87,7 +118,8 @@ class ProcessRegistry:
                     facilities_required=facilities_required,
                     labor=process_data['labor'],
                     description=process_data['description'],
-                    relevant_skills=relevant_skills
+                    relevant_skills=relevant_skills,
+                    resource_attribute=resource_attribute,
                 )
                 self._processes[process_def.id] = process_def
         except Exception as e:
