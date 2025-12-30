@@ -71,7 +71,7 @@ Example:
 
 ## Planets and Solar Systems
 - Planets exist within solar systems in 2D coordinate space.
-- **Planet Attributes** (optional feature via `--planet-attributes`): Each planet has randomly generated resource availability ratings (0.0-1.0) affecting gathering/mining yields. See `core/planet_attributes.py`.
+- **Planet Attributes** (enabled by default, disable with `--no-planet-attributes`): Each planet has randomly generated resource availability ratings (0.0-1.0) affecting gathering/mining yields. See `core/planet_attributes.py`.
 - Fixed populations initially, with actors aiming to meet basic needs (food, shelter).
 
 ---

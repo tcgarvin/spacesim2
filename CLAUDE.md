@@ -14,7 +14,7 @@ uv run spacesim2 run                 # Headless sim with progress bar (default)
 uv run spacesim2 run --quiet         # Suppress all output
 uv run spacesim2 run --verbose       # Per-turn detailed output
 uv run spacesim2 run --no-export     # Quick run without data export
-uv run spacesim2 run --planet-attributes  # Enable per-planet resource availability
+uv run spacesim2 run --no-planet-attributes  # Disable per-planet resource availability (enabled by default)
 
 # Development
 uv run pytest tests/                           # Run all tests
@@ -74,7 +74,7 @@ Commodities themselves have no planet-specific attributes. Planet-specific resou
 
 ### Planet Attributes System
 
-Planet attributes control resource availability per-planet. **Enabled via `--planet-attributes` CLI flag**.
+Planet attributes control resource availability per-planet. **Enabled by default** (disable with `--no-planet-attributes`).
 
 **Core file**: `core/planet_attributes.py` - `PlanetAttributes` dataclass
 
