@@ -60,6 +60,23 @@ class IndustrialistBrain(ActorBrain):
                 if fiber_quantity < 4 and actor.can_execute_process("gather_fiber"):
                     return ProcessCommand("gather_fiber")
 
+        # Check if our chosen recipe needs facilities/tools we lack
+        if self.chosen_recipe_id:
+            process = actor.sim.process_registry.get_process(self.chosen_recipe_id)
+            if process:
+                # Check for missing facilities and try to build them
+                for facility in process.facilities_required:
+                    if not actor.inventory.has_quantity(facility, 1):
+                        build_process_id = self._get_build_process_for_facility(facility)
+                        if build_process_id and actor.can_execute_process(build_process_id):
+                            return ProcessCommand(build_process_id)
+
+                # Check for missing tools and try to make them
+                for tool in process.tools_required:
+                    if not actor.inventory.has_quantity(tool, 1):
+                        if actor.can_execute_process("make_simple_tools"):
+                            return ProcessCommand("make_simple_tools")
+
         # Try to execute our chosen recipe
         if self.chosen_recipe_id and actor.can_execute_process(self.chosen_recipe_id):
             return ProcessCommand(self.chosen_recipe_id)
@@ -96,6 +113,14 @@ class IndustrialistBrain(ActorBrain):
     def _should_reevaluate_recipe(self) -> bool:
         """1% chance per turn to re-evaluate recipe choice."""
         return random.random() < 0.01
+
+    def _get_build_process_for_facility(self, facility) -> Optional[str]:
+        """Map facility commodities to their build processes."""
+        facility_to_process = {
+            "smelting_facility": "build_smelting_facility",
+            "metalworking_facility": "build_metalworking_facility",
+        }
+        return facility_to_process.get(facility.id)
     
     def _select_new_recipe(self, actor: 'Actor') -> Optional[str]:
         """Select a new recipe based on market viability and expected profit.
@@ -151,6 +176,60 @@ class IndustrialistBrain(ActorBrain):
                     return 0.0
             total_input_cost += price * quantity
 
+        # Factor in tool costs (amortized over expected lifespan of 100 uses)
+        TOOL_EXPECTED_LIFESPAN = 100
+        for tool in process.tools_required:
+            if not actor.inventory.has_quantity(tool, 1):
+                # Need to acquire tool - check if actually available in market
+                bid, ask = market.get_bid_ask_spread(tool)
+                if ask is None:
+                    # No sellers for required tools - recipe not viable unless
+                    # actor can make tools themselves
+                    metalworking = actor.sim.commodity_registry.get_commodity("metalworking_facility")
+                    if metalworking and actor.inventory.has_quantity(metalworking, 1):
+                        # Actor can make tools - estimate cost from tool process
+                        tool_process = actor.sim.process_registry.get_process("make_simple_tools")
+                        if tool_process:
+                            tool_input_cost = 0.0
+                            for commodity, qty in tool_process.inputs.items():
+                                _, inp_ask = market.get_bid_ask_spread(commodity)
+                                inp_price = inp_ask if inp_ask is not None else market.get_avg_price(commodity)
+                                if inp_price <= 0:
+                                    return 0.0
+                                tool_input_cost += inp_price * qty
+                            total_input_cost += tool_input_cost / TOOL_EXPECTED_LIFESPAN
+                        else:
+                            return 0.0
+                    else:
+                        return 0.0  # Can't buy tools and can't make them
+                else:
+                    total_input_cost += ask / TOOL_EXPECTED_LIFESPAN
+
+        # Check facility requirements - factor in cost of building if needed
+        FACILITY_EXPECTED_LIFESPAN = 500  # Facilities are durable
+        for facility in process.facilities_required:
+            if not actor.inventory.has_quantity(facility, 1):
+                # Check if we can build the facility
+                build_process_id = self._get_build_process_for_facility(facility)
+                if not build_process_id:
+                    return 0.0  # No way to get this facility
+
+                build_process = actor.sim.process_registry.get_process(build_process_id)
+                if not build_process:
+                    return 0.0
+
+                # Calculate cost to build the facility
+                facility_build_cost = 0.0
+                for inp_commodity, inp_qty in build_process.inputs.items():
+                    _, inp_ask = market.get_bid_ask_spread(inp_commodity)
+                    inp_price = inp_ask if inp_ask is not None else market.get_avg_price(inp_commodity)
+                    if inp_price <= 0:
+                        return 0.0  # Can't get inputs for facility
+                    facility_build_cost += inp_price * inp_qty
+
+                # Amortize facility cost over expected lifespan
+                total_input_cost += facility_build_cost / FACILITY_EXPECTED_LIFESPAN
+
         # Determine planet attribute modifier
         attribute_modifier = 1.0
         if process.resource_attribute and actor.planet and actor.planet.attributes:
@@ -162,6 +241,16 @@ class IndustrialistBrain(ActorBrain):
         # Calculate expected output value
         total_output_value = 0.0
         for commodity, quantity in process.outputs.items():
+            # Non-transportable outputs (facilities) are for personal use, not sale
+            # Give them notional value based on what recipes they enable
+            if not commodity.transportable:
+                # Facilities have intrinsic value for enabling other recipes
+                # Use a notional value based on input cost (building a facility is worthwhile
+                # if the inputs cost less than what the facility enables)
+                FACILITY_NOTIONAL_VALUE = 50.0
+                total_output_value += FACILITY_NOTIONAL_VALUE * quantity
+                continue
+
             bid, ask = market.get_bid_ask_spread(commodity)
             if bid is not None:
                 price = bid
@@ -266,29 +355,53 @@ class IndustrialistBrain(ActorBrain):
     def _get_recipe_trading_commands(self, actor: 'Actor', market) -> List[MarketCommand]:
         """Generate trading commands for recipe inputs and outputs."""
         commands = []
-        
+
         process = actor.sim.process_registry.get_process(self.chosen_recipe_id)
         if not process:
             return commands
-        
-        # Buy inputs for recipe
-        for commodity, needed_quantity in process.inputs.items():
-            current_quantity = actor.inventory.get_quantity(commodity)
-            if current_quantity < needed_quantity:
-                quantity_to_buy = needed_quantity - current_quantity
-                
+
+        # Buy required tools (maintain buffer of 2)
+        TOOL_BUFFER = 2
+        for tool in process.tools_required:
+            current_quantity = actor.inventory.get_quantity(tool)
+            if current_quantity < TOOL_BUFFER:
+                quantity_to_buy = TOOL_BUFFER - current_quantity
+
                 market_sell_orders = sorted(
-                    [o for o in market.sell_orders.get(commodity, []) if o.actor != actor],
+                    [o for o in market.sell_orders.get(tool, []) if o.actor != actor],
                     key=lambda o: (o.price, o.timestamp)
                 )
-                
+
                 if market_sell_orders:
                     best_sell_order = market_sell_orders[0]
                     max_affordable = min(
                         quantity_to_buy,
                         actor.money // best_sell_order.price
                     )
-                    
+
+                    if max_affordable > 0:
+                        commands.append(PlaceBuyOrderCommand(
+                            tool, max_affordable, best_sell_order.price
+                        ))
+
+        # Buy inputs for recipe
+        for commodity, needed_quantity in process.inputs.items():
+            current_quantity = actor.inventory.get_quantity(commodity)
+            if current_quantity < needed_quantity:
+                quantity_to_buy = needed_quantity - current_quantity
+
+                market_sell_orders = sorted(
+                    [o for o in market.sell_orders.get(commodity, []) if o.actor != actor],
+                    key=lambda o: (o.price, o.timestamp)
+                )
+
+                if market_sell_orders:
+                    best_sell_order = market_sell_orders[0]
+                    max_affordable = min(
+                        quantity_to_buy,
+                        actor.money // best_sell_order.price
+                    )
+
                     if max_affordable > 0:
                         commands.append(PlaceBuyOrderCommand(
                             commodity, max_affordable, best_sell_order.price
