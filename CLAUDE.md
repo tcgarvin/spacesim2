@@ -53,6 +53,7 @@ Read the relevant guide when working on specific areas:
 | Commodities | `docs/commodities_implementation.md` | Adding/modifying tradeable goods |
 | Planet attributes | See "Planet Attributes System" below | Per-planet resource availability |
 | UI grid | `docs/actor_grid_ui.md` | Pygame UI development |
+| **Commodity/process editing** | `.claude/skills/commodity-process-design/` | Modifying commodities, recipes, production chains |
 
 ## Key Architecture Facts
 
@@ -75,6 +76,8 @@ Commodities are defined in `data/commodities.yaml` with a simple structure:
 ```
 
 Commodities themselves have no planet-specific attributes. Planet-specific resource availability is controlled separately via the **Planet Attributes** system (see below).
+
+> **To modify commodities or processes**, use the `commodity-process-design` skill which covers schemas, validation, and the graph generation workflow.
 
 ### Planet Attributes System
 
@@ -118,6 +121,8 @@ resource_attribute:
 
 **Export**: When enabled, `planet_attributes.json` is written alongside other export files.
 
+> **To add new extractable resources**, use the `commodity-process-design` skill for the process schema and validation workflow.
+
 ### Tool and Facility Requirements
 
 Processes in `data/processes.yaml` specify `tools_required` and `facilities_required`. The economy is designed with a **wood-first bootstrap path** - actors can start with nothing and build up through wood before transitioning to metal.
@@ -157,6 +162,8 @@ Processes in `data/processes.yaml` specify `tools_required` and `facilities_requ
 **Brain behavior**:
 - ColonistBrain: Prioritizes acquiring tools before profitable work
 - IndustrialistBrain: Builds required facilities, acquires tools for chosen recipe
+
+> **To modify process requirements**, use the `commodity-process-design` skill which covers validation and ensuring the bootstrap path remains viable.
 
 ### Drive (Needs) System
 Drives live in `core/drives/` and inherit from `ActorDrive`. Two consumption patterns:
