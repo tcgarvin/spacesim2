@@ -13,20 +13,33 @@
     commodity: biomass
     effect: output
 
-- id: gather_building_materials
-  name: Gather Building Materials
-  inputs: {}
+- id: make_building_materials_wood
+  name: Make Building Materials (Wood)
+  inputs:
+    wood: 2
   outputs:
     simple_building_materials: 1
-  tools_required: []
+  tools_required:
+    - simple_tools
   facilities_required: []
   labor: 1
   relevant_skills:
     - simple_manufacturing
-  description: Collects simple building materials from the natural environment.
-  resource_attribute:
-    commodity: simple_building_materials
-    effect: output
+  description: Crafts building materials from harvested wood using basic tools.
+
+- id: make_building_materials_metal
+  name: Make Building Materials (Metal)
+  inputs:
+    common_metal: 1
+  outputs:
+    simple_building_materials: 2
+  tools_required:
+    - simple_tools
+  facilities_required: []
+  labor: 1
+  relevant_skills:
+    - simple_manufacturing
+  description: Fabricates building materials from refined metal using basic tools.
 
 - id: make_food
   name: Make Food
@@ -47,7 +60,8 @@
   inputs: {}
   outputs:
     nova_fuel_ore: 2
-  tools_required: []
+  tools_required:
+    - simple_tools
   facilities_required: []
   labor: 1
   relevant_skills:
@@ -62,7 +76,8 @@
   inputs: {}
   outputs:
     common_metal_ore: 1
-  tools_required: []
+  tools_required:
+    - simple_tools
   facilities_required: []
   labor: 1
   relevant_skills:
@@ -79,7 +94,8 @@
   outputs:
     common_metal: 2
   tools_required: []
-  facilities_required: []
+  facilities_required:
+    - smelting_facility
   labor: 2
   relevant_skills:
     - refining
@@ -91,7 +107,8 @@
     nova_fuel_ore: 4
   outputs:
     nova_fuel: 1
-  tools_required: []
+  tools_required:
+    - simple_tools
   facilities_required: []
   labor: 1
   relevant_skills:
@@ -106,11 +123,25 @@
   outputs:
     simple_tools: 1
   tools_required: []
-  facilities_required: []
+  facilities_required:
+    - metalworking_facility
   labor: 1
   relevant_skills:
     - simple_manufacturing
   description: Forges simple tools from refined metal using metalworking equipment.
+
+- id: make_simple_tools_wood
+  name: Make Simple Tools (Wood)
+  inputs:
+    wood: 4
+  outputs:
+    simple_tools: 1
+  tools_required: []
+  facilities_required: []
+  labor: 2
+  relevant_skills:
+    - simple_manufacturing
+  description: Carves basic wooden tools by hand. Less efficient than metal tools but requires no facilities.
 
 - id: build_smelting_facility
   name: Build Smelting Facility
@@ -118,7 +149,8 @@
     simple_building_materials: 5
   outputs:
     smelting_facility: 1
-  tools_required: []
+  tools_required:
+    - simple_tools
   facilities_required: []
   labor: 5
   relevant_skills:
@@ -132,7 +164,8 @@
     simple_building_materials: 5
   outputs:
     metalworking_facility: 1
-  tools_required: []
+  tools_required:
+    - simple_tools
   facilities_required: []
   labor: 5
   relevant_skills:
@@ -150,7 +183,7 @@
   labor: 1
   relevant_skills:
     - agriculture
-  description: Harvest timber from planetary forests (requires planet with wood resources).
+  description: Harvest timber from planetary forests.
   resource_attribute:
     commodity: wood
     effect: output
@@ -176,7 +209,8 @@
     fiber: 4
   outputs:
     clothing: 2
-  tools_required: []
+  tools_required:
+    - simple_tools
   facilities_required: []
   labor: 1
   relevant_skills:

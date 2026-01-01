@@ -25,8 +25,12 @@ uv run ruff check .                            # Lint
 
 # Dev Tools
 uv run spacesim2 dev validate-market   # Market maker validation
-uv run spacesim2 dev graph             # Commodity/process graphs
+uv run spacesim2 dev graph             # Commodity/process dependency graph (outputs to tmp/)
+uv run spacesim2 dev graph --out foo   # Custom output path (creates foo.svg and foo.mmd)
+uv run spacesim2 dev graph -f png      # Alternative formats: svg (default), png, pdf
 ```
+
+**Note**: The graph command uses `npx @mermaid-js/mermaid-cli` to render diagrams. Requires Node.js with `npx` on PATH. Output defaults to `tmp/commodity-graph.svg` (gitignored).
 
 ## Code Style
 - **Python**: 3.11+ with type annotations
@@ -86,7 +90,6 @@ Planet attributes control resource availability per-planet. **Enabled by default
 **Resource attributes** (defined on `PlanetAttributes`):
 - `biomass`, `fiber`, `wood` - organic resources (always ≥0.2 or ≥0.0)
 - `common_metal_ore`, `nova_fuel_ore` - mineral resources
-- `simple_building_materials` - surface materials (always ≥0.3)
 
 **Effect types** (per-process in `processes.yaml`):
 ```yaml
@@ -98,13 +101,12 @@ resource_attribute:
 - `success`: Low availability causes random failure (e.g., 0.25 availability → 75% chance to fail)
 
 **Current assignments**:
-- Gathering processes (biomass, fiber, wood, building_materials): `effect: output`
+- Gathering processes (biomass, fiber, wood): `effect: output`
 - Mining processes (nova_fuel_ore, common_metal_ore): `effect: success`
 
 **Generation distributions** (in `PlanetAttributes.generate_random()`):
 - `biomass`: uniform(0.2, 1.0) - always some organic life
 - `nova_fuel_ore`: bimodal - either rare (0.0-0.3) or abundant (0.7-1.0)
-- `simple_building_materials`: uniform(0.3, 1.0) - always some available
 - Others: uniform(0.0, 1.0)
 
 **Adding a new extractable resource**:
@@ -116,13 +118,45 @@ resource_attribute:
 
 **Export**: When enabled, `planet_attributes.json` is written alongside other export files.
 
-### Process Requirements
-Processes in `data/processes.yaml` can specify `tools_required` and `facilities_required`, but **most processes don't require them**:
-- Gathering processes (biomass, wood, ores): No requirements
-- Basic refining (food, fuel, iron, steel): No requirements
-- Only `refine_common_metal` requires `smelting_facility`
+### Tool and Facility Requirements
 
-When adding new processes, default to no tool/facility requirements unless there's a specific game design reason.
+Processes in `data/processes.yaml` specify `tools_required` and `facilities_required`. The economy is designed with a **wood-first bootstrap path** - actors can start with nothing and build up through wood before transitioning to metal.
+
+**Current requirements**:
+
+| Process | tools_required | facilities_required |
+|---------|----------------|---------------------|
+| gather_biomass | - | - |
+| gather_fiber | - | - |
+| harvest_wood | - | - |
+| make_food | - | - |
+| make_simple_tools_wood | - | - |
+| mine_common_metal_ore | simple_tools | - |
+| mine_nova_fuel_ore | simple_tools | - |
+| make_building_materials_wood | simple_tools | - |
+| make_building_materials_metal | simple_tools | - |
+| build_smelting_facility | simple_tools | - |
+| build_metalworking_facility | simple_tools | - |
+| refine_common_metal | - | smelting_facility |
+| make_simple_tools | - | metalworking_facility |
+| make_clothing | simple_tools | - |
+| refine_nova_fuel | simple_tools | - |
+
+**Bootstrap path** (wood-first economy):
+1. Harvest wood (no tools needed)
+2. Make simple tools from wood (no facility needed)
+3. Make building materials from wood (needs tools)
+4. Build smelting facility (needs building materials + tools)
+5. Mine common metal ore (needs tools)
+6. Refine metal (needs smelting facility)
+7. Build metalworking facility (needs building materials + tools)
+8. Make simple tools from metal (more efficient, needs metalworking facility)
+
+**Tool degradation**: Tools have a ~1% chance of breaking each time they're used. This creates ongoing demand for tool production.
+
+**Brain behavior**:
+- ColonistBrain: Prioritizes acquiring tools before profitable work
+- IndustrialistBrain: Builds required facilities, acquires tools for chosen recipe
 
 ### Drive (Needs) System
 Drives live in `core/drives/` and inherit from `ActorDrive`. Two consumption patterns:
@@ -142,7 +176,10 @@ Drives live in `core/drives/` and inherit from `ActorDrive`. Two consumption pat
 - `buffer`: 0-1, log-normalized inventory coverage (days of supply)
 - `urgency`: 0-1, context-dependent priority multiplier
 
-**Material choice**: Drives can accept multiple commodities (e.g., wood OR steel for shelter). Implement `_choose_material()` to select based on availability and market prices.
+**Material requirements**:
+- FoodDrive: `food`
+- ClothingDrive: `clothing`
+- ShelterDrive: `simple_building_materials`
 
 **Adding a new drive requires a complete supply chain:**
 1. **Commodities**: Add both raw material (e.g., `fiber`) and finished good (e.g., `clothing`) to `data/commodities.yaml`

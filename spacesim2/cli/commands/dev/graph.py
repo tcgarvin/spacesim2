@@ -76,10 +76,10 @@ def _generate_mermaid_things(things: List[Dict[str, Any]]) -> Tuple[List[str], D
     lines = ["    %% Commodities & Facilities"]
     id_to_label: Dict[str, str] = {}
     for thing in things:
-        label = thing["name"]
+        label = thing["name"].replace('"', '\\"')
         node_id = thing["id"]
         id_to_label[node_id] = label
-        lines.append(f"    {node_id}[{label}]")
+        lines.append(f'    {node_id}["{label}"]')
     return lines, id_to_label
 
 
@@ -99,7 +99,9 @@ def _generate_mermaid_processes(
     for i, process in enumerate(processes, start=1):
         pid = f"R{i}"
         process_ids.append((pid, process))
-        lines.append(f"    {pid}[[{process['name']}]]")
+        # Quote label to handle special chars like parentheses
+        label = process['name'].replace('"', '\\"')
+        lines.append(f'    {pid}[["{label}"]]')
     return lines, process_ids
 
 
@@ -154,6 +156,35 @@ def _generate_mermaid(things_yaml: Path, processes_yaml: Path) -> str:
     return "\n".join(lines)
 
 
+def _run_mmdc(args: list[str], tmpdir: Path | None = None) -> subprocess.CompletedProcess[bytes]:
+    """Run mermaid-cli via npx.
+
+    Args:
+        args: Arguments to pass to mmdc
+        tmpdir: Optional temp directory for config files
+
+    Returns:
+        Completed process result
+
+    Raises:
+        FileNotFoundError: If npx is not found
+        subprocess.CalledProcessError: If rendering fails
+    """
+    extra_args: list[str] = []
+
+    # Create puppeteer config to handle sandbox issues on Linux
+    if tmpdir is not None:
+        puppeteer_config = tmpdir / "puppeteer-config.json"
+        puppeteer_config.write_text('{"args": ["--no-sandbox", "--disable-setuid-sandbox"]}')
+        extra_args = ["-p", str(puppeteer_config)]
+
+    return subprocess.run(
+        ["npx", "-y", "@mermaid-js/mermaid-cli", *args, *extra_args],
+        check=True,
+        capture_output=True,
+    )
+
+
 def _render_mermaid_to_file(mermaid_code: str, output_path: Path, format: str) -> bool:
     """Render mermaid code to file.
 
@@ -165,67 +196,24 @@ def _render_mermaid_to_file(mermaid_code: str, output_path: Path, format: str) -
     Returns:
         True if successful, False otherwise
     """
-    tmpdir = tempfile.TemporaryDirectory()
-    mmd_file = Path(tmpdir.name) / "diagram.mmd"
-    mmd_file.write_text(mermaid_code)
+    # Save .mmd file next to output for user inspection
+    mmd_path = output_path.with_suffix(".mmd")
+    mmd_path.write_text(mermaid_code)
+    print_success(f"Mermaid source saved to {mmd_path}")
 
-    try:
-        subprocess.run(
-            ["mmdc", "-i", str(mmd_file), "-o", str(output_path), "-f", format],
-            check=True,
-        )
-        print_success(f"Diagram saved to {output_path}")
-        return True
-    except FileNotFoundError:
-        print_error(
-            "mmdc not found. Install with: npm install -g @mermaid-js/mermaid-cli"
-        )
-        return False
-    except subprocess.CalledProcessError as e:
-        print_error(f"Rendering failed: {e}")
-        return False
-
-
-def _render_mermaid_to_temp(
-    mermaid_code: str, format: str, open_after: bool
-) -> bool:
-    """Render mermaid code to temporary file.
-
-    Args:
-        mermaid_code: Mermaid diagram code
-        format: Output format (svg, png, pdf)
-        open_after: Whether to open after rendering
-
-    Returns:
-        True if successful, False otherwise
-    """
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir_path = Path(tmpdir)
-        mmd_file = tmpdir_path / "diagram.mmd"
-        out_file = tmpdir_path / f"diagram.{format}"
-
-        mmd_file.write_text(mermaid_code)
 
         try:
-            subprocess.run(
-                ["mmdc", "-i", str(mmd_file), "-o", str(out_file), "-f", format],
-                check=True,
-            )
-            print_success(f"Rendered to {out_file}")
+            _run_mmdc(["-i", str(mmd_path), "-o", str(output_path), "-f", format], tmpdir_path)
+            print_success(f"Diagram saved to {output_path}")
+            return True
         except FileNotFoundError:
-            print_error(
-                "mmdc not found. Install with: npm install -g @mermaid-js/mermaid-cli"
-            )
+            print_error("npx not found. Please ensure Node.js is installed and npx is on PATH.")
             return False
         except subprocess.CalledProcessError as e:
-            print_error(f"Rendering failed: {e}")
+            print_error(f"Rendering failed: {e.stderr.decode() if e.stderr else e}")
             return False
-
-        if open_after:
-            _open_rendered_file(out_file)
-            input("\n[Press Enter to clean up and exit]")
-
-        return True
 
 
 def _open_rendered_file(path: Path) -> None:
@@ -263,15 +251,14 @@ def execute(args: argparse.Namespace) -> int:
 
     mermaid_code = _generate_mermaid(commodities_yaml, processes_yaml)
 
-    # Render diagram
-    if args.out:
-        output_path = Path(f"{args.out}.{args.format}")
-        success = _render_mermaid_to_file(mermaid_code, output_path, args.format)
-        if success and args.open:
-            _open_rendered_file(output_path)
-        return 0 if success else 1
-    else:
-        success = _render_mermaid_to_temp(
-            mermaid_code, format=args.format, open_after=args.open
-        )
-        return 0 if success else 1
+    # Default to tmp/ in repo if no output specified
+    out_base = args.out if args.out else "tmp/commodity-graph"
+    output_path = Path(f"{out_base}.{args.format}")
+
+    # Ensure output directory exists
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    success = _render_mermaid_to_file(mermaid_code, output_path, args.format)
+    if success and args.open:
+        _open_rendered_file(output_path)
+    return 0 if success else 1
