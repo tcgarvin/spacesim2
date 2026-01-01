@@ -78,6 +78,13 @@ uv run spacesim2 dev graph
 Outputs `tmp/commodity-graph.svg` and `tmp/commodity-graph.mmd`.
 
 ### 4. Review Graph
+
+**Visual conventions:**
+- **Green nodes**: Consumables (inputs/outputs that flow through the economy)
+- **Amber nodes**: Tools (used in `tools_required`, not consumed)
+- **Blue nodes**: Facilities (used in `facilities_required`, not consumed)
+- **Process labels**: Show `[Tool, Facility]` requirements in brackets below the name
+
 Check the SVG for:
 - All commodities connected to at least one process
 - No orphan processes (missing input commodities)
