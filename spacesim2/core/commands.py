@@ -131,6 +131,18 @@ class ProcessCommand(EconomicCommand):
             for skill_id in process.relevant_skills:
                 actor.improve_skill(skill_id, skill_improvement)
         
+        # Tool degradation: 1% chance per tool to break after successful use
+        TOOL_BREAK_PROBABILITY = 0.01
+        for tool in process.tools_required:
+            if random.random() < TOOL_BREAK_PROBABILITY:
+                actor.inventory.remove_commodity(tool, 1)
+                if actor.sim.data_logger:
+                    # Handle both CommodityDefinition objects and string IDs
+                    tool_name = tool.name if hasattr(tool, 'name') else str(tool)
+                    actor.sim.data_logger.log_actor_note(
+                        actor, f"Tool broke: {tool_name}"
+                    )
+
         # Record action
         modifiers = []
         if multiplier > 1:

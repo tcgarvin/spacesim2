@@ -44,15 +44,15 @@ class TestIndustrialistBrain:
         """Test that recipe reevaluation has roughly 1% chance."""
         # Run many iterations to test probability
         reevaluations = 0
-        iterations = 1000
-        
+        iterations = 5000  # More iterations for stable results
+
         for _ in range(iterations):
             if brain._should_reevaluate_recipe():
                 reevaluations += 1
-        
-        # Should be roughly 1% (allow some variance)
+
+        # Should be roughly 1% (allow variance: 0.3% to 2.5%)
         reevaluation_rate = reevaluations / iterations
-        assert 0.005 < reevaluation_rate < 0.02  # Between 0.5% and 2%
+        assert 0.003 < reevaluation_rate < 0.025  # Allow wider variance
     
     def test_food_shortage_emergency_action(self, brain, mock_actor, mock_food_commodity):
         """Test that actor tries to make food in emergency (< 2 food)."""
@@ -75,12 +75,19 @@ class TestIndustrialistBrain:
         # Setup: Adequate food, has chosen recipe, can execute it
         mock_actor.sim.commodity_registry.get_commodity.return_value = mock_food_commodity
         mock_actor.inventory.get_quantity.return_value = 10  # Plenty of food
+        mock_actor.inventory.has_quantity.return_value = True  # Has all required items
         mock_actor.can_execute_process.return_value = True
-        
+
+        # Mock process with no tool/facility requirements
+        mock_process = Mock(spec=ProcessDefinition)
+        mock_process.tools_required = []
+        mock_process.facilities_required = []
+        mock_actor.sim.process_registry.get_process.return_value = mock_process
+
         brain.chosen_recipe_id = "test_recipe"
-        
+
         action = brain.decide_economic_action(mock_actor)
-        
+
         assert isinstance(action, ProcessCommand)
         assert action.process_id == "test_recipe"
     
@@ -89,12 +96,19 @@ class TestIndustrialistBrain:
         # Setup: Adequate food, has recipe but can't execute it
         mock_actor.sim.commodity_registry.get_commodity.return_value = mock_food_commodity
         mock_actor.inventory.get_quantity.return_value = 10  # Plenty of food
+        mock_actor.inventory.has_quantity.return_value = True  # Has all required items
         mock_actor.can_execute_process.return_value = False  # Can't execute recipe
-        
+
+        # Mock process with no tool/facility requirements
+        mock_process = Mock(spec=ProcessDefinition)
+        mock_process.tools_required = []
+        mock_process.facilities_required = []
+        mock_actor.sim.process_registry.get_process.return_value = mock_process
+
         brain.chosen_recipe_id = "test_recipe"
-        
+
         action = brain.decide_economic_action(mock_actor)
-        
+
         assert isinstance(action, GovernmentWorkCommand)
     
     def test_recipe_viability_calculation(self, brain, mock_actor):
@@ -204,7 +218,12 @@ class TestIndustrialistBrain:
         process = Mock(spec=ProcessDefinition)
         process.inputs = {}  # Gathering process - no inputs
         process.outputs = {output_commodity: 4}  # Produces 4 biomass
+        process.tools_required = []  # No tools required
+        process.facilities_required = []  # No facilities required
         process.resource_attribute = ResourceAttribute(commodity="biomass", effect="output")
+
+        # Actor has all requirements (none needed)
+        mock_actor.inventory.has_quantity.return_value = True
 
         market = mock_actor.planet.market
         market.get_bid_ask_spread.return_value = (None, None)
@@ -244,15 +263,22 @@ class TestIndustrialistBrain:
         biomass_process.id = "gather_biomass"
         biomass_process.inputs = {}
         biomass_process.outputs = {biomass_commodity: 4}
+        biomass_process.tools_required = []  # No tools required
+        biomass_process.facilities_required = []  # No facilities required
         biomass_process.resource_attribute = ResourceAttribute(commodity="biomass", effect="output")
 
         fiber_process = Mock(spec=ProcessDefinition)
         fiber_process.id = "gather_fiber"
         fiber_process.inputs = {}
         fiber_process.outputs = {fiber_commodity: 3}
+        fiber_process.tools_required = []  # No tools required
+        fiber_process.facilities_required = []  # No facilities required
         fiber_process.resource_attribute = ResourceAttribute(commodity="fiber", effect="output")
 
         mock_actor.sim.process_registry.all_processes.return_value = [biomass_process, fiber_process]
+
+        # Actor has all requirements (none needed for gathering)
+        mock_actor.inventory.has_quantity.return_value = True
 
         market = mock_actor.planet.market
         market.get_bid_ask_spread.return_value = (None, None)

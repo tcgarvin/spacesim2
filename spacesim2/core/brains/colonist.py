@@ -56,6 +56,27 @@ class ColonistBrain(ActorBrain):
             if wood_quantity < 2 and actor.can_execute_process("harvest_wood"):
                 return ProcessCommand("harvest_wood")
 
+        # Check tool needs - prioritize having tools for productive work
+        tools_commodity = registry.get_commodity("simple_tools")
+        if tools_commodity:
+            tools_quantity = actor.inventory.get_quantity(tools_commodity)
+            if tools_quantity < 2:
+                # Check if buying tools would be cheaper than making them
+                market = actor.planet.market if actor.planet else None
+                should_make_tools = True
+
+                if market:
+                    willingness_to_pay = self._calculate_tool_willingness_to_pay(actor)
+                    bid, ask = market.get_bid_ask_spread(tools_commodity)
+
+                    # If tools are available at a price at or below our willingness to pay,
+                    # skip making - we'll buy in the market phase instead
+                    if ask is not None and ask <= willingness_to_pay:
+                        should_make_tools = False
+
+                if should_make_tools and actor.can_execute_process("make_simple_tools"):
+                    return ProcessCommand("make_simple_tools")
+
         # Try to find the most profitable process
         market = actor.planet.market if actor.planet else None
         if market:
@@ -101,7 +122,66 @@ class ColonistBrain(ActorBrain):
                 best_profit = potential_profit
 
         return best_process
-    
+
+    def _calculate_turn_opportunity_cost(self, actor: Actor) -> int:
+        """Calculate the opportunity cost of spending a turn making tools.
+
+        This is the profit from the actor's next-best economic action.
+        Returns GOVERNMENT_WAGE (10) as a minimum floor.
+        """
+        GOVERNMENT_WAGE = 10
+
+        market = actor.planet.market if actor.planet else None
+        if not market:
+            return GOVERNMENT_WAGE
+
+        best_process = self._find_most_profitable_process(actor, market)
+        if not best_process:
+            return GOVERNMENT_WAGE
+
+        # Calculate profit of best process (same logic as _find_most_profitable_process)
+        input_cost = 0
+        for commodity, quantity in best_process.inputs.items():
+            bid, ask = market.get_bid_ask_spread(commodity)
+            price = ask if ask is not None else market.get_avg_price(commodity)
+            input_cost += price * quantity
+
+        output_value = 0
+        for commodity, quantity in best_process.outputs.items():
+            bid, ask = market.get_bid_ask_spread(commodity)
+            price = bid if bid is not None else market.get_avg_price(commodity)
+            output_value += price * quantity
+
+        profit = output_value - input_cost
+        return max(GOVERNMENT_WAGE, int(profit))
+
+    def _calculate_tool_willingness_to_pay(self, actor: Actor) -> int:
+        """Calculate maximum price actor would pay for a tool.
+
+        Formula: cost_to_make_inputs + opportunity_cost_of_turn
+
+        Where:
+        - cost_to_make_inputs = market ask price for 2 common_metal
+        - opportunity_cost_of_turn = profit from next-best action (or govt work)
+        """
+        market = actor.planet.market if actor.planet else None
+        if not market:
+            return 0  # Cannot determine willingness without market
+
+        # Cost of inputs to make tools (2 common_metal per processes.yaml)
+        common_metal = actor.sim.commodity_registry.get_commodity("common_metal")
+        if not common_metal:
+            return 0
+
+        bid, ask = market.get_bid_ask_spread(common_metal)
+        metal_price = ask if ask is not None else market.get_avg_price(common_metal)
+        input_cost = int(metal_price * 2)  # make_simple_tools requires 2 common_metal
+
+        # Opportunity cost of spending a turn making tools
+        opportunity_cost = self._calculate_turn_opportunity_cost(actor)
+
+        return input_cost + opportunity_cost
+
     def decide_market_actions(self, actor:'Actor') -> List[MarketCommand]:
         """Regular actors buy what they need and sell excess, matching existing orders when possible."""
         if not actor.planet:
@@ -123,6 +203,7 @@ class ColonistBrain(ActorBrain):
             "clothing": 3,
             "wood": 2,  # shelter material
             "common_metal": 2,  # shelter material
+            "simple_tools": 2,  # tools for production
         }
 
         # Trade all transportable commodities
@@ -156,28 +237,51 @@ class ColonistBrain(ActorBrain):
         if quantity < min_keep:
             # Calculate how much we need
             quantity_to_buy = min_keep - quantity
-            
+
             # Get existing sell orders in the market (excluding our own)
             market_sell_orders = sorted(
                 [o for o in market.sell_orders.get(commodity_type, []) if o.actor != actor],
                 key=lambda o: (o.price, o.timestamp)  # Sort by price (lowest first)
             )
-            
-            # Check if there are any sell orders available
+
+            # For tools, calculate willingness to pay based on opportunity cost
+            max_price = None
+            if commodity_type.id == "simple_tools":
+                max_price = self._calculate_tool_willingness_to_pay(actor)
+
             if market_sell_orders:
                 # Start with the lowest price sell order
                 best_sell_order = market_sell_orders[0]
-                
-                # Check if we can afford it
+                buy_price = best_sell_order.price
+
+                # For tools, only buy if price is at or below willingness to pay
+                if max_price is not None and buy_price > max_price:
+                    pass  # Don't buy - too expensive
+                else:
+                    # Check if we can afford it
+                    max_affordable_quantity = min(
+                        quantity_to_buy,
+                        actor.money // buy_price
+                    )
+
+                    if max_affordable_quantity > 0:
+                        # Place a matching buy order at exactly the seller's price
+                        commands.append(PlaceBuyOrderCommand(
+                            commodity_type, max_affordable_quantity, buy_price
+                        ))
+
+            elif max_price is not None and max_price > 0:
+                # No sell orders exist, but for tools we can place a bid at our
+                # willingness to pay. This expresses demand and can cross with
+                # market maker orders in the matching phase.
                 max_affordable_quantity = min(
                     quantity_to_buy,
-                    actor.money // best_sell_order.price
+                    actor.money // max_price
                 )
-                
+
                 if max_affordable_quantity > 0:
-                    # Place a matching buy order at exactly the seller's price
                     commands.append(PlaceBuyOrderCommand(
-                        commodity_type, max_affordable_quantity, best_sell_order.price
+                        commodity_type, max_affordable_quantity, max_price
                     ))
         
         # Handle selling if we have excess

@@ -255,6 +255,10 @@ class TestProcessCommandIntegration:
         actor = sim.actors[0]
         actor.planet = planet
 
+        # Give actor the required tools for mining nova fuel ore
+        simple_tools = sim.commodity_registry.get_commodity("simple_tools")
+        actor.inventory.add_commodity(simple_tools, 1)
+
         # Execute mine_nova_fuel_ore (should fail due to 0 availability)
         cmd = ProcessCommand("mine_nova_fuel_ore")
         result = cmd.execute(actor)

@@ -351,7 +351,36 @@ class IndustrialistBrain(ActorBrain):
                     ))
         
         return commands
-    
+
+    def _calculate_tool_willingness_to_pay(self, actor: 'Actor', market) -> int:
+        """Calculate max price industrialist would pay for a tool.
+
+        For industrialists, willingness to pay is based on:
+        - Input cost to make the tool (2 common_metal)
+        - Opportunity cost of the turn (recipe profit or govt wage)
+        """
+        GOVERNMENT_WAGE = 10
+
+        # Cost of inputs to make tools (2 common_metal)
+        common_metal = actor.sim.commodity_registry.get_commodity("common_metal")
+        if not common_metal:
+            return GOVERNMENT_WAGE * 10  # Fallback
+
+        bid, ask = market.get_bid_ask_spread(common_metal)
+        metal_price = ask if ask is not None else market.get_avg_price(common_metal)
+        input_cost = int(metal_price * 2)
+
+        # Opportunity cost: recipe profit if we have one, else govt wage
+        opportunity_cost = GOVERNMENT_WAGE
+        if self.chosen_recipe_id:
+            process = actor.sim.process_registry.get_process(self.chosen_recipe_id)
+            if process:
+                score = self._calculate_recipe_score(actor, market, process)
+                if score > GOVERNMENT_WAGE:
+                    opportunity_cost = int(score)
+
+        return input_cost + opportunity_cost
+
     def _get_recipe_trading_commands(self, actor: 'Actor', market) -> List[MarketCommand]:
         """Generate trading commands for recipe inputs and outputs."""
         commands = []
@@ -359,6 +388,9 @@ class IndustrialistBrain(ActorBrain):
         process = actor.sim.process_registry.get_process(self.chosen_recipe_id)
         if not process:
             return commands
+
+        # Calculate willingness to pay for tools upfront
+        tool_willingness_to_pay = self._calculate_tool_willingness_to_pay(actor, market)
 
         # Buy required tools (maintain buffer of 2)
         TOOL_BUFFER = 2
@@ -374,14 +406,27 @@ class IndustrialistBrain(ActorBrain):
 
                 if market_sell_orders:
                     best_sell_order = market_sell_orders[0]
+                    # Only buy if price is at or below willingness to pay
+                    if best_sell_order.price <= tool_willingness_to_pay:
+                        max_affordable = min(
+                            quantity_to_buy,
+                            actor.money // best_sell_order.price
+                        )
+
+                        if max_affordable > 0:
+                            commands.append(PlaceBuyOrderCommand(
+                                tool, max_affordable, best_sell_order.price
+                            ))
+                elif tool_willingness_to_pay > 0:
+                    # No sell orders - place bid at willingness to pay
                     max_affordable = min(
                         quantity_to_buy,
-                        actor.money // best_sell_order.price
+                        actor.money // tool_willingness_to_pay
                     )
 
                     if max_affordable > 0:
                         commands.append(PlaceBuyOrderCommand(
-                            tool, max_affordable, best_sell_order.price
+                            tool, max_affordable, tool_willingness_to_pay
                         ))
 
         # Buy inputs for recipe
