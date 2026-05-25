@@ -136,14 +136,11 @@ class TraderBrain(ShipBrain):
 
     def _get_tradeable_commodities(self) -> List[CommodityDefinition]:
         """Get list of commodities that can be traded between planets."""
-        commodities = []
-
-        # For now, just trade food (most common need across planets)
-        food = self.ship.simulation.commodity_registry.get_commodity("food")
-        if food:
-            commodities.append(food)
-
-        return commodities
+        return [
+            c
+            for c in self.ship.simulation.commodity_registry.all_commodities()
+            if c.transportable
+        ]
 
     def _evaluate_trade_opportunity(
         self,
@@ -595,27 +592,36 @@ class Ship:
     
     def perform_maintenance(self) -> bool:
         """Attempt to perform maintenance on the ship.
-        
+
+        Tries tiered maintenance goods from best to worst:
+        - ship_components (1 unit) — best quality
+        - ship_parts (2 units) — medium quality
+        - ship_supplies (3 units) — basic quality
+        - nova_fuel (5 units) — legacy fallback
+
         Returns:
             True if maintenance was successful, False if we lack resources.
         """
-        # Get fuel commodity - simulation always available
-        fuel_commodity = self.simulation.commodity_registry.get_commodity("nova_fuel")
-        
-        if not fuel_commodity:
-            self.last_action = "Cannot perform maintenance - fuel commodity not defined"
-            return False
-            
-        # Simple maintenance: costs 5 fuel units
-        if self.cargo.has_quantity(fuel_commodity, 5):
-            self.cargo.remove_commodity(fuel_commodity, 5)
-            self.maintenance_needed = False
-            self.status = ShipStatus.DOCKED
-            self.last_action = "Performed maintenance using 5 fuel units"
-            return True
-        else:
-            self.last_action = "Cannot perform maintenance - insufficient fuel"
-            return False
+        registry = self.simulation.commodity_registry
+        # Tiered maintenance: (commodity_id, quantity_needed, label)
+        tiers = [
+            ("ship_components", 1, "ship components"),
+            ("ship_parts", 2, "ship parts"),
+            ("ship_supplies", 3, "ship supplies"),
+            ("nova_fuel", 5, "fuel"),
+        ]
+
+        for commodity_id, qty, label in tiers:
+            commodity = registry.get_commodity(commodity_id)
+            if commodity and self.cargo.has_quantity(commodity, qty):
+                self.cargo.remove_commodity(commodity, qty)
+                self.maintenance_needed = False
+                self.status = ShipStatus.DOCKED
+                self.last_action = f"Performed maintenance using {qty} {label}"
+                return True
+
+        self.last_action = "Cannot perform maintenance - insufficient supplies"
+        return False
     
     def start_journey(self, destination: Planet) -> bool:
         """Begin a journey to another planet.

@@ -45,6 +45,8 @@ class PlanetAttributes:
     common_metal_ore: float = 1.0
     nova_fuel_ore: float = 1.0
     simple_building_materials: float = 1.0
+    silica: float = 1.0
+    rare_earth_ore: float = 1.0
 
     # Future: non-resource attributes
     # gravity: float = 1.0
@@ -60,6 +62,8 @@ class PlanetAttributes:
             "common_metal_ore",
             "nova_fuel_ore",
             "simple_building_materials",
+            "silica",
+            "rare_earth_ore",
         ]
         for attr_name in resource_attrs:
             value = getattr(self, attr_name)
@@ -90,6 +94,8 @@ class PlanetAttributes:
             common_metal_ore=random.uniform(0.0, 1.0),
             nova_fuel_ore=_bimodal_sample(0.0, 0.3, 0.7, 1.0),
             simple_building_materials=random.uniform(0.3, 1.0),
+            silica=random.uniform(0.0, 1.0),
+            rare_earth_ore=_bimodal_sample(0.0, 0.2, 0.6, 1.0),
         )
 
     @classmethod
@@ -128,4 +134,6 @@ class PlanetAttributes:
             "common_metal_ore": self.common_metal_ore,
             "nova_fuel_ore": self.nova_fuel_ore,
             "simple_building_materials": self.simple_building_materials,
+            "silica": self.silica,
+            "rare_earth_ore": self.rare_earth_ore,
         }

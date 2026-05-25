@@ -7,7 +7,7 @@ from spacesim2.core.actor import Actor, ActorType
 from spacesim2.core.brains import ColonistBrain, IndustrialistBrain, MarketMakerBrain
 from spacesim2.core.commodity import CommodityRegistry
 from spacesim2.core.data_logger import DataLogger
-from spacesim2.core.drives import FoodDrive, ClothingDrive, ShelterDrive
+from spacesim2.core.drives import FoodDrive, ClothingDrive, ShelterDrive, HealthDrive
 from spacesim2.core.planet_attributes import PlanetAttributes
 from spacesim2.core.process import ProcessRegistry
 from spacesim2.core.market import Market
@@ -207,7 +207,7 @@ class Simulation:
 
             # Initialize actor drives
             drives = [Drive(commodity_registry=self.commodity_registry) 
-                      for Drive in (FoodDrive, ClothingDrive, ShelterDrive)]
+                      for Drive in (FoodDrive, ClothingDrive, ShelterDrive, HealthDrive)]
 
             actor = Actor(
                 name=f"{actor_name_prefix}Colonist-{i}",
@@ -243,7 +243,7 @@ class Simulation:
 
             # Initialize actor drives
             drives = [Drive(commodity_registry=self.commodity_registry) 
-                      for Drive in (FoodDrive, ClothingDrive, ShelterDrive)]
+                      for Drive in (FoodDrive, ClothingDrive, ShelterDrive, HealthDrive)]
 
             actor = Actor(
                 name=f"{actor_name_prefix}Industrialist-{i}",
@@ -265,7 +265,7 @@ class Simulation:
 
             # Initialize actor drives
             drives = [Drive(commodity_registry=self.commodity_registry) 
-                      for Drive in (FoodDrive, ClothingDrive, ShelterDrive)]
+                      for Drive in (FoodDrive, ClothingDrive, ShelterDrive, HealthDrive)]
             
             actor = Actor(
                 name=f"{actor_name_prefix}MarketMaker-{i+1}",

@@ -96,7 +96,7 @@ class TestPlanetAttributes:
         assert d["biomass"] == 0.5
         assert d["wood"] == 0.7
         assert d["fiber"] == 1.0  # default value
-        assert len(d) == 6  # all 6 resource attributes
+        assert len(d) == 8  # all 8 resource attributes
 
 
 class TestBimodalSample:
