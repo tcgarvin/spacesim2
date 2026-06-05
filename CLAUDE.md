@@ -64,6 +64,20 @@ Two tools, two jobs: **`ruff`** for style (lint + format) and **`mypy`** for
 correctness (types). Black was removed — `ruff format` is its drop-in
 replacement. Don't reintroduce a separate formatter.
 
+### Pre-commit hook
+A checked-in hook in `hooks/pre-commit` enforces `ruff format` on staged Python
+files. It's wired via `core.hooksPath`, so a **fresh clone must run it once**:
+
+```bash
+git config core.hooksPath hooks
+```
+
+Bypass a single commit with `git commit --no-verify`.
+
+The hook only enforces **formatting** today. Lint (`ruff check`) and types
+(`mypy`) are *not* blocking yet because the tree has a backlog (run them
+manually). Promote them into the hook once that backlog is cleared.
+
 ## Branching
 
 Work on **`main` only.** Commit directly to `main`; do **not** create feature
