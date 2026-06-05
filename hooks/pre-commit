@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 # Pre-commit hook for spacesim2.
 #
-# Enforces formatting (`ruff format`) on staged Python files, using the
-# project's uv-pinned ruff so the version always matches uv.lock.
+# Enforces style on staged Python files with the project's uv-pinned ruff (so
+# the version always matches uv.lock):
+#   - ruff format  (formatting)
+#   - ruff check   (lint)
+#
+# Types (`mypy`) are NOT enforced here yet — that backlog isn't cleared. Run it
+# manually: uv run mypy .  (see CLAUDE.md).
 #
 # Bypass once with:  git commit --no-verify
-#
-# NOTE: lint (`ruff check`) and types (`mypy`) are NOT enforced here yet — the
-# tree still has a backlog of both. Run them manually:
-#     uv run ruff check .
-#     uv run mypy .
-# Promote them into this hook once the backlog is cleared (see CLAUDE.md).
 set -euo pipefail
 
 # Staged, still-present Python files (added/copied/modified), NUL-delimited so
@@ -26,6 +25,16 @@ if ! uv run ruff format --check "${files[@]}"; then
     echo
     echo "✗ ruff format: staged files are not formatted. Fix with:"
     echo "    uv run ruff format ${files[*]}"
+    echo "  then 'git add' them and recommit (or 'git commit --no-verify' to skip)."
+  } >&2
+  exit 1
+fi
+
+if ! uv run ruff check "${files[@]}"; then
+  {
+    echo
+    echo "✗ ruff check: staged files have lint errors. Many are auto-fixable:"
+    echo "    uv run ruff check --fix ${files[*]}"
     echo "  then 'git add' them and recommit (or 'git commit --no-verify' to skip)."
   } >&2
   exit 1

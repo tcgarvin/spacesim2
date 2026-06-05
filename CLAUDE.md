@@ -65,8 +65,9 @@ correctness (types). Black was removed — `ruff format` is its drop-in
 replacement. Don't reintroduce a separate formatter.
 
 ### Pre-commit hook
-A checked-in hook in `hooks/pre-commit` enforces `ruff format` on staged Python
-files. It's wired via `core.hooksPath`, so a **fresh clone must run it once**:
+A checked-in hook in `hooks/pre-commit` enforces `ruff format` **and**
+`ruff check` on staged Python files. It's wired via `core.hooksPath`, so a
+**fresh clone must run it once**:
 
 ```bash
 git config core.hooksPath hooks
@@ -74,9 +75,14 @@ git config core.hooksPath hooks
 
 Bypass a single commit with `git commit --no-verify`.
 
-The hook only enforces **formatting** today. Lint (`ruff check`) and types
-(`mypy`) are *not* blocking yet because the tree has a backlog (run them
-manually). Promote them into the hook once that backlog is cleared.
+Types (`mypy`) are *not* blocking yet — that backlog (~146 errors in the
+package, mostly untyped analysis code) isn't cleared. Run `uv run mypy .`
+manually, and promote it into the hook once green.
+
+**Ruff lint config** (`[tool.ruff.lint]`): `E501` is ignored (the formatter
+owns line length); `notebooks/**` is exempt from lint via `per-file-ignores`
+(still formatted) because marimo's cross-cell variables cause false
+`F401`/`F821`/`I001`.
 
 ## Branching
 
