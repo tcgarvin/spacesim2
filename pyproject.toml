@@ -23,6 +23,7 @@ spacesim2 = "spacesim2.cli.main:main"
 dev = [
     "pytest>=7.0.0",
     "mypy>=1.0.0",
+    "types-PyYAML",
     "ruff>=0.0.270",
     "rich>=13.0.0",
 ]
@@ -51,6 +52,21 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
+# Notebooks use marimo's cross-cell variable model, which mypy can't follow
+# (same reason they're exempt from ruff lint); dev-tools are scratch scripts.
+# Neither is an importable package, so they're excluded by path, not module.
+exclude = "^(notebooks|dev-tools)/"
+
+# Tests aren't held to the annotation bar yet.
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+# Third-party packages without type stubs.
+[[tool.mypy.overrides]]
+module = ["scipy.*", "tqdm.*", "plotly.*", "pyarrow.*"]
+ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 88
