@@ -8,6 +8,7 @@ from spacesim2.core.commodity import CommodityDefinition, Inventory
 from spacesim2.core.planet import Planet
 
 if TYPE_CHECKING:
+    from spacesim2.core.drives.actor_drive import ActorDrive
     from spacesim2.core.simulation import Simulation
 
 
@@ -577,11 +578,15 @@ class Ship:
         self.maintenance_needed = False  # Whether maintenance is required
         self.status = ShipStatus.DOCKED
         self.simulation = simulation  # Reference to the simulation
-        self.market_history = []  # Track market activity for compatibility with market code
+        self.market_history: list[
+            dict
+        ] = []  # Track market activity for compatibility with market code
         self.food_consumed_this_turn = (
             True  # Ships don't eat, but needed for compatibility
         )
-        self.drives = []  # Ships don't have drives, but keep empty list for interface compatibility
+        self.drives: list[
+            "ActorDrive"
+        ] = []  # Ships don't have drives, but keep empty list for interface compatibility
 
         # Initialize with a brain
         self.brain = TraderBrain(self)

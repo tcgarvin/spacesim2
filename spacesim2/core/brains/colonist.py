@@ -198,7 +198,7 @@ class ColonistBrain(ActorBrain):
             return []
 
         market = actor.planet.market
-        commands = []
+        commands: List[MarketCommand] = []
 
         # Get existing actor's orders
         existing_orders = market.get_actor_orders(actor)
@@ -241,7 +241,7 @@ class ColonistBrain(ActorBrain):
         Returns:
             List of MarketCommand objects for trading actions
         """
-        commands = []
+        commands: List[MarketCommand] = []
 
         # Track inventory
         quantity = actor.inventory.get_quantity(commodity_type)

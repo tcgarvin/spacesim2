@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import yaml
@@ -56,7 +57,7 @@ class ProcessRegistry:
         self._processes: Dict[str, ProcessDefinition] = {}
         self._commodity_registry = commodity_registry
 
-    def load_from_file(self, filepath: str) -> None:
+    def load_from_file(self, filepath: str | Path) -> None:
         """Load process definitions from a YAML file."""
         try:
             with open(filepath, "r") as f:

@@ -56,7 +56,7 @@ class ColorManager:
         }
 
         # Planet colors
-        self.planet_colors = {}
+        self.planet_colors: dict[int, ColorType] = {}
         self._generate_planet_colors()
 
     def _generate_planet_colors(self) -> None:

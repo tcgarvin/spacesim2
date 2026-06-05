@@ -35,7 +35,7 @@ class MarketMakerBrain(ActorBrain):
             return []
 
         market = actor.planet.market
-        commands = []
+        commands: List[MarketCommand] = []
 
         # Cancel all existing orders before creating new ones
         existing_orders = market.get_actor_orders(actor)
@@ -106,7 +106,7 @@ class MarketMakerBrain(ActorBrain):
                     target_order_size = ceil(current_inventory / MAX_SELL_ORDERS)
 
                     # Group orders by identical price (combine orders at the same price)
-                    sell_price_counts = {}
+                    sell_price_counts: dict[int, int] = {}
                     for price in sell_prices:
                         sell_price_counts[price] = sell_price_counts.get(price, 0) + 1
 
@@ -142,7 +142,7 @@ class MarketMakerBrain(ActorBrain):
                     )
 
                     # Group orders by identical price.
-                    buy_price_counts = {}
+                    buy_price_counts: dict[int, int] = {}
                     for price in buy_prices:
                         buy_price_counts[price] = buy_price_counts.get(price, 0) + 1
 

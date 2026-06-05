@@ -25,7 +25,7 @@ class SimulationExporter:
         """
         self.output_dir = output_dir
         self.simulation_id = simulation_id
-        self.writers = {}
+        self.writers: dict[str, StreamingParquetWriter] = {}
         self.start_time = datetime.now()
 
     def setup(self, simulation: "Simulation") -> None:

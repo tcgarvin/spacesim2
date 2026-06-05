@@ -7,7 +7,13 @@ from spacesim2.core.actor import Actor, ActorType
 from spacesim2.core.brains import ColonistBrain, IndustrialistBrain, MarketMakerBrain
 from spacesim2.core.commodity import CommodityRegistry
 from spacesim2.core.data_logger import DataLogger
-from spacesim2.core.drives import ClothingDrive, FoodDrive, HealthDrive, ShelterDrive
+from spacesim2.core.drives import (
+    ActorDrive,
+    ClothingDrive,
+    FoodDrive,
+    HealthDrive,
+    ShelterDrive,
+)
 from spacesim2.core.market import Market
 from spacesim2.core.planet import Planet
 from spacesim2.core.planet_attributes import PlanetAttributes
@@ -197,7 +203,7 @@ class Simulation:
         Returns:
             List of (x, y) positions
         """
-        positions = []
+        positions: list[tuple[float, float]] = []
         max_attempts = 1000  # Prevent infinite loops
         attempts = 0
 
@@ -318,7 +324,7 @@ class Simulation:
                     initial_skills[skill_id] = random.uniform(0.5, 1.0)
 
             # Initialize actor drives
-            drives = [
+            drives: list[ActorDrive] = [
                 Drive(commodity_registry=self.commodity_registry)
                 for Drive in (FoodDrive, ClothingDrive, ShelterDrive, HealthDrive)
             ]

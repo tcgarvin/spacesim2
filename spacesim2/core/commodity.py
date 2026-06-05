@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import yaml
@@ -23,7 +24,7 @@ class CommodityRegistry:
     def __init__(self):
         self._commodities: Dict[str, CommodityDefinition] = {}
 
-    def load_from_file(self, filepath: str) -> None:
+    def load_from_file(self, filepath: str | Path) -> None:
         """Load commodity definitions from a YAML file."""
         try:
             with open(filepath, "r") as f:

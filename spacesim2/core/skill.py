@@ -1,4 +1,5 @@
 import random
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import yaml
@@ -57,7 +58,7 @@ class SkillsRegistry:
         """
         return list(self._skills.values())
 
-    def load_from_file(self, filepath: str) -> None:
+    def load_from_file(self, filepath: str | Path) -> None:
         """Load skills from a YAML file.
 
         Args:

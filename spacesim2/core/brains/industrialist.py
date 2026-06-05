@@ -102,7 +102,7 @@ class IndustrialistBrain(ActorBrain):
             return []
 
         market = actor.planet.market
-        commands = []
+        commands: List[MarketCommand] = []
 
         # Get existing orders and cancel them
         existing_orders = market.get_actor_orders(actor)
@@ -361,7 +361,7 @@ class IndustrialistBrain(ActorBrain):
         self, actor: "Actor", market, food_commodity
     ) -> List[MarketCommand]:
         """Generate commands to buy food for personal consumption."""
-        commands = []
+        commands: List[MarketCommand] = []
 
         food_quantity = actor.inventory.get_quantity(food_commodity)
         food_target = 6  # Target inventory level
@@ -427,7 +427,7 @@ class IndustrialistBrain(ActorBrain):
         self, actor: "Actor", market
     ) -> List[MarketCommand]:
         """Generate trading commands for recipe inputs and outputs."""
-        commands = []
+        commands: List[MarketCommand] = []
 
         process = actor.sim.process_registry.get_process(self.chosen_recipe_id)
         if not process:

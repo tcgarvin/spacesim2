@@ -736,7 +736,7 @@ class Market:
         Returns:
             Dict with 'buy' and 'sell' keys, each containing a list of Order objects
         """
-        result = {"buy": [], "sell": []}
+        result: dict[str, list[Order]] = {"buy": [], "sell": []}
 
         if actor not in self.actor_orders:
             return result
