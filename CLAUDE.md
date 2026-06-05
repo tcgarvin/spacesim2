@@ -28,7 +28,28 @@ uv run spacesim2 dev validate-market   # Market maker validation
 uv run spacesim2 dev graph             # Commodity/process dependency graph (outputs to tmp/)
 uv run spacesim2 dev graph --out foo   # Custom output path (creates foo.svg and foo.mmd)
 uv run spacesim2 dev graph -f png      # Alternative formats: svg (default), png, pdf
+uv run spacesim2 dev analyze FILE.py   # Run a Tier-1 analysis script against latest run
 ```
+
+## The Dev Loop (for agents)
+
+Canonical change→verify loop. Use these verbatim; see the **`sim-evaluation`**
+skill for tiers and the analysis-output contract.
+
+```bash
+uv run pytest -q                                                  # 1. unit tests (~2s)
+uv run spacesim2 run --turns 200 --no-export --quiet --summary    # 2. macro behavior
+# 3. read JSON between ===SUMMARY_BEGIN=== / ===SUMMARY_END=== (verdict + KPIs)
+```
+
+- `--summary` prints a compact KPI JSON + `PASS/WARN/FAIL` verdict (also written
+  to `summary.json` when exporting). This is the token-efficient "is it broken?"
+  readout — prefer it over opening a notebook.
+- The sim is **stochastic, not bit-reproducible**; population means are stable to
+  ~±0.05. Assert with tolerances, never exact values. `--seed N` reduces variance.
+- For open-ended questions, write a **Tier-1** script (`dev analyze`); for human
+  dashboards, a **Tier-2** marimo notebook. Keep durable checks as assertions in
+  `tests/test_simulation_smoke.py`.
 
 **Note**: The graph command uses `npx @mermaid-js/mermaid-cli` to render diagrams. Requires Node.js with `npx` on PATH. Output defaults to `tmp/commodity-graph.svg` (gitignored).
 
@@ -54,6 +75,7 @@ Read the relevant guide when working on specific areas:
 | Planet attributes | See "Planet Attributes System" below | Per-planet resource availability |
 | UI grid | `docs/actor_grid_ui.md` | Pygame UI development |
 | **Commodity/process editing** | `.claude/skills/commodity-process-design/` | Modifying commodities, recipes, production chains |
+| **Evaluating sim behavior** | `.claude/skills/sim-evaluation/` | Checking macro behavior after a change; KPI summary, analysis scripts, notebooks |
 
 ## Key Architecture Facts
 

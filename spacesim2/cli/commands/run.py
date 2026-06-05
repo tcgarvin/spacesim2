@@ -2,14 +2,16 @@
 
 import argparse
 import io
+import json
 import os
+import random
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from spacesim2.cli.common import create_and_setup_simulation, configure_actor_logging
+from spacesim2.cli.common import configure_actor_logging, create_and_setup_simulation
 from spacesim2.cli.output import print_success, print_warning
 from spacesim2.ui.headless import HeadlessUI
 
@@ -49,6 +51,14 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
     )
     parser.add_argument(
         "--ships", type=int, default=1, help="Number of ships per planet"
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Seed the global RNG to reduce run-to-run variance when comparing "
+        "changes. Note: not bit-exact (market order IDs/set iteration are "
+        "unseeded); rely on aggregate KPIs, not exact reproduction.",
     )
     parser.add_argument(
         "--no-planet-attributes",
@@ -105,6 +115,13 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
         action="store_true",
         help="Suppress all output including progress bar",
     )
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Print a compact JSON behavioral KPI summary + verdict at the end "
+        "(also written to summary.json when exporting). Token-efficient readout "
+        "for agents evaluating whether the economy behaves as intended.",
+    )
 
     # Notebook options
     parser.add_argument(
@@ -138,6 +155,13 @@ def execute(args: argparse.Namespace) -> int:
             "Install with: uv sync --extra analysis"
         )
         should_export = False
+
+    # Seed the global RNG to reduce variance. Most simulation randomness uses
+    # the module-level `random`, so this nudges runs closer together, but it is
+    # not bit-exact (market order IDs use uuid4 and some iteration is over sets).
+    if args.seed is not None:
+        random.seed(args.seed)
+        print(f"Seeded RNG: {args.seed}")
 
     # Create simulation
     print("Initializing simulation...")
@@ -203,6 +227,10 @@ def execute(args: argparse.Namespace) -> int:
         finally:
             sys.stdout = old_stdout
 
+    # Emit compact behavioral summary (Tier-0 readout) if requested.
+    if args.summary:
+        _emit_summary(sim, output_path if should_export else None)
+
     # Finalize export
     if should_export and exporter is not None:
         print("\n" + "=" * 60)
@@ -225,6 +253,29 @@ def execute(args: argparse.Namespace) -> int:
         print_success("Simulation complete!")
 
     return 0
+
+
+def _emit_summary(sim: Any, output_path: Path | None) -> None:
+    """Compute and print the compact KPI summary, delimited for easy parsing.
+
+    Args:
+        sim: The finished simulation.
+        output_path: If exporting, the run directory to also write summary.json.
+    """
+    from spacesim2.analysis.summary import compute_summary
+
+    summary = compute_summary(sim)
+    payload = json.dumps(summary, indent=2)
+
+    # Clear delimiters so an agent can slice the JSON out of mixed stdout.
+    print("\n===SUMMARY_BEGIN===")
+    print(payload)
+    print("===SUMMARY_END===")
+
+    if output_path is not None:
+        summary_file = output_path / "summary.json"
+        summary_file.write_text(payload)
+        print(f"Summary written to: {summary_file}")
 
 
 def _open_notebook(output_path: Path, notebook_path_str: str) -> None:
@@ -258,9 +309,7 @@ def _open_notebook(output_path: Path, notebook_path_str: str) -> None:
                 check=False,  # Don't raise error if marimo exits normally
             )
         except FileNotFoundError:
-            print_warning(
-                "marimo not found. Install with: uv sync --extra analysis"
-            )
+            print_warning("marimo not found. Install with: uv sync --extra analysis")
             print(f"\nTo analyze manually:")
             print(
                 f"  SPACESIM_RUN_PATH='{output_path}' marimo edit --no-token {notebook_path}"
