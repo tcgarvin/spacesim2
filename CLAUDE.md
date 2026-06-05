@@ -19,8 +19,8 @@ uv run spacesim2 run --no-planet-attributes  # Disable per-planet resource avail
 # Development
 uv run pytest tests/                           # Run all tests
 uv run pytest tests/test_file.py::test_fn -v   # Run single test
-uv run mypy .                                  # Type check
-uv run black .                                 # Format
+uv run mypy .                                  # Type check (correctness)
+uv run ruff format .                           # Format
 uv run ruff check .                            # Lint
 
 # Dev Tools
@@ -55,9 +55,20 @@ uv run spacesim2 run --turns 200 --no-export --quiet --summary    # 2. macro beh
 
 ## Code Style
 - **Python**: 3.11+ with type annotations
-- **Formatting**: Black (88 char lines)
+- **Formatting**: `ruff format` (88 char lines)
 - **Naming**: `snake_case` functions/vars, `PascalCase` classes, `UPPER_CASE` constants
 - **Architecture**: Domain-driven design; prefer pure functions over stateful classes when suitable
+
+### Tooling
+Two tools, two jobs: **`ruff`** for style (lint + format) and **`mypy`** for
+correctness (types). Black was removed — `ruff format` is its drop-in
+replacement. Don't reintroduce a separate formatter.
+
+## Branching
+
+Work on **`main` only.** Commit directly to `main`; do **not** create feature
+branches unless the user explicitly asks for one. This overrides the default
+"branch before committing on the default branch" behavior.
 
 ## Documentation Index
 
