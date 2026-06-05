@@ -1,12 +1,12 @@
 import random
 
+from spacesim2.core.commodity import CommodityRegistry
 from spacesim2.core.drives.actor_drive import (
     ActorDrive,
     DriveMetrics,
     clamp01,
     log_norm_ratio,
 )
-from spacesim2.core.commodity import CommodityRegistry
 
 # Stochastic maintenance model matching ClothingDrive pattern
 BASE_EVENT_PROB = (

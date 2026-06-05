@@ -1,5 +1,5 @@
-from spacesim2.core.drives.actor_drive import ActorDrive, DriveMetrics, log_norm_ratio
 from spacesim2.core.commodity import CommodityRegistry
+from spacesim2.core.drives.actor_drive import ActorDrive, DriveMetrics, log_norm_ratio
 
 DAILY_CONSUMPTION = 1
 DEBT_DECAY_FACTOR = 0.8

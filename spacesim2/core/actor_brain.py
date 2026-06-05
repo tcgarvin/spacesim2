@@ -1,4 +1,4 @@
-from typing import Optional, List, TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Optional
 
 from spacesim2.core.commands import EconomicCommand, MarketCommand
 

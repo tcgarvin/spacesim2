@@ -1,10 +1,11 @@
-from typing import Dict, Tuple, Optional, List
 import math
+from typing import Dict, List, Optional, Tuple
+
 import pygame
 from pygame.surface import Surface
 
-from spacesim2.core.ship import Ship, ShipStatus
 from spacesim2.core.planet import Planet
+from spacesim2.core.ship import Ship, ShipStatus
 
 
 class ShipRenderer:

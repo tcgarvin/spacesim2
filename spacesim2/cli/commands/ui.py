@@ -1,11 +1,10 @@
 """UI command implementation."""
 
 import argparse
-import sys
 
-from spacesim2.ui.pygame_ui import PYGAME_AVAILABLE, PygameUI
 from spacesim2.cli.common import create_and_setup_simulation
 from spacesim2.cli.output import print_error
+from spacesim2.ui.pygame_ui import PYGAME_AVAILABLE, PygameUI
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser:  # type: ignore

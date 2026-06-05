@@ -14,16 +14,18 @@ app = marimo.App(width="medium")
 
 @app.cell
 def _():
-    import os
     import json
+    import os
+    from pathlib import Path
+
     import marimo as mo
-    import polars as pl
     import plotly.express as px
     import plotly.graph_objects as go
+    import polars as pl
     from plotly.subplots import make_subplots
+
+    from spacesim2.analysis.loading import NoRunsFoundError, get_run_path_with_fallback
     from spacesim2.analysis.loading.loader import SimulationData
-    from spacesim2.analysis.loading import get_run_path_with_fallback, NoRunsFoundError
-    from pathlib import Path
 
     return (
         Path,
@@ -87,7 +89,7 @@ def _(Path, SimulationData, mo, run_selector):
     else:
         try:
             data = SimulationData(Path(run_selector.value))
-            _load_msg = mo.md(f"Data loaded successfully")
+            _load_msg = mo.md("Data loaded successfully")
         except FileNotFoundError as e:
             _load_msg = mo.md(f"Error loading data: {e}")
             data = None

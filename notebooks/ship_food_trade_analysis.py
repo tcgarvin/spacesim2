@@ -19,15 +19,17 @@ app = marimo.App(width="medium")
 
 @app.cell
 def _():
-    import os
     import json
+    import os
+    from pathlib import Path
+
     import marimo as mo
-    import polars as pl
     import plotly.express as px
     import plotly.graph_objects as go
+    import polars as pl
     from plotly.subplots import make_subplots
+
     from spacesim2.analysis.loading.loader import SimulationData
-    from pathlib import Path
 
     return Path, SimulationData, go, json, make_subplots, mo, os, pl, px
 
@@ -35,8 +37,8 @@ def _():
 @app.cell
 def _(Path, mo, os):
     from spacesim2.analysis.loading import (
-        get_run_path_with_fallback,
         NoRunsFoundError,
+        get_run_path_with_fallback,
     )
 
     try:
@@ -470,7 +472,7 @@ def _(attrs_df, mo, pl, px, trader_food_buys, trader_food_sells):
         net_imports_fig.add_hline(y=0, line_dash="solid", line_color="black")
         net_imports_fig.update_layout(xaxis_tickangle=-45)
 
-        _output = mo.md(f"""
+        _output = mo.md("""
         ### Net Food Import/Export by Planet
 
         - **Positive values:** Planet is a net importer (ships sell food here)

@@ -6,8 +6,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field, replace
 
 from spacesim2.core.actor import Actor
-from spacesim2.core.drives.actor_drive import DriveMetrics
 from spacesim2.core.commands import Command
+from spacesim2.core.drives.actor_drive import DriveMetrics
 
 
 @dataclass

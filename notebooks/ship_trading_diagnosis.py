@@ -12,10 +12,10 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import os
-    import json
+    from pathlib import Path
+
     import marimo as mo
     import polars as pl
-    from pathlib import Path
 
     return Path, mo, os, pl
 
@@ -23,8 +23,8 @@ def _():
 @app.cell
 def _(mo, os):
     from spacesim2.analysis.loading import (
-        get_run_path_with_fallback,
         NoRunsFoundError,
+        get_run_path_with_fallback,
     )
 
     try:
@@ -71,7 +71,7 @@ def _(Path, mo, pl, run_selector):
             run_path = Path(run_selector.value)
             txns = pl.read_parquet(run_path / "market_transactions.parquet")
             actor_turns = pl.read_parquet(run_path / "actor_turns.parquet")
-            mo.md(f"✓ Data loaded successfully")
+            mo.md("✓ Data loaded successfully")
         except Exception as e:
             mo.md(f"❌ Error loading data: {e}")
             txns = None
@@ -201,7 +201,7 @@ def _(mo, pl, ship_txns):
             net_profit = sell_total - buy_total
 
             mo.md(
-                f"""
+                rf"""
             ### {ship_name}
 
             **Purchases:** {len(buys)} transactions, \${buy_total} total spent

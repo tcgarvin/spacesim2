@@ -1,4 +1,5 @@
-from typing import Dict, Tuple, Optional
+from typing import Dict, Optional, Tuple
+
 import pygame
 from pygame.font import Font
 from pygame.surface import Surface

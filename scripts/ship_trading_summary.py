@@ -138,7 +138,7 @@ def analyze_ship_trading(run_path: Path) -> None:
                 starting_money = ship_data.select(pl.col("money").first()).item()
                 ending_money = ship_data.select(pl.col("money").last()).item()
                 money_change = ending_money - starting_money
-                print(f"\n  Money Tracking:")
+                print("\n  Money Tracking:")
                 print(f"    Starting: ${starting_money:8.0f}")
                 print(f"    Ending:   ${ending_money:8.0f}")
                 print(

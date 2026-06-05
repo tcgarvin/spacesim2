@@ -1,6 +1,6 @@
-import pytest
-import random
 import math
+import random
+
 from spacesim2.core.simulation import Simulation
 
 

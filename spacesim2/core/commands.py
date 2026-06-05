@@ -1,6 +1,6 @@
 import random
 from abc import ABC, abstractmethod
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from spacesim2.core.actor import Actor

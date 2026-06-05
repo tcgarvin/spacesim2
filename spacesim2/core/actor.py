@@ -1,14 +1,13 @@
-import random
-from typing import Optional, Dict, List, Union, Tuple, Any, TYPE_CHECKING
 import enum
+from typing import TYPE_CHECKING, Dict, List, Optional
 
-from spacesim2.core.planet import Planet
 from spacesim2.core.commodity import Inventory
+from spacesim2.core.planet import Planet
 
 if TYPE_CHECKING:
     from spacesim2.core.actor_brain import ActorBrain
-    from spacesim2.core.simulation import Simulation
     from spacesim2.core.drives.actor_drive import ActorDrive
+    from spacesim2.core.simulation import Simulation
 
 
 class ActorType(enum.Enum):

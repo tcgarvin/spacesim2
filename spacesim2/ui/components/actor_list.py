@@ -1,10 +1,11 @@
-from typing import Dict, List, Optional, Tuple, Set, Union
-import pygame
 import math
-from pygame import Rect, Surface
+from typing import Dict, Optional, Union
+
+import pygame
+from pygame import Surface
 
 from spacesim2.core.actor import Actor, ActorType
-from spacesim2.core.commodity import CommodityDefinition, Inventory
+from spacesim2.core.commodity import CommodityDefinition
 from spacesim2.core.planet import Planet
 from spacesim2.core.ship import Ship, ShipStatus
 from spacesim2.ui.utils.text import TextRenderer
@@ -245,9 +246,8 @@ class ActorListPanel:
         elif self.selected_ship in all_entities:
             current_index = all_entities.index(self.selected_ship)
 
-        # Calculate total entities and rows/columns
+        # Calculate total entities
         total_entities = len(all_entities)
-        total_rows = math.ceil(total_entities / self.columns)
 
         if key == pygame.K_UP:
             if current_index >= 0:

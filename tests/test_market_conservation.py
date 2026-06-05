@@ -1,8 +1,9 @@
+from typing import Tuple
+
 import pytest
-from typing import Dict, Tuple
 
 from spacesim2.core.actor import Actor
-from spacesim2.core.commodity import CommodityRegistry, CommodityDefinition, Inventory
+from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
 from spacesim2.core.market import Market
 
 from .helpers import get_actor

@@ -1,8 +1,6 @@
-import pytest
-
 from spacesim2.core.actor import Actor, ActorType
-from spacesim2.core.commodity import CommodityRegistry
 from spacesim2.core.commands import GovernmentWorkCommand
+from spacesim2.core.commodity import CommodityRegistry
 
 
 def _get_mock_sim():

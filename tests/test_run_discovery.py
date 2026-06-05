@@ -1,14 +1,14 @@
 """Tests for run discovery utilities."""
 
-import os
 from datetime import datetime
-from pathlib import Path
+
 import pytest
+
 from spacesim2.analysis.loading.utils import (
-    parse_run_timestamp,
+    NoRunsFoundError,
     find_most_recent_run,
     get_run_path_with_fallback,
-    NoRunsFoundError,
+    parse_run_timestamp,
 )
 
 

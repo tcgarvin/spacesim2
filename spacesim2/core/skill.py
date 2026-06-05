@@ -1,5 +1,6 @@
-from typing import Dict, List, Optional, Set
 import random
+from typing import Dict, List, Optional
+
 import yaml
 
 

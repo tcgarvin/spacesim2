@@ -1,11 +1,12 @@
 import random
+
+from spacesim2.core.commodity import CommodityRegistry
 from spacesim2.core.drives.actor_drive import (
     ActorDrive,
     DriveMetrics,
     clamp01,
     log_norm_ratio,
 )
-from spacesim2.core.commodity import CommodityRegistry
 
 # Tunables
 BASE_EVENT_PROB = 1.0 / 60.0  # ~one replacement event per 60 days

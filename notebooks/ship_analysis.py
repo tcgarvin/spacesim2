@@ -16,12 +16,11 @@ with app.setup:
 @app.cell
 def _():
     import os
-    import marimo as mo
-    import polars as pl
-    import plotly.express as px
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
     from pathlib import Path
+
+    import marimo as mo
+    import plotly.express as px
+    import polars as pl
 
     return Path, mo, os, pl, px
 
@@ -35,8 +34,8 @@ def _(mo, txns_data):
 @app.cell
 def _(mo, os):
     from spacesim2.analysis.loading import (
-        get_run_path_with_fallback,
         NoRunsFoundError,
+        get_run_path_with_fallback,
     )
 
     try:
@@ -79,7 +78,7 @@ def _(Path, mo, pl, run_selector):
             run_path_loaded = Path(run_selector.value)
             txns_data = pl.read_parquet(run_path_loaded / "market_transactions.parquet")
             actor_turns_data = pl.read_parquet(run_path_loaded / "actor_turns.parquet")
-            load_msg = mo.md(f"✓ Data loaded successfully")
+            load_msg = mo.md("✓ Data loaded successfully")
         except Exception as e:
             txns_data = None
             actor_turns_data = None

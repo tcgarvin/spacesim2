@@ -1,23 +1,24 @@
 """Unit tests for the ShelterDrive module."""
 
-import pytest
-from unittest.mock import Mock, patch
 import random
+from unittest.mock import Mock, patch
 
-from spacesim2.core.drives.shelter_drive import (
-    ShelterDrive,
-    BASE_EVENT_PROB,
-    DEBT_DECAY_FACTOR,
-    QUALITY_DEBT_DECAY_FACTOR,
-    DEBT_MISS_PENALTY,
-    BUFFER_TARGET_DAYS,
-    BUFFER_MAX_DAYS,
-    URGENCY,
-    BUILDING_MATERIALS_NAME,
-    PREFAB_HOUSING_NAME,
-)
+import pytest
+
+from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
 from spacesim2.core.drives.actor_drive import DriveMetrics
-from spacesim2.core.commodity import CommodityRegistry, CommodityDefinition
+from spacesim2.core.drives.shelter_drive import (
+    BASE_EVENT_PROB,
+    BUFFER_MAX_DAYS,
+    BUFFER_TARGET_DAYS,
+    BUILDING_MATERIALS_NAME,
+    DEBT_DECAY_FACTOR,
+    DEBT_MISS_PENALTY,
+    PREFAB_HOUSING_NAME,
+    QUALITY_DEBT_DECAY_FACTOR,
+    URGENCY,
+    ShelterDrive,
+)
 from tests.helpers import get_actor
 
 

@@ -244,7 +244,7 @@ def execute(args: argparse.Namespace) -> int:
         if args.notebook:
             _open_notebook(output_path, args.notebook_path)
         else:
-            print(f"\nTo analyze this run:")
+            print("\nTo analyze this run:")
             print(
                 f"  SPACESIM_RUN_PATH='{output_path}' marimo edit --no-token {args.notebook_path}"
             )
@@ -295,8 +295,8 @@ def _open_notebook(output_path: Path, notebook_path_str: str) -> None:
     notebook_path = Path(notebook_path_str)
     if not notebook_path.exists():
         print_warning(f"Notebook not found: {notebook_path}")
-        print(f"   Please create the notebook first or use an existing one.")
-        print(f"\nTo analyze manually:")
+        print("   Please create the notebook first or use an existing one.")
+        print("\nTo analyze manually:")
         print(
             f"  SPACESIM_RUN_PATH='{output_path}' marimo edit --no-token {notebook_path}"
         )
@@ -310,7 +310,7 @@ def _open_notebook(output_path: Path, notebook_path_str: str) -> None:
             )
         except FileNotFoundError:
             print_warning("marimo not found. Install with: uv sync --extra analysis")
-            print(f"\nTo analyze manually:")
+            print("\nTo analyze manually:")
             print(
                 f"  SPACESIM_RUN_PATH='{output_path}' marimo edit --no-token {notebook_path}"
             )

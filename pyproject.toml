@@ -58,3 +58,11 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
+# Line length is owned by the formatter (`ruff format`); E501 would only nag
+# about long strings/comments it can't wrap.
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Notebooks are still formatted, but not linted: marimo's cross-cell variable
+# model produces false F401/F821/I001 (names defined in other cells).
+"notebooks/**" = ["E", "F", "W", "I"]

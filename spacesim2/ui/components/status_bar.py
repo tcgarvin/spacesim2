@@ -1,6 +1,7 @@
-from typing import Dict, List, Optional
+from typing import Dict, Optional
+
 import pygame
-from pygame import Rect, Surface
+from pygame import Surface
 
 from spacesim2.core.simulation import Simulation
 from spacesim2.ui.utils.text import TextRenderer

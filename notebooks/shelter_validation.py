@@ -7,12 +7,14 @@ app = marimo.App()
 @app.cell
 def _():
     import os
-    import marimo as mo
-    import polars as pl
-    import plotly.express as px
-    from spacesim2.analysis.loading.loader import SimulationData
-    from spacesim2.analysis.loading import get_run_path_with_fallback
     from pathlib import Path
+
+    import marimo as mo
+    import plotly.express as px
+    import polars as pl
+
+    from spacesim2.analysis.loading import get_run_path_with_fallback
+    from spacesim2.analysis.loading.loader import SimulationData
 
     return Path, SimulationData, get_run_path_with_fallback, mo, os, pl, px
 

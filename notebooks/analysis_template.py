@@ -7,11 +7,13 @@ app = marimo.App()
 @app.cell
 def _():
     import os
-    import marimo as mo
-    import polars as pl
-    import plotly.express as px
-    from spacesim2.analysis.loading.loader import SimulationData
     from pathlib import Path
+
+    import marimo as mo
+    import plotly.express as px
+    import polars as pl
+
+    from spacesim2.analysis.loading.loader import SimulationData
 
     return Path, SimulationData, mo, os, pl, px
 
@@ -19,8 +21,8 @@ def _():
 @app.cell
 def _(mo, os, Path):
     from spacesim2.analysis.loading import (
-        get_run_path_with_fallback,
         NoRunsFoundError,
+        get_run_path_with_fallback,
     )
 
     try:
@@ -64,7 +66,7 @@ def _(Path, SimulationData, mo, run_selector):
     else:
         try:
             data = SimulationData(Path(run_selector.value))
-            mo.md(f"✓ Data loaded successfully")
+            mo.md("✓ Data loaded successfully")
         except Exception as e:
             mo.md(f"❌ Error loading data: {e}")
             data = None

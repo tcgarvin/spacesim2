@@ -10,13 +10,14 @@ import argparse
 import os
 import random
 import subprocess
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+
 from tqdm import tqdm
 
-from spacesim2.core.simulation import Simulation
-from spacesim2.core.actor import ActorType
 from spacesim2.analysis.export.exporter import SimulationExporter
+from spacesim2.core.actor import ActorType
+from spacesim2.core.simulation import Simulation
 
 
 def main() -> None:
@@ -156,8 +157,8 @@ def main() -> None:
 
     if args.quiet:
         # Suppress simulation output by redirecting stdout
-        import sys
         import io
+        import sys
 
         old_stdout = sys.stdout
         sys.stdout = io.StringIO()
@@ -178,12 +179,12 @@ def main() -> None:
     print("Finalizing export...")
     exporter.finalize()
 
-    print(f"\n✓ Simulation complete!")
+    print("\n✓ Simulation complete!")
     print(f"  Data exported to: {output_path}")
     print(f"  Run ID: {run_id}")
 
     if args.notebook:
-        print(f"\n🚀 Opening marimo notebook...")
+        print("\n🚀 Opening marimo notebook...")
 
         # Set environment variable for notebook to read
         env = os.environ.copy()
@@ -193,8 +194,8 @@ def main() -> None:
         notebook_path = Path(args.notebook_path)
         if not notebook_path.exists():
             print(f"⚠️  Notebook not found: {notebook_path}")
-            print(f"   Please create the notebook first or use an existing one.")
-            print(f"\nTo analyze manually:")
+            print("   Please create the notebook first or use an existing one.")
+            print("\nTo analyze manually:")
             print(
                 f"  SPACESIM_RUN_PATH='{output_path}' marimo edit --no-token {notebook_path}"
             )
@@ -210,16 +211,16 @@ def main() -> None:
                 print(
                     "⚠️  marimo not found. Install with: uv pip install -e '.[analysis]'"
                 )
-                print(f"\nTo analyze manually:")
+                print("\nTo analyze manually:")
                 print(
                     f"  SPACESIM_RUN_PATH='{output_path}' marimo edit --no-token {notebook_path}"
                 )
     else:
-        print(f"\nTo analyze this run:")
+        print("\nTo analyze this run:")
         print(
             f"  SPACESIM_RUN_PATH='{output_path}' marimo edit --no-token {args.notebook_path}"
         )
-        print(f"  # Or with auto-load: uv run scripts/run_analysis_batch.py --notebook")
+        print("  # Or with auto-load: uv run scripts/run_analysis_batch.py --notebook")
 
 
 if __name__ == "__main__":

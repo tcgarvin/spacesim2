@@ -1,14 +1,15 @@
 import random
-from typing import Optional, List, TYPE_CHECKING
 from math import ceil, floor
+from typing import TYPE_CHECKING, List, Optional
 
 from scipy.stats import norm
+
 from spacesim2.core.actor_brain import ActorBrain
 from spacesim2.core.commands import (
-    EconomicCommand,
-    MarketCommand,
-    GovernmentWorkCommand,
     CancelOrderCommand,
+    EconomicCommand,
+    GovernmentWorkCommand,
+    MarketCommand,
     PlaceBuyOrderCommand,
     PlaceSellOrderCommand,
 )

@@ -1,21 +1,21 @@
 import random
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Literal, TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, List, Literal, Optional
 
-from spacesim2.core.actor_brain import ActorBrain
 from spacesim2.core.actor import Actor
+from spacesim2.core.actor_brain import ActorBrain
 from spacesim2.core.commands import (
+    CancelOrderCommand,
+    EconomicCommand,
+    GovernmentWorkCommand,
+    MarketCommand,
     PlaceBuyOrderCommand,
     PlaceSellOrderCommand,
-    CancelOrderCommand,
-    GovernmentWorkCommand,
-    EconomicCommand,
-    MarketCommand,
 )
 from spacesim2.core.commodity import CommodityDefinition
 
 if TYPE_CHECKING:
-    from spacesim2.core.market import Market
+    from spacesim2.core.market import Market, Transaction
 
 # Assumed available from your codebase:
 # - ActorBrain, Actor

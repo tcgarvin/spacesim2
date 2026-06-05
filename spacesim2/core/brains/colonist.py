@@ -1,15 +1,15 @@
-from typing import Optional, List, TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Optional
 
 from spacesim2.core.actor import Actor
 from spacesim2.core.actor_brain import ActorBrain
 from spacesim2.core.commands import (
-    EconomicCommand,
-    MarketCommand,
-    ProcessCommand,
-    GovernmentWorkCommand,
     CancelOrderCommand,
+    EconomicCommand,
+    GovernmentWorkCommand,
+    MarketCommand,
     PlaceBuyOrderCommand,
     PlaceSellOrderCommand,
+    ProcessCommand,
 )
 
 if TYPE_CHECKING:

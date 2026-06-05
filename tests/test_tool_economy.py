@@ -1,10 +1,9 @@
 """Integration tests for tool and facility economy."""
 
-import pytest
 from unittest.mock import patch
 
-from spacesim2.core.simulation import Simulation
 from spacesim2.core.commands import ProcessCommand
+from spacesim2.core.simulation import Simulation
 
 
 class TestBootstrapPath:

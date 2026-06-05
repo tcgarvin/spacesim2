@@ -1,6 +1,6 @@
-from typing import Optional, Literal, Dict, List, Tuple, Any
+from typing import Dict, Literal, Optional
+
 import pygame
-from pygame import Rect, Color
 
 try:
     pygame.init()
@@ -11,20 +11,19 @@ except ImportError:
 
 from spacesim2.core.actor import Actor
 from spacesim2.core.commodity import CommodityDefinition
-from spacesim2.core.simulation import Simulation
 from spacesim2.core.planet import Planet
-from spacesim2.core.ship import Ship, ShipStatus
+from spacesim2.core.ship import Ship
+from spacesim2.core.simulation import Simulation
+from spacesim2.ui.components.actor_list import ActorListPanel
+from spacesim2.ui.components.detail_panel import DetailPanel
+from spacesim2.ui.components.planet_view import PlanetViewPanel
+from spacesim2.ui.components.status_bar import StatusBar
+from spacesim2.ui.renderers.ui_renderer import UIRenderer
 
 # Import UI components
 from spacesim2.ui.utils.colors import ColorManager
-from spacesim2.ui.utils.text import TextRenderer
 from spacesim2.ui.utils.input_handler import InputHandler
-from spacesim2.ui.renderers.ui_renderer import UIRenderer
-from spacesim2.ui.components.actor_list import ActorListPanel
-from spacesim2.ui.components.ship_list import ShipListPanel
-from spacesim2.ui.components.planet_view import PlanetViewPanel
-from spacesim2.ui.components.detail_panel import DetailPanel
-from spacesim2.ui.components.status_bar import StatusBar
+from spacesim2.ui.utils.text import TextRenderer
 
 # UI screen modes
 ScreenMode = Literal["main", "actor_details"]

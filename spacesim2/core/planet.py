@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, List, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 if TYPE_CHECKING:
     from spacesim2.core.actor import Actor

@@ -1,14 +1,13 @@
-import pytest
-import tempfile
 import os
+import tempfile
+
 import yaml
 
-from spacesim2.core.commodity import CommodityRegistry, CommodityDefinition, Inventory
 from spacesim2.core.commands import ProcessCommand
-from spacesim2.core.process import ProcessRegistry, ProcessDefinition
-from spacesim2.core.actor import Actor
-from spacesim2.core.planet import Planet
+from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry, Inventory
 from spacesim2.core.market import Market
+from spacesim2.core.planet import Planet
+from spacesim2.core.process import ProcessDefinition, ProcessRegistry
 from spacesim2.core.simulation import Simulation
 
 from .helpers import get_actor

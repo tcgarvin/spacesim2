@@ -191,8 +191,8 @@ class TestProcessCommandIntegration:
 
     def test_process_with_output_effect_reduces_yield(self):
         """Processes with 'output' effect should have reduced yield on low-availability planets."""
-        from spacesim2.core.simulation import Simulation
         from spacesim2.core.commands import ProcessCommand
+        from spacesim2.core.simulation import Simulation
 
         sim = Simulation()
         sim.setup_simple(
@@ -233,8 +233,9 @@ class TestProcessCommandIntegration:
     def test_process_with_success_effect_can_fail(self):
         """Processes with 'success' effect should fail on zero-availability planets."""
         import random
-        from spacesim2.core.simulation import Simulation
+
         from spacesim2.core.commands import ProcessCommand
+        from spacesim2.core.simulation import Simulation
 
         # Fix random seed for deterministic test
         random.seed(42)
@@ -268,8 +269,8 @@ class TestProcessCommandIntegration:
 
     def test_process_without_resource_attribute_unaffected(self):
         """Processes without resource_attribute should work normally."""
-        from spacesim2.core.simulation import Simulation
         from spacesim2.core.commands import ProcessCommand
+        from spacesim2.core.simulation import Simulation
 
         sim = Simulation()
         sim.setup_simple(

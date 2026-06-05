@@ -1,7 +1,8 @@
 """Streaming Parquet writer with batched writes for memory efficiency."""
 
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
+
 import pyarrow as pa
 import pyarrow.parquet as pq
 

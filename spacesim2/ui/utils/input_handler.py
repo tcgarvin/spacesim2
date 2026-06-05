@@ -1,4 +1,5 @@
-from typing import Callable, Dict, List, Optional, Tuple, Any, Union
+from typing import Callable, Dict, List, Optional
+
 import pygame
 from pygame.event import Event
 

@@ -9,8 +9,8 @@ This test is deterministic: skill checks always succeed and tools never degrade.
 
 from unittest.mock import patch
 
-from spacesim2.core.simulation import Simulation
 from spacesim2.core.commands import ProcessCommand
+from spacesim2.core.simulation import Simulation
 
 
 def _run(process_id: str, actor, times: int = 1) -> None:

@@ -4,7 +4,6 @@ import argparse
 import random
 
 import matplotlib.pyplot as plt
-import numpy as np
 from scipy.stats import norm
 
 from spacesim2.cli.common import create_and_setup_simulation

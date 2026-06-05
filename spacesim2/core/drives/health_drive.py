@@ -1,12 +1,12 @@
 import random
 
+from spacesim2.core.commodity import CommodityRegistry
 from spacesim2.core.drives.actor_drive import (
     ActorDrive,
     DriveMetrics,
     clamp01,
     log_norm_ratio,
 )
-from spacesim2.core.commodity import CommodityRegistry
 
 # Stochastic health events — less frequent than clothing, comfort-tier need
 BASE_EVENT_PROB = 1.0 / 90.0  # ~1 health event per 90 days

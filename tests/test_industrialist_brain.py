@@ -1,13 +1,13 @@
-import pytest
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 
-from spacesim2.core.brains.industrialist import IndustrialistBrain
+import pytest
+
 from spacesim2.core.actor import Actor, ActorType
+from spacesim2.core.brains.industrialist import IndustrialistBrain
 from spacesim2.core.commands import (
-    ProcessCommand,
     GovernmentWorkCommand,
     PlaceBuyOrderCommand,
-    PlaceSellOrderCommand,
+    ProcessCommand,
 )
 from spacesim2.core.commodity import CommodityDefinition, Inventory
 from spacesim2.core.process import ProcessDefinition
@@ -157,7 +157,7 @@ class TestIndustrialistBrain:
 
         market.get_avg_price.side_effect = viable_prices
 
-        assert brain._is_recipe_viable(mock_actor, market, process) == True
+        assert brain._is_recipe_viable(mock_actor, market, process)
 
         # Test non-viable recipe (unprofitable)
         # Input costs 15 each (total = 30), output sells for 25, loss
@@ -170,7 +170,7 @@ class TestIndustrialistBrain:
 
         market.get_avg_price.side_effect = unprofitable_prices
 
-        assert brain._is_recipe_viable(mock_actor, market, process) == False
+        assert not brain._is_recipe_viable(mock_actor, market, process)
 
     def test_market_actions_cancel_existing_orders(self, brain, mock_actor):
         """Test that existing orders are cancelled first."""

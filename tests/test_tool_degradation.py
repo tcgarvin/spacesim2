@@ -1,14 +1,12 @@
 """Tests for tool degradation during process execution."""
 
-import pytest
 from unittest.mock import MagicMock, patch
-import random
 
-from spacesim2.core.commodity import CommodityRegistry, CommodityDefinition
 from spacesim2.core.commands import ProcessCommand
-from spacesim2.core.process import ProcessRegistry, ProcessDefinition
-from spacesim2.core.planet import Planet
+from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
 from spacesim2.core.market import Market
+from spacesim2.core.planet import Planet
+from spacesim2.core.process import ProcessDefinition, ProcessRegistry
 from spacesim2.core.simulation import Simulation
 
 from .helpers import get_actor

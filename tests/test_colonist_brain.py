@@ -1,12 +1,12 @@
-import pytest
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 
-from spacesim2.core.brains.colonist import ColonistBrain
+import pytest
+
 from spacesim2.core.actor import Actor, ActorType
+from spacesim2.core.brains.colonist import ColonistBrain
 from spacesim2.core.commands import (
-    ProcessCommand,
-    GovernmentWorkCommand,
     PlaceBuyOrderCommand,
+    ProcessCommand,
 )
 from spacesim2.core.commodity import CommodityDefinition, Inventory
 from spacesim2.core.process import ProcessDefinition

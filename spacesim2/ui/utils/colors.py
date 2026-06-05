@@ -1,5 +1,5 @@
-from typing import Dict, Tuple, Any
 import random
+from typing import Any, Dict, Tuple
 
 # Color type
 ColorType = Tuple[int, int, int]

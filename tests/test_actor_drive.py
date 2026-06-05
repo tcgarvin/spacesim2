@@ -1,19 +1,19 @@
 """Unit tests for the ActorDrive module."""
 
-import pytest
-from unittest.mock import Mock, MagicMock
 import math
+from unittest.mock import Mock
 
+import pytest
+
+from spacesim2.core.commodity import CommodityRegistry
 from spacesim2.core.drives.actor_drive import (
     ActorDrive,
     DriveMetrics,
     clamp01,
-    log_norm_ratio,
-    get_zero_metrics,
     generate_piecewise_mapping,
+    get_zero_metrics,
+    log_norm_ratio,
 )
-from spacesim2.core.commodity import CommodityRegistry
-from spacesim2.core.actor import Actor
 from tests.helpers import get_actor
 
 

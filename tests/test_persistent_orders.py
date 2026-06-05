@@ -1,9 +1,7 @@
 import pytest
 
-from spacesim2.core.actor import Actor, ActorType
-from spacesim2.core.brains import MarketMakerBrain, ColonistBrain
-from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry, Inventory
-from spacesim2.core.market import Market, Order, Transaction
+from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
+from spacesim2.core.market import Market
 from spacesim2.core.planet import Planet
 
 from .helpers import get_actor

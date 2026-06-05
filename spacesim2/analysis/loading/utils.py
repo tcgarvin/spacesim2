@@ -1,7 +1,7 @@
 """Utilities for discovering and working with simulation runs."""
 
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 

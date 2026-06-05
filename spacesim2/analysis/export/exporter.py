@@ -1,12 +1,12 @@
 """Main coordinator for exporting simulation data to Parquet files."""
 
-from pathlib import Path
-from typing import TYPE_CHECKING
 import json
 from datetime import datetime
+from pathlib import Path
+from typing import TYPE_CHECKING
 
-from spacesim2.analysis.export.streaming_writer import StreamingParquetWriter
 from spacesim2.analysis.export import schema
+from spacesim2.analysis.export.streaming_writer import StreamingParquetWriter
 
 if TYPE_CHECKING:
     from spacesim2.core.simulation import Simulation

@@ -1,8 +1,7 @@
 import pytest
 
-from spacesim2.core.actor import Actor
-from spacesim2.core.commodity import CommodityDefinition, Inventory, CommodityRegistry
-from spacesim2.core.market import Market, Order, Transaction
+from spacesim2.core.commodity import CommodityRegistry
+from spacesim2.core.market import Market
 
 from .helpers import get_actor
 

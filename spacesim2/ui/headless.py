@@ -17,27 +17,27 @@ class HeadlessUI:
                 print(
                     f"Turn {self.simulation.current_turn} log for actor {actor.name}:"
                 )
-                print(f"  Inventory:")
+                print("  Inventory:")
                 for commodity in sorted(turn_log.inventory.keys()):
                     quantity = turn_log.inventory[commodity]
                     if quantity > 0:
                         print(f"    {commodity}: {quantity}")
                 print(f"  Notes: {turn_log.notes}")
                 print(f"  Commands: {turn_log.commands}")
-                print(f"  Metrics:")
+                print("  Metrics:")
                 for metric in turn_log.metrics:
                     print(
                         f"    {metric.get_name()}: Health={metric.health:.2f}, Debt={metric.debt:.2f}, Buffer={metric.buffer:.2f}, Urgency={metric.urgency:.2f}"
                     )
 
                 # Display market status
-                print(f"  Market Status:")
+                print("  Market Status:")
                 market_status = turn_log.market_status
 
                 # Currently open orders
                 current_orders = market_status.get("current_orders", {})
                 if current_orders:
-                    print(f"    Currently Open Orders:")
+                    print("    Currently Open Orders:")
                     for order_id, order_info in current_orders.items():
                         order_type = order_info["type"]
                         commodity = order_info["commodity"]
@@ -47,7 +47,7 @@ class HeadlessUI:
                             f"      {order_id}: {order_type.upper()} {quantity} {commodity} @ {price}"
                         )
                 else:
-                    print(f"    Currently Open Orders: None")
+                    print("    Currently Open Orders: None")
 
                 # Recently closed orders (filled or cancelled)
                 events_this_turn = market_status.get("events_this_turn", [])
@@ -57,7 +57,7 @@ class HeadlessUI:
                     if event["event_type"] in ["filled", "cancelled"]
                 ]
                 if closed_events:
-                    print(f"    Recently Closed Orders:")
+                    print("    Recently Closed Orders:")
                     for event in closed_events:
                         order_details = event["order_details"]
                         status = event["event_type"].upper()
@@ -69,12 +69,12 @@ class HeadlessUI:
                             f"      {event['order_id']}: {status} - {order_type.upper()} {quantity} {commodity} @ {price}"
                         )
                 else:
-                    print(f"    Recently Closed Orders: None")
+                    print("    Recently Closed Orders: None")
 
                 # Transactions this turn
                 transactions = market_status.get("transactions_this_turn", [])
                 if transactions:
-                    print(f"    Transactions This Turn:")
+                    print("    Transactions This Turn:")
                     for tx in transactions:
                         role = tx["role"].upper()
                         commodity = tx["commodity"]
@@ -85,6 +85,6 @@ class HeadlessUI:
                             f"      {role} {quantity} {commodity} @ {price} (with {counterparty})"
                         )
                 else:
-                    print(f"    Transactions This Turn: None")
+                    print("    Transactions This Turn: None")
 
         print("Simulation complete!")

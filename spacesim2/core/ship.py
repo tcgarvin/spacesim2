@@ -1,12 +1,11 @@
-import random
-from dataclasses import dataclass
-from typing import Optional, Dict, List, Union, Tuple, TYPE_CHECKING
 import enum
 import math
+import random
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Dict, List, Optional
 
+from spacesim2.core.commodity import CommodityDefinition, Inventory
 from spacesim2.core.planet import Planet
-from spacesim2.core.commodity import Inventory, CommodityDefinition
-from spacesim2.core.market import Market
 
 if TYPE_CHECKING:
     from spacesim2.core.simulation import Simulation

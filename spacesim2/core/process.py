@@ -1,9 +1,9 @@
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 
 import yaml
 
-from spacesim2.core.commodity import CommodityRegistry, CommodityDefinition
+from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
 
 
 @dataclass

@@ -1,9 +1,8 @@
-from collections import defaultdict
-from dataclasses import dataclass, field
-from itertools import count
-from typing import Dict, List, Optional, Tuple, Union, TYPE_CHECKING, Any
 import statistics
 import uuid
+from collections import defaultdict
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from spacesim2.core.actor import Actor
 
@@ -359,10 +358,6 @@ class Market:
             self.sell_orders.get(commodity_type, []),
             key=lambda o: (o.price, o.timestamp),
         )
-
-        # Match orders
-        remaining_buy_orders = []
-        remaining_sell_orders = []
 
         # Continue matching as long as there are both buy and sell orders
         while buy_orders and sell_orders:

@@ -1,9 +1,11 @@
 """Test script to verify ship_economics notebook logic works."""
 
-import os
 import json
-import polars as pl
+import os
 from pathlib import Path
+
+import polars as pl
+
 from spacesim2.analysis.loading.loader import SimulationData
 
 # Use environment variable or default
@@ -180,7 +182,7 @@ if num_ships > 0:
 
     # Summary statistics
     avg_roi = latest_roi.select(pl.col("final_roi").mean()).item()
-    print(f"\n=== SUMMARY ===")
+    print("\n=== SUMMARY ===")
     print(f"Average ROI: {avg_roi:.1f}%")
 
     if avg_roi > 0:

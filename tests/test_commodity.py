@@ -1,10 +1,9 @@
-import pytest
 import os
+
 import yaml
 
 from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry, Inventory
 from spacesim2.core.process import ProcessRegistry
-from spacesim2.core.simulation import Simulation
 
 
 def test_commodity_registry_loading() -> None:
@@ -45,11 +44,11 @@ def test_commodity_registry_loading() -> None:
 
     assert test_commodity.id == "test_commodity"
     assert test_commodity.name == "Test Commodity"
-    assert test_commodity.transportable == True
+    assert test_commodity.transportable
 
     assert test_facility.id == "test_facility"
     assert test_facility.name == "Test Facility"
-    assert test_facility.transportable == False
+    assert not test_facility.transportable
 
     # Test all_commodities method
     all_commodities = registry.all_commodities()

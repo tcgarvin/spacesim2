@@ -4,8 +4,8 @@ import argparse
 import random
 from typing import List, Optional
 
-from spacesim2.core.simulation import Simulation
 from spacesim2.core.actor import ActorType
+from spacesim2.core.simulation import Simulation
 
 
 def create_and_setup_simulation(

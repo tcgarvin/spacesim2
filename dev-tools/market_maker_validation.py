@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 
-from spacesim2.core.simulation import Simulation
+import random
+
+import matplotlib.pyplot as plt
+from scipy.stats import norm
+
 from spacesim2.core.actor import ActorType
 from spacesim2.core.commodity import CommodityType
-import random
-import statistics
-import matplotlib.pyplot as plt
-import numpy as np
-from scipy.stats import norm
+from spacesim2.core.simulation import Simulation
 
 
 def plot_market_maker_behavior(simulation, num_turns=20):
@@ -121,7 +121,7 @@ def plot_market_maker_behavior(simulation, num_turns=20):
 
     plt.tight_layout()
     plt.savefig("market_maker_validation.png")
-    print(f"Plot saved to 'market_maker_validation.png'")
+    print("Plot saved to 'market_maker_validation.png'")
 
     # Print market action logs
     print("\nMarket Action Logs:")

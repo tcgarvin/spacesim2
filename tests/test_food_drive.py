@@ -1,20 +1,20 @@
 """Unit tests for the FoodDrive module."""
 
-import pytest
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 
+import pytest
+
+from spacesim2.core.actor import Actor, ActorType
+from spacesim2.core.commodity import CommodityRegistry, Inventory
 from spacesim2.core.drives.food_drive import (
-    FoodDrive,
-    FoodDriveMetrics,
     DAILY_CONSUMPTION,
     DEBT_DECAY_FACTOR,
     DEBT_MISS_PENALTY,
-    PANTRY_TARGET,
     PANTRY_MAX,
+    PANTRY_TARGET,
+    FoodDrive,
+    FoodDriveMetrics,
 )
-from spacesim2.core.commodity import CommodityRegistry, CommodityDefinition, Inventory
-from spacesim2.core.actor import Actor, ActorType
-from tests.helpers import get_actor
 
 
 class TestFoodDriveMetrics:

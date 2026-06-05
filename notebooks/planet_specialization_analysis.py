@@ -6,14 +6,16 @@ app = marimo.App()
 
 @app.cell
 def _():
-    import os
     import json
+    import os
+    from pathlib import Path
+
     import marimo as mo
-    import polars as pl
     import plotly.express as px
     import plotly.graph_objects as go
+    import polars as pl
+
     from spacesim2.analysis.loading.loader import SimulationData
-    from pathlib import Path
 
     return Path, SimulationData, go, json, mo, os, pl, px
 
@@ -21,8 +23,8 @@ def _():
 @app.cell
 def _(mo, os, Path):
     from spacesim2.analysis.loading import (
-        get_run_path_with_fallback,
         NoRunsFoundError,
+        get_run_path_with_fallback,
     )
 
     try:
@@ -314,7 +316,7 @@ def _(attrs_df, go, mo, pl, production_by_planet):
         )
         _fig.add_hline(y=0, line_dash="solid", line_color="gray")
 
-        _ = mo.md(f"""
+        _ = mo.md("""
         ### Production-Attribute Correlations
 
         This chart shows how strongly each commodity's production correlates with its

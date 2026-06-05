@@ -1,17 +1,17 @@
-import random
 import math
+import random
 from pathlib import Path
-from typing import List, Dict, Tuple, TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from spacesim2.core.actor import Actor, ActorType
 from spacesim2.core.brains import ColonistBrain, IndustrialistBrain, MarketMakerBrain
 from spacesim2.core.commodity import CommodityRegistry
 from spacesim2.core.data_logger import DataLogger
-from spacesim2.core.drives import FoodDrive, ClothingDrive, ShelterDrive, HealthDrive
-from spacesim2.core.planet_attributes import PlanetAttributes
-from spacesim2.core.process import ProcessRegistry
+from spacesim2.core.drives import ClothingDrive, FoodDrive, HealthDrive, ShelterDrive
 from spacesim2.core.market import Market
 from spacesim2.core.planet import Planet
+from spacesim2.core.planet_attributes import PlanetAttributes
+from spacesim2.core.process import ProcessRegistry
 from spacesim2.core.ship import Ship, ShipStatus
 from spacesim2.core.skill import SkillsRegistry
 

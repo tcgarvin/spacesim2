@@ -6,15 +6,17 @@ app = marimo.App()
 
 @app.cell
 def _():
-    import os
     import json
+    import os
+    from pathlib import Path
+
     import marimo as mo
-    import polars as pl
     import plotly.express as px
     import plotly.graph_objects as go
+    import polars as pl
     from plotly.subplots import make_subplots
+
     from spacesim2.analysis.loading.loader import SimulationData
-    from pathlib import Path
 
     return Path, SimulationData, go, json, make_subplots, mo, os, pl, px
 
@@ -22,8 +24,8 @@ def _():
 @app.cell
 def _(mo, os, Path):
     from spacesim2.analysis.loading import (
-        get_run_path_with_fallback,
         NoRunsFoundError,
+        get_run_path_with_fallback,
     )
 
     try:

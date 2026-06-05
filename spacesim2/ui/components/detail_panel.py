@@ -1,14 +1,15 @@
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
+
 import pygame
 from pygame import Rect, Surface
 
-from spacesim2.core.actor import Actor, ActorType
-from spacesim2.core.ship import Ship, ShipStatus
-from spacesim2.core.planet import Planet
+from spacesim2.core.actor import Actor
 from spacesim2.core.commodity import CommodityDefinition
+from spacesim2.core.planet import Planet
+from spacesim2.core.ship import Ship, ShipStatus
 from spacesim2.core.simulation import Simulation
-from spacesim2.ui.utils.text import TextRenderer
 from spacesim2.ui.renderers.ui_renderer import UIRenderer
+from spacesim2.ui.utils.text import TextRenderer
 
 
 class DetailPanel:

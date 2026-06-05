@@ -5,7 +5,8 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 import pytest
-from .helpers import _get_mock_sim, _get_mock_brain
+
+from .helpers import _get_mock_brain, _get_mock_sim
 
 
 @pytest.fixture

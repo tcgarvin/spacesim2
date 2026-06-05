@@ -2,7 +2,6 @@
 
 import pyarrow as pa
 
-
 # Actor state per turn (money, inventory)
 ACTOR_TURNS_SCHEMA = pa.schema(
     [

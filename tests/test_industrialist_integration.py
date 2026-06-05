@@ -24,13 +24,13 @@ def test_industrialist_integration():
         brain_type = actor.brain.__class__.__name__
         print(f"  {actor.name}: {brain_type}")
 
-    print(f"\nBreakdown:")
+    print("\nBreakdown:")
     print(f"  Colonists: {colonists}")
     print(f"  Industrialists: {industrialists}")
     print(f"  Market Makers: {market_makers}")
 
     # Test running a few turns
-    print(f"\nRunning 3 turns...")
+    print("\nRunning 3 turns...")
     for turn in range(3):
         print(f"Turn {turn + 1}")
         sim.run_turn()
