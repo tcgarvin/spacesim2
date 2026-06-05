@@ -28,18 +28,14 @@ class SimulationData:
     def actor_turns(self) -> pl.DataFrame:
         """Load actor turn data."""
         if self._actor_turns is None:
-            self._actor_turns = pl.read_parquet(
-                self.run_path / "actor_turns.parquet"
-            )
+            self._actor_turns = pl.read_parquet(self.run_path / "actor_turns.parquet")
         return self._actor_turns
 
     @property
     def actor_drives(self) -> pl.DataFrame:
         """Load actor drive metrics."""
         if self._actor_drives is None:
-            self._actor_drives = pl.read_parquet(
-                self.run_path / "actor_drives.parquet"
-            )
+            self._actor_drives = pl.read_parquet(self.run_path / "actor_drives.parquet")
         return self._actor_drives
 
     @property

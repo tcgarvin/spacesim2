@@ -5,7 +5,9 @@ from dataclasses import dataclass
 from typing import Optional
 
 
-def _bimodal_sample(low_min: float, low_max: float, high_min: float, high_max: float) -> float:
+def _bimodal_sample(
+    low_min: float, low_max: float, high_min: float, high_max: float
+) -> float:
     """Generate a bimodal distribution sample.
 
     50% chance of sampling from the low range, 50% from the high range.

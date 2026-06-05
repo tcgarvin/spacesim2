@@ -49,8 +49,14 @@ class TestFullTechTree:
         # Set all planet resource attributes to 1.0 (perfect planet)
         attrs = actor.planet.attributes
         for field in (
-            "biomass", "fiber", "wood", "common_metal_ore", "nova_fuel_ore",
-            "simple_building_materials", "silica", "rare_earth_ore",
+            "biomass",
+            "fiber",
+            "wood",
+            "common_metal_ore",
+            "nova_fuel_ore",
+            "simple_building_materials",
+            "silica",
+            "rare_earth_ore",
         ):
             setattr(attrs, field, 1.0)
 
@@ -73,7 +79,9 @@ class TestFullTechTree:
         # random.random=0.5 keeps tool-break threshold (0.01) and resource-success checks safe.
         with (
             patch("spacesim2.core.skill.SkillCheck.success_check", return_value=True),
-            patch("spacesim2.core.skill.SkillCheck.multiplier_check", return_value=False),
+            patch(
+                "spacesim2.core.skill.SkillCheck.multiplier_check", return_value=False
+            ),
             patch("spacesim2.core.commands.random.random", return_value=0.5),
         ):
             self._phase_t0_raw_gathering(sim, actor)
@@ -129,7 +137,9 @@ class TestFullTechTree:
 
         # Smelting facility
         _run("build_smelting_facility", actor, 1)
-        assert _has("smelting_facility", actor, sim), "Should have built smelting facility"
+        assert _has("smelting_facility", actor, sim), (
+            "Should have built smelting facility"
+        )
 
         # Refine enough metal for facilities + tools + later T2 work
         _run("mine_common_metal_ore", actor, 60)
@@ -141,7 +151,9 @@ class TestFullTechTree:
 
         # Metalworking facility
         _run("build_metalworking_facility", actor, 1)
-        assert _has("metalworking_facility", actor, sim), "Should have built metalworking facility"
+        assert _has("metalworking_facility", actor, sim), (
+            "Should have built metalworking facility"
+        )
 
         # Metal tools (better quality, needs metalworking facility)
         _run("make_simple_tools", actor, 3)
@@ -208,7 +220,9 @@ class TestFullTechTree:
         assert _has("precision_forge", actor, sim), "Should have built precision forge"
 
         _run("build_electronics_workshop", actor, 1)
-        assert _has("electronics_workshop", actor, sim), "Should have built electronics workshop"
+        assert _has("electronics_workshop", actor, sim), (
+            "Should have built electronics workshop"
+        )
 
     # -----------------------------------------------------------------------
     # T2: Intermediate production
@@ -319,7 +333,9 @@ class TestFullTechTree:
 
         # Build advanced factory (T3 facility)
         _run("build_advanced_factory", actor, 1)
-        assert _has("advanced_factory", actor, sim), "Should have built advanced factory"
+        assert _has("advanced_factory", actor, sim), (
+            "Should have built advanced factory"
+        )
 
         # T3 goods
         _run("make_advanced_building_materials", actor, 2)

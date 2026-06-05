@@ -25,42 +25,62 @@ def main() -> None:
     )
 
     # Simulation parameters
-    parser.add_argument("--turns", type=int, default=100,
-                        help="Number of turns to simulate")
-    parser.add_argument("--planets", type=int, default=2,
-                        help="Number of planets")
-    parser.add_argument("--actors", type=int, default=100,
-                        help="Number of regular actors per planet")
-    parser.add_argument("--makers", type=int, default=2,
-                        help="Number of market makers per planet")
-    parser.add_argument("--ships", type=int, default=1,
-                        help="Number of ships")
+    parser.add_argument(
+        "--turns", type=int, default=100, help="Number of turns to simulate"
+    )
+    parser.add_argument("--planets", type=int, default=2, help="Number of planets")
+    parser.add_argument(
+        "--actors", type=int, default=100, help="Number of regular actors per planet"
+    )
+    parser.add_argument(
+        "--makers", type=int, default=2, help="Number of market makers per planet"
+    )
+    parser.add_argument("--ships", type=int, default=1, help="Number of ships")
 
     # Logging configuration
-    parser.add_argument("--log-all-actors", action="store_true",
-                        help="Log all actors (can be memory intensive)")
-    parser.add_argument("--log-sample", type=int, default=None,
-                        help="Log N randomly selected actors")
-    parser.add_argument("--log-actor-types", nargs="+",
-                        choices=["colonist", "industrialist", "market_maker"],
-                        help="Log specific actor types only")
+    parser.add_argument(
+        "--log-all-actors",
+        action="store_true",
+        help="Log all actors (can be memory intensive)",
+    )
+    parser.add_argument(
+        "--log-sample", type=int, default=None, help="Log N randomly selected actors"
+    )
+    parser.add_argument(
+        "--log-actor-types",
+        nargs="+",
+        choices=["colonist", "industrialist", "market_maker"],
+        help="Log specific actor types only",
+    )
 
     # Output configuration
-    parser.add_argument("--output", type=str, default="data/runs",
-                        help="Output directory for Parquet files")
-    parser.add_argument("--run-id", type=str, default=None,
-                        help="Custom run ID (default: auto-generated from timestamp)")
-    parser.add_argument("--quiet", action="store_true",
-                        help="Suppress simulation output")
-    parser.add_argument("--progress", action="store_true",
-                        help="Show progress bar")
+    parser.add_argument(
+        "--output",
+        type=str,
+        default="data/runs",
+        help="Output directory for Parquet files",
+    )
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        default=None,
+        help="Custom run ID (default: auto-generated from timestamp)",
+    )
+    parser.add_argument(
+        "--quiet", action="store_true", help="Suppress simulation output"
+    )
+    parser.add_argument("--progress", action="store_true", help="Show progress bar")
 
     # Notebook options
-    parser.add_argument("--notebook", action="store_true",
-                        help="Open marimo notebook after simulation")
-    parser.add_argument("--notebook-path", type=str,
-                        default="notebooks/analysis_template.py",
-                        help="Path to marimo notebook to open")
+    parser.add_argument(
+        "--notebook", action="store_true", help="Open marimo notebook after simulation"
+    )
+    parser.add_argument(
+        "--notebook-path",
+        type=str,
+        default="notebooks/analysis_template.py",
+        help="Path to marimo notebook to open",
+    )
 
     args = parser.parse_args()
 
@@ -71,7 +91,7 @@ def main() -> None:
         num_planets=args.planets,
         num_regular_actors=args.actors,
         num_market_makers=args.makers,
-        num_ships=args.ships
+        num_ships=args.ships,
     )
 
     # Configure logging
@@ -83,9 +103,10 @@ def main() -> None:
     elif args.log_sample:
         # Sample N actors (excluding market makers unless explicitly requested)
         eligible_actors = [
-            a for a in sim.actors
-            if a.actor_type != ActorType.MARKET_MAKER or
-            (args.log_actor_types and "market_maker" in args.log_actor_types)
+            a
+            for a in sim.actors
+            if a.actor_type != ActorType.MARKET_MAKER
+            or (args.log_actor_types and "market_maker" in args.log_actor_types)
         ]
         sample_size = min(args.log_sample, len(eligible_actors))
         sample = random.sample(eligible_actors, sample_size)
@@ -96,17 +117,22 @@ def main() -> None:
         # Log specific actor types
         for actor in sim.actors:
             brain_name = actor.brain.__class__.__name__
-            if ("colonist" in args.log_actor_types and
-                "Colonist" in brain_name):
+            if "colonist" in args.log_actor_types and "Colonist" in brain_name:
                 sim.data_logger.add_actor_to_log(actor)
-            elif ("industrialist" in args.log_actor_types and
-                  "Industrialist" in brain_name):
+            elif (
+                "industrialist" in args.log_actor_types
+                and "Industrialist" in brain_name
+            ):
                 sim.data_logger.add_actor_to_log(actor)
-            elif ("market_maker" in args.log_actor_types and
-                  actor.actor_type == ActorType.MARKET_MAKER):
+            elif (
+                "market_maker" in args.log_actor_types
+                and actor.actor_type == ActorType.MARKET_MAKER
+            ):
                 sim.data_logger.add_actor_to_log(actor)
         logged_count = len(sim.data_logger.get_all_logged_actors())
-        print(f"  Logging {logged_count} actors of types: {', '.join(args.log_actor_types)}")
+        print(
+            f"  Logging {logged_count} actors of types: {', '.join(args.log_actor_types)}"
+        )
     else:
         # Default: log one random non-market-maker actor
         actor = random.choice(sim.actors)
@@ -132,6 +158,7 @@ def main() -> None:
         # Suppress simulation output by redirecting stdout
         import sys
         import io
+
         old_stdout = sys.stdout
         sys.stdout = io.StringIO()
 
@@ -168,22 +195,30 @@ def main() -> None:
             print(f"⚠️  Notebook not found: {notebook_path}")
             print(f"   Please create the notebook first or use an existing one.")
             print(f"\nTo analyze manually:")
-            print(f"  SPACESIM_RUN_PATH='{output_path}' marimo edit --no-token {notebook_path}")
+            print(
+                f"  SPACESIM_RUN_PATH='{output_path}' marimo edit --no-token {notebook_path}"
+            )
         else:
             try:
                 # Launch marimo edit with the notebook
                 subprocess.run(
                     ["marimo", "edit", "--no-token", str(notebook_path)],
                     env=env,
-                    check=False  # Don't raise error if marimo exits normally
+                    check=False,  # Don't raise error if marimo exits normally
                 )
             except FileNotFoundError:
-                print("⚠️  marimo not found. Install with: uv pip install -e '.[analysis]'")
+                print(
+                    "⚠️  marimo not found. Install with: uv pip install -e '.[analysis]'"
+                )
                 print(f"\nTo analyze manually:")
-                print(f"  SPACESIM_RUN_PATH='{output_path}' marimo edit --no-token {notebook_path}")
+                print(
+                    f"  SPACESIM_RUN_PATH='{output_path}' marimo edit --no-token {notebook_path}"
+                )
     else:
         print(f"\nTo analyze this run:")
-        print(f"  SPACESIM_RUN_PATH='{output_path}' marimo edit --no-token {args.notebook_path}")
+        print(
+            f"  SPACESIM_RUN_PATH='{output_path}' marimo edit --no-token {args.notebook_path}"
+        )
         print(f"  # Or with auto-load: uv run scripts/run_analysis_batch.py --notebook")
 
 

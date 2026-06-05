@@ -42,37 +42,47 @@ def analyze_specific_trader(run_path: Path, ship_name: str) -> None:
 
     if len(buys) > 0 and len(sells) > 0:
         margin = avg_sell - avg_buy
-        print(f"Price margin: ${margin:.2f} ({margin/avg_buy*100:.1f}%)")
+        print(f"Price margin: ${margin:.2f} ({margin / avg_buy * 100:.1f}%)")
 
     print("\n\nTRADING LOCATIONS")
     print("-" * 80)
 
     if len(buys) > 0:
-        buy_planets = buys.group_by("planet_name").agg(
-            [
-                pl.len().alias("txns"),
-                pl.col("total_amount").sum().alias("spent"),
-                (pl.col("total_amount").sum() / pl.col("quantity").sum()).alias(
-                    "avg_price"
-                ),
-            ]
-        ).sort("spent", descending=True)
+        buy_planets = (
+            buys.group_by("planet_name")
+            .agg(
+                [
+                    pl.len().alias("txns"),
+                    pl.col("total_amount").sum().alias("spent"),
+                    (pl.col("total_amount").sum() / pl.col("quantity").sum()).alias(
+                        "avg_price"
+                    ),
+                ]
+            )
+            .sort("spent", descending=True)
+        )
 
         print("\nWhere ship BUYS:")
         for row in buy_planets.rows():
             planet, count, spent, avg_price = row
-            print(f"  {planet:<20}: {count:2d} txns, ${spent:6.0f} spent @ avg ${avg_price:.2f}")
+            print(
+                f"  {planet:<20}: {count:2d} txns, ${spent:6.0f} spent @ avg ${avg_price:.2f}"
+            )
 
     if len(sells) > 0:
-        sell_planets = sells.group_by("planet_name").agg(
-            [
-                pl.len().alias("txns"),
-                pl.col("total_amount").sum().alias("revenue"),
-                (pl.col("total_amount").sum() / pl.col("quantity").sum()).alias(
-                    "avg_price"
-                ),
-            ]
-        ).sort("revenue", descending=True)
+        sell_planets = (
+            sells.group_by("planet_name")
+            .agg(
+                [
+                    pl.len().alias("txns"),
+                    pl.col("total_amount").sum().alias("revenue"),
+                    (pl.col("total_amount").sum() / pl.col("quantity").sum()).alias(
+                        "avg_price"
+                    ),
+                ]
+            )
+            .sort("revenue", descending=True)
+        )
 
         print("\nWhere ship SELLS:")
         for row in sell_planets.rows():
@@ -106,10 +116,24 @@ def analyze_specific_trader(run_path: Path, ship_name: str) -> None:
     all_txns = pl.concat(
         [
             buys.select(
-                ["turn", "planet_name", "commodity_id", "quantity", "price", "total_amount"]
+                [
+                    "turn",
+                    "planet_name",
+                    "commodity_id",
+                    "quantity",
+                    "price",
+                    "total_amount",
+                ]
             ).with_columns([pl.lit("BUY").alias("type")]),
             sells.select(
-                ["turn", "planet_name", "commodity_id", "quantity", "price", "total_amount"]
+                [
+                    "turn",
+                    "planet_name",
+                    "commodity_id",
+                    "quantity",
+                    "price",
+                    "total_amount",
+                ]
             ).with_columns([pl.lit("SELL").alias("type")]),
         ]
     ).sort("turn")

@@ -1,5 +1,10 @@
 import random
-from spacesim2.core.drives.actor_drive import ActorDrive, DriveMetrics, clamp01, log_norm_ratio
+from spacesim2.core.drives.actor_drive import (
+    ActorDrive,
+    DriveMetrics,
+    clamp01,
+    log_norm_ratio,
+)
 from spacesim2.core.commodity import CommodityRegistry
 
 # Tunables
@@ -39,7 +44,9 @@ class ClothingDrive(ActorDrive):
         super().__init__(commodity_registry=commodity_registry)
         self.clothing_good = commodity_registry.get_commodity(CLOTHING_NAME)
         self.quality_good = commodity_registry.get_commodity(QUALITY_CLOTHING_NAME)
-        self.metrics = ClothingDriveMetrics(health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY)
+        self.metrics = ClothingDriveMetrics(
+            health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY
+        )
 
     def tick(self, actor) -> DriveMetrics:
         p_event = BASE_EVENT_PROB
@@ -58,13 +65,17 @@ class ClothingDrive(ActorDrive):
         event_today = random.random() < p_event
         if event_today:
             # Try quality first, fall back to basic
-            if self.quality_good and actor.inventory.remove_commodity(self.quality_good, 1):
+            if self.quality_good and actor.inventory.remove_commodity(
+                self.quality_good, 1
+            ):
                 consumed_quality = True
             else:
                 actor.inventory.remove_commodity(self.clothing_good, 1)
 
             # Recalculate post-consumption inventory
-            clothing_inventory = actor.inventory.get_available_quantity(self.clothing_good)
+            clothing_inventory = actor.inventory.get_available_quantity(
+                self.clothing_good
+            )
             quality_inventory = (
                 actor.inventory.get_available_quantity(self.quality_good)
                 if self.quality_good
@@ -79,7 +90,9 @@ class ClothingDrive(ActorDrive):
         # Buffer from post-consumption stock (both types)
         exp_events_per_day = max(p_event, 1e-9)
         expected_coverage_days = total_inventory / exp_events_per_day
-        buffer = log_norm_ratio(expected_coverage_days, BUFFER_TARGET_DAYS, BUFFER_MAX_DAYS)
+        buffer = log_norm_ratio(
+            expected_coverage_days, BUFFER_TARGET_DAYS, BUFFER_MAX_DAYS
+        )
 
         self._update_metrics(health=health, debt=debt, buffer=buffer, urgency=URGENCY)
         return self.metrics

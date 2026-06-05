@@ -35,38 +35,38 @@ class PygameUI:
 
     def __init__(self, simulation: Simulation) -> None:
         """Initialize the Pygame UI.
-        
+
         Args:
             simulation: The simulation to visualize
         """
         self.simulation = simulation
-        
+
         # Screen dimensions
         self.width = 1920
         self.height = 1080
-        
+
         # Pane dimensions
         self.left_pane_width = 640
         self.center_pane_width = 640
         self.right_pane_width = 640
-        
+
         # UI state
         self.active_pane = 1  # 0=left, 1=center, 2=right
         self.selected_planet: Optional[Planet] = None
         self.selected_actor: Optional[Actor] = None
         self.selected_ship: Optional[Ship] = None
         self.selected_commodity: Optional[CommodityDefinition] = None
-        
+
         # Initialize color manager
         self.color_manager = ColorManager()
         self.colors = self.color_manager.colors
-        
+
         # Pygame objects
         self.screen: Optional[pygame.Surface] = None
         self.fonts: Dict[str, pygame.font.Font] = {}
         self.clock: Optional[pygame.time.Clock] = None
         self.running = False
-        
+
         # UI components
         self.text_renderer: Optional[TextRenderer] = None
         self.input_handler: Optional[InputHandler] = None
@@ -84,65 +84,73 @@ class PygameUI:
         pygame.init()
         pygame.display.set_caption("SpaceSim2")
         self.screen = pygame.display.set_mode((self.width, self.height))
-        
+
         # Initialize text renderer
         self.text_renderer = TextRenderer()
         self.text_renderer.initialize()
-        
+
         # Initialize input handler
         self.input_handler = InputHandler()
         self._register_input_handlers()
-        
+
         # Initialize UI renderer
         self.ui_renderer = UIRenderer(self.screen, self.colors)
-        
+
         # Initialize UI components
         self._initialize_components()
-        
+
         # Set up clock
         self.clock = pygame.time.Clock()
-        
+
         # Select first planet by default
         if self.simulation.planets:
             self.selected_planet = self.simulation.planets[0]
             self._update_selected_planet(self.selected_planet)
-        
+
         return True
-        
+
     def _initialize_components(self) -> None:
         """Initialize all UI components."""
         # Left pane component
         self.actor_list_panel = ActorListPanel(
-            self.screen, self.text_renderer.fonts, self.colors, 
-            self.left_pane_width, self.height
+            self.screen,
+            self.text_renderer.fonts,
+            self.colors,
+            self.left_pane_width,
+            self.height,
         )
-        
+
         # Center pane
         self.planet_view_panel = PlanetViewPanel(
-            self.screen, self.colors,
-            self.left_pane_width, 0, self.center_pane_width, self.height
+            self.screen,
+            self.colors,
+            self.left_pane_width,
+            0,
+            self.center_pane_width,
+            self.height,
         )
         self.planet_view_panel.set_planets(self.simulation.planets)
-        
+
         # Right pane
         self.detail_panel = DetailPanel(
-            self.screen, self.colors,
-            self.left_pane_width + self.center_pane_width, 0, 
-            self.right_pane_width, self.height
+            self.screen,
+            self.colors,
+            self.left_pane_width + self.center_pane_width,
+            0,
+            self.right_pane_width,
+            self.height,
         )
         self.detail_panel.set_simulation(self.simulation)
-        
+
         # Status bar
-        self.status_bar = StatusBar(
-            self.screen, self.colors, self.width, self.height
-        )
+        self.status_bar = StatusBar(self.screen, self.colors, self.width, self.height)
         self.status_bar.set_simulation(self.simulation)
-    
+
     def _register_input_handlers(self) -> None:
         """Register input event handlers."""
         if not self.input_handler:
             return
-            
+
         # Register key handlers
         self.input_handler.register_key_callback(pygame.K_ESCAPE, self._handle_escape)
         self.input_handler.register_key_callback(pygame.K_SPACE, self._handle_space)
@@ -152,35 +160,35 @@ class PygameUI:
         self.input_handler.register_key_callback(pygame.K_UP, self._handle_up)
         self.input_handler.register_key_callback(pygame.K_DOWN, self._handle_down)
         self.input_handler.register_key_callback(pygame.K_RETURN, self._handle_enter)
-        
+
         # Register mouse handlers
         self.input_handler.register_mouse_click_callback(1, self._handle_mouse_click)
         self.input_handler.register_mouse_motion_callback(self._handle_mouse_motion)
-        
+
         # Register scroll handlers
         self.input_handler.register_mouse_scroll_callback(4, self._handle_scroll_up)
         self.input_handler.register_mouse_scroll_callback(5, self._handle_scroll_down)
-        
+
         # Register quit handlers
         self.input_handler.register_quit_callback(self._handle_quit)
-    
+
     def _handle_escape(self, event: pygame.event.Event) -> bool:
         """Handle Escape key.
-        
+
         Returns:
             False to indicate the application should quit
         """
         self.running = False
         return False
-    
+
     def _handle_space(self, event: pygame.event.Event) -> None:
         """Handle Space key to advance simulation."""
         self.simulation.run_turn()
-    
+
     def _handle_tab(self, event: pygame.event.Event) -> None:
         """Handle Tab key to cycle through panes."""
         self.active_pane = (self.active_pane + 1) % 3
-    
+
     def _handle_left(self, event: pygame.event.Event) -> None:
         """Handle Left key."""
         # Move to left pane
@@ -189,7 +197,7 @@ class PygameUI:
         else:
             # Handle navigation within the active pane
             self._handle_navigation_in_active_pane(event.key)
-    
+
     def _handle_right(self, event: pygame.event.Event) -> None:
         """Handle Right key."""
         # Move to right pane
@@ -198,15 +206,15 @@ class PygameUI:
         else:
             # Handle navigation within the active pane
             self._handle_navigation_in_active_pane(event.key)
-    
+
     def _handle_up(self, event: pygame.event.Event) -> None:
         """Handle Up key."""
         self._handle_navigation_in_active_pane(event.key)
-    
+
     def _handle_down(self, event: pygame.event.Event) -> None:
         """Handle Down key."""
         self._handle_navigation_in_active_pane(event.key)
-    
+
     def _handle_enter(self, event: pygame.event.Event) -> None:
         """Handle Enter key."""
         if self.active_pane == 1:  # Center pane (planet grid)
@@ -215,23 +223,23 @@ class PygameUI:
         else:
             # Handle navigation within the active pane
             self._handle_navigation_in_active_pane(event.key)
-    
+
     # Ship toggle removed as ships are now integrated into actor list
-    
+
     def _handle_mouse_motion(self, event: pygame.event.Event) -> None:
         """Handle mouse motion for hover effects."""
         x, y = event.pos
-        
+
         # Update hover states only where needed
         if x < self.left_pane_width:
             # Handle entity hover in left pane
             if self.actor_list_panel:
                 self.actor_list_panel.handle_mouse_motion(x, y)
-        
+
     def _handle_mouse_click(self, event: pygame.event.Event) -> None:
         """Handle mouse click."""
         x, y = event.pos
-        
+
         # Determine which pane was clicked
         if x < self.left_pane_width:
             self.active_pane = 0
@@ -253,71 +261,75 @@ class PygameUI:
             if self.detail_panel:
                 self.detail_panel.handle_click(x, y)
                 self.selected_commodity = self.detail_panel.selected_commodity
-                
+
                 # Set market context when a commodity is selected
                 if self.actor_list_panel:
                     if self.selected_commodity:
-                        self.actor_list_panel.set_market_context(self.selected_commodity)
+                        self.actor_list_panel.set_market_context(
+                            self.selected_commodity
+                        )
                     else:
                         self.actor_list_panel.set_context("default")
-    
+
     def _handle_scroll_up(self, event: pygame.event.Event) -> None:
         """Handle scroll up."""
         if self.active_pane == 0 and self.actor_list_panel:  # Left pane
             self.actor_list_panel.scroll_up()
-    
+
     def _handle_scroll_down(self, event: pygame.event.Event) -> None:
         """Handle scroll down."""
         if self.active_pane == 0 and self.actor_list_panel:  # Left pane
             self.actor_list_panel.scroll_down()
-    
+
     def _handle_quit(self) -> None:
         """Handle quit event."""
         self.running = False
-    
+
     def _handle_navigation_in_active_pane(self, key: int) -> None:
         """Handle navigation keys within the active pane."""
         if self.active_pane == 0:  # Left pane (entity list)
             if self.actor_list_panel and self.actor_list_panel.handle_key(key):
                 self.selected_actor = self.actor_list_panel.selected_actor
                 self.selected_ship = self.actor_list_panel.selected_ship
-        
+
         elif self.active_pane == 1:  # Center pane (planet grid)
             if self.planet_view_panel:
                 if self.planet_view_panel.handle_key(key):
                     self.selected_planet = self.planet_view_panel.selected_planet
                     self._update_selected_planet(self.selected_planet)
-        
+
         elif self.active_pane == 2:  # Right pane (detail view)
             if self.detail_panel:
                 if self.detail_panel.handle_key(key):
                     self.selected_commodity = self.detail_panel.selected_commodity
-                    
+
                     # Set market context when a commodity is selected (keyboard nav)
                     if self.actor_list_panel:
                         if self.selected_commodity:
-                            self.actor_list_panel.set_market_context(self.selected_commodity)
+                            self.actor_list_panel.set_market_context(
+                                self.selected_commodity
+                            )
                         else:
                             self.actor_list_panel.set_context("default")
-    
+
     def _update_selected_planet(self, planet: Optional[Planet]) -> None:
         """Update all components with the newly selected planet."""
         if not planet:
             return
-            
+
         if self.actor_list_panel:
             self.actor_list_panel.set_selected_planet(planet)
             self.actor_list_panel.set_selected_actor(None)
             self.actor_list_panel.set_selected_ship(None)
             self.actor_list_panel.set_context("default")
-            
+
         if self.planet_view_panel:
             self.planet_view_panel.set_selected_planet(planet)
-            
+
         if self.detail_panel:
             self.detail_panel.set_selected_planet(planet)
             self.detail_panel.set_selected_ship(None)
-            
+
         # Clear selections
         self.selected_actor = None
         self.selected_ship = None
@@ -327,7 +339,7 @@ class PygameUI:
         """Handle pygame events. Return False to quit."""
         if not self.input_handler:
             return False
-            
+
         return self.input_handler.handle_events()
 
     def render(self) -> None:
@@ -337,17 +349,17 @@ class PygameUI:
 
         # Clear screen with background color
         self.screen.fill(self.colors["background"])
-        
+
         # Draw pane backgrounds with active highlight
         if self.ui_renderer:
             pane_dimensions = {
                 "left_width": self.left_pane_width,
                 "center_width": self.center_pane_width,
                 "right_width": self.right_pane_width,
-                "height": self.height
+                "height": self.height,
             }
             self.ui_renderer.draw_pane_backgrounds(self.active_pane, pane_dimensions)
-        
+
         # Render the actor/ship list
         if self.actor_list_panel:
             # Always set the current context before rendering
@@ -356,19 +368,19 @@ class PygameUI:
             else:
                 self.actor_list_panel.set_context("default")
             self.actor_list_panel.render(self.text_renderer)
-                
+
         if self.planet_view_panel:
             self.planet_view_panel.render(self.text_renderer, self.simulation.ships)
-            
+
         if self.detail_panel:
             # Update selected objects in case they changed
             self.detail_panel.set_selected_ship(self.selected_ship)
             self.detail_panel.set_selected_commodity(self.selected_commodity)
             self.detail_panel.render(self.text_renderer)
-            
+
         if self.status_bar:
             self.status_bar.render(self.text_renderer)
-        
+
         # Update display
         pygame.display.flip()
 

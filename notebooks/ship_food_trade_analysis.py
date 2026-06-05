@@ -28,6 +28,7 @@ def _():
     from plotly.subplots import make_subplots
     from spacesim2.analysis.loading.loader import SimulationData
     from pathlib import Path
+
     return Path, SimulationData, go, json, make_subplots, mo, os, pl, px
 
 
@@ -81,7 +82,9 @@ def _(Path, mo, os):
 def _(Path, SimulationData, json, mo, run_selector):
     # Load simulation data and planet attributes
     if not run_selector.value:
-        _status_output = mo.md("No run path specified. Run a simulation with --planet-attributes first.")
+        _status_output = mo.md(
+            "No run path specified. Run a simulation with --planet-attributes first."
+        )
         data = None
         planet_attrs = {}
     else:
@@ -140,14 +143,16 @@ def _(mo, planet_attrs, pl, px):
         attrs_df = pl.DataFrame(_rows)
 
         # Add food classification
-        attrs_df = attrs_df.with_columns([
-            pl.when(pl.col("biomass") < 0.4)
-            .then(pl.lit("Food-Poor"))
-            .when(pl.col("biomass") < 0.6)
-            .then(pl.lit("Moderate"))
-            .otherwise(pl.lit("Food-Rich"))
-            .alias("food_classification")
-        ])
+        attrs_df = attrs_df.with_columns(
+            [
+                pl.when(pl.col("biomass") < 0.4)
+                .then(pl.lit("Food-Poor"))
+                .when(pl.col("biomass") < 0.6)
+                .then(pl.lit("Moderate"))
+                .otherwise(pl.lit("Food-Rich"))
+                .alias("food_classification")
+            ]
+        )
 
         # Create bar chart of biomass by planet
         _sorted = attrs_df.sort("biomass")
@@ -160,16 +165,24 @@ def _(mo, planet_attrs, pl, px):
             color_discrete_map={
                 "Food-Poor": "#ff6b6b",
                 "Moderate": "#ffd93d",
-                "Food-Rich": "#6bcb77"
+                "Food-Rich": "#6bcb77",
             },
             title="Planet Biomass Attributes (Food Production Capacity)",
-            labels={"biomass": "Biomass Attribute (0-1)", "planet": "Planet"}
+            labels={"biomass": "Biomass Attribute (0-1)", "planet": "Planet"},
         )
 
-        biomass_chart.add_hline(y=0.4, line_dash="dash", line_color="red",
-                                annotation_text="Food-Poor Threshold")
-        biomass_chart.add_hline(y=0.6, line_dash="dash", line_color="green",
-                                annotation_text="Food-Rich Threshold")
+        biomass_chart.add_hline(
+            y=0.4,
+            line_dash="dash",
+            line_color="red",
+            annotation_text="Food-Poor Threshold",
+        )
+        biomass_chart.add_hline(
+            y=0.6,
+            line_dash="dash",
+            line_color="green",
+            annotation_text="Food-Rich Threshold",
+        )
 
         _food_poor = attrs_df.filter(pl.col("food_classification") == "Food-Poor")
         _food_rich = attrs_df.filter(pl.col("food_classification") == "Food-Rich")
@@ -214,21 +227,15 @@ def _(data, mo, pl):
         drives_with_planet = None
     else:
         # Get actor-planet mapping (actors stay on their home planet)
-        _actor_planets = data.actor_turns.select([
-            "actor_id", "planet_name", "turn"
-        ])
+        _actor_planets = data.actor_turns.select(["actor_id", "planet_name", "turn"])
 
         # Join drives with actor locations
         drives_with_planet = data.actor_drives.join(
-            _actor_planets,
-            on=["actor_id", "turn"],
-            how="left"
+            _actor_planets, on=["actor_id", "turn"], how="left"
         )
 
         # Filter to food drive only
-        drives_with_planet = drives_with_planet.filter(
-            pl.col("drive_name") == "food"
-        )
+        drives_with_planet = drives_with_planet.filter(pl.col("drive_name") == "food")
 
         _output = mo.md(f"""
         **Drive Data:** {len(drives_with_planet):,} food drive records across simulation
@@ -246,33 +253,47 @@ def _(attrs_df, drives_with_planet, go, make_subplots, mo, pl):
         drive_metrics_fig = None
     else:
         # Add food classification to drive data
-        _class_map = dict(zip(
-            attrs_df["planet"].to_list(),
-            attrs_df["food_classification"].to_list()
-        ))
+        _class_map = dict(
+            zip(attrs_df["planet"].to_list(), attrs_df["food_classification"].to_list())
+        )
 
-        _drives_classified = drives_with_planet.with_columns([
-            pl.col("planet_name").replace(_class_map, default="Unknown").alias("food_classification")
-        ])
+        _drives_classified = drives_with_planet.with_columns(
+            [
+                pl.col("planet_name")
+                .replace(_class_map, default="Unknown")
+                .alias("food_classification")
+            ]
+        )
 
         # Aggregate by turn and classification
-        _agg = _drives_classified.group_by(["turn", "food_classification"]).agg([
-            pl.col("health").mean().alias("avg_health"),
-            pl.col("debt").mean().alias("avg_debt"),
-            pl.col("buffer").mean().alias("avg_buffer"),
-        ]).sort("turn")
+        _agg = (
+            _drives_classified.group_by(["turn", "food_classification"])
+            .agg(
+                [
+                    pl.col("health").mean().alias("avg_health"),
+                    pl.col("debt").mean().alias("avg_debt"),
+                    pl.col("buffer").mean().alias("avg_buffer"),
+                ]
+            )
+            .sort("turn")
+        )
 
         # Create subplots for health, debt, and buffer
         drive_metrics_fig = make_subplots(
-            rows=3, cols=1,
-            subplot_titles=("Food Drive Health", "Food Drive Debt", "Food Drive Buffer"),
-            vertical_spacing=0.1
+            rows=3,
+            cols=1,
+            subplot_titles=(
+                "Food Drive Health",
+                "Food Drive Debt",
+                "Food Drive Buffer",
+            ),
+            vertical_spacing=0.1,
         )
 
         _colors = {
             "Food-Poor": "#ff6b6b",
             "Moderate": "#ffd93d",
-            "Food-Rich": "#6bcb77"
+            "Food-Rich": "#6bcb77",
         }
 
         for _classification in ["Food-Poor", "Moderate", "Food-Rich"]:
@@ -290,7 +311,8 @@ def _(attrs_df, drives_with_planet, go, make_subplots, mo, pl):
                     line=dict(color=_color),
                     legendgroup=_classification,
                 ),
-                row=1, col=1
+                row=1,
+                col=1,
             )
 
             drive_metrics_fig.add_trace(
@@ -302,7 +324,8 @@ def _(attrs_df, drives_with_planet, go, make_subplots, mo, pl):
                     legendgroup=_classification,
                     showlegend=False,
                 ),
-                row=2, col=1
+                row=2,
+                col=1,
             )
 
             drive_metrics_fig.add_trace(
@@ -314,13 +337,14 @@ def _(attrs_df, drives_with_planet, go, make_subplots, mo, pl):
                     legendgroup=_classification,
                     showlegend=False,
                 ),
-                row=3, col=1
+                row=3,
+                col=1,
             )
 
         drive_metrics_fig.update_layout(
             title="Food Drive Metrics by Planet Classification",
             height=700,
-            hovermode="x unified"
+            hovermode="x unified",
         )
 
         drive_metrics_fig.update_yaxes(title_text="Health (0-1)", row=1, col=1)
@@ -373,14 +397,14 @@ def _(data, mo, pl):
 
         # Trader buys (trader is buyer)
         trader_food_buys = data.market_transactions.filter(
-            pl.col("buyer_name").str.contains("Trader") &
-            pl.col("commodity_id").is_in(_food_commodities)
+            pl.col("buyer_name").str.contains("Trader")
+            & pl.col("commodity_id").is_in(_food_commodities)
         )
 
         # Trader sells (trader is seller)
         trader_food_sells = data.market_transactions.filter(
-            pl.col("seller_name").str.contains("Trader") &
-            pl.col("commodity_id").is_in(_food_commodities)
+            pl.col("seller_name").str.contains("Trader")
+            & pl.col("commodity_id").is_in(_food_commodities)
         )
 
         _output = mo.md(f"""
@@ -401,30 +425,33 @@ def _(attrs_df, mo, pl, px, trader_food_buys, trader_food_sells):
         net_imports_fig = None
     else:
         # Trader buys FROM a planet = that planet is exporting
-        _exports = trader_food_buys.group_by("planet_name").agg([
-            pl.col("quantity").sum().alias("exported_qty")
-        ])
+        _exports = trader_food_buys.group_by("planet_name").agg(
+            [pl.col("quantity").sum().alias("exported_qty")]
+        )
 
         # Trader sells TO a planet = that planet is importing
-        _imports = trader_food_sells.group_by("planet_name").agg([
-            pl.col("quantity").sum().alias("imported_qty")
-        ])
+        _imports = trader_food_sells.group_by("planet_name").agg(
+            [pl.col("quantity").sum().alias("imported_qty")]
+        )
 
         # Combine and calculate net
         _net = _exports.join(_imports, on="planet_name", how="outer").fill_null(0)
-        _net = _net.with_columns([
-            (pl.col("imported_qty") - pl.col("exported_qty")).alias("net_imports")
-        ])
+        _net = _net.with_columns(
+            [(pl.col("imported_qty") - pl.col("exported_qty")).alias("net_imports")]
+        )
 
         # Add biomass attribute
-        _biomass_map = dict(zip(
-            attrs_df["planet"].to_list(),
-            attrs_df["biomass"].to_list()
-        ))
+        _biomass_map = dict(
+            zip(attrs_df["planet"].to_list(), attrs_df["biomass"].to_list())
+        )
 
-        _net = _net.with_columns([
-            pl.col("planet_name").replace(_biomass_map, default=0.5).alias("biomass_attr")
-        ]).sort("biomass_attr")
+        _net = _net.with_columns(
+            [
+                pl.col("planet_name")
+                .replace(_biomass_map, default=0.5)
+                .alias("biomass_attr")
+            ]
+        ).sort("biomass_attr")
 
         net_imports_fig = px.bar(
             _net.to_pandas(),
@@ -436,8 +463,8 @@ def _(attrs_df, mo, pl, px, trader_food_buys, trader_food_sells):
             labels={
                 "net_imports": "Net Imports (positive = importing)",
                 "planet_name": "Planet",
-                "biomass_attr": "Biomass Attribute"
-            }
+                "biomass_attr": "Biomass Attribute",
+            },
         )
 
         net_imports_fig.add_hline(y=0, line_dash="solid", line_color="black")
@@ -471,23 +498,39 @@ def _(mo, pl, trader_food_buys, trader_food_sells):
         trade_routes_df = None
     else:
         # For each trader, find their buying and selling patterns
-        _buy_summary = trader_food_buys.group_by(["buyer_name", "planet_name"]).agg([
-            pl.col("quantity").sum().alias("qty_bought"),
-            pl.col("price").mean().alias("avg_buy_price")
-        ]).rename({"buyer_name": "trader", "planet_name": "buy_planet"})
+        _buy_summary = (
+            trader_food_buys.group_by(["buyer_name", "planet_name"])
+            .agg(
+                [
+                    pl.col("quantity").sum().alias("qty_bought"),
+                    pl.col("price").mean().alias("avg_buy_price"),
+                ]
+            )
+            .rename({"buyer_name": "trader", "planet_name": "buy_planet"})
+        )
 
-        _sell_summary = trader_food_sells.group_by(["seller_name", "planet_name"]).agg([
-            pl.col("quantity").sum().alias("qty_sold"),
-            pl.col("price").mean().alias("avg_sell_price")
-        ]).rename({"seller_name": "trader", "planet_name": "sell_planet"})
+        _sell_summary = (
+            trader_food_sells.group_by(["seller_name", "planet_name"])
+            .agg(
+                [
+                    pl.col("quantity").sum().alias("qty_sold"),
+                    pl.col("price").mean().alias("avg_sell_price"),
+                ]
+            )
+            .rename({"seller_name": "trader", "planet_name": "sell_planet"})
+        )
 
         # Build route table
         _routes = []
         _traders = _buy_summary["trader"].unique().to_list()
 
         for _t in _traders:
-            _t_buys = _buy_summary.filter(pl.col("trader") == _t).sort("qty_bought", descending=True)
-            _t_sells = _sell_summary.filter(pl.col("trader") == _t).sort("qty_sold", descending=True)
+            _t_buys = _buy_summary.filter(pl.col("trader") == _t).sort(
+                "qty_bought", descending=True
+            )
+            _t_sells = _sell_summary.filter(pl.col("trader") == _t).sort(
+                "qty_sold", descending=True
+            )
 
             if len(_t_buys) > 0 and len(_t_sells) > 0:
                 _buy_planet = _t_buys["buy_planet"][0]
@@ -498,18 +541,24 @@ def _(mo, pl, trader_food_buys, trader_food_sells):
                 _sell_qty = _t_sells["qty_sold"][0]
                 _sell_price = round(_t_sells["avg_sell_price"][0], 1)
 
-                _profit_margin = ((_sell_price - _buy_price) / _buy_price * 100) if _buy_price > 0 else 0
+                _profit_margin = (
+                    ((_sell_price - _buy_price) / _buy_price * 100)
+                    if _buy_price > 0
+                    else 0
+                )
 
-                _routes.append({
-                    "Trader": _t,
-                    "Buy From": _buy_planet,
-                    "Qty Bought": _buy_qty,
-                    "Avg Buy Price": _buy_price,
-                    "Sell At": _sell_planet,
-                    "Qty Sold": _sell_qty,
-                    "Avg Sell Price": _sell_price,
-                    "Profit Margin %": round(_profit_margin, 1)
-                })
+                _routes.append(
+                    {
+                        "Trader": _t,
+                        "Buy From": _buy_planet,
+                        "Qty Bought": _buy_qty,
+                        "Avg Buy Price": _buy_price,
+                        "Sell At": _sell_planet,
+                        "Qty Sold": _sell_qty,
+                        "Avg Sell Price": _sell_price,
+                        "Profit Margin %": round(_profit_margin, 1),
+                    }
+                )
 
         if _routes:
             trade_routes_df = pl.DataFrame(_routes).sort("Qty Bought", descending=True)
@@ -550,9 +599,7 @@ def _(data, mo, pl):
     else:
         food_prices = data.market_snapshots.filter(
             pl.col("commodity_id") == "food"
-        ).select([
-            "turn", "planet_name", "avg_price", "volume"
-        ])
+        ).select(["turn", "planet_name", "avg_price", "volume"])
 
         _output = mo.md(f"""
         **Food price records:** {len(food_prices):,}
@@ -570,19 +617,23 @@ def _(attrs_df, food_prices, mo, pl, px):
         food_price_fig = None
     else:
         # Add biomass attribute to prices
-        _biomass_map = dict(zip(
-            attrs_df["planet"].to_list(),
-            attrs_df["biomass"].to_list()
-        ))
-        _class_map = dict(zip(
-            attrs_df["planet"].to_list(),
-            attrs_df["food_classification"].to_list()
-        ))
+        _biomass_map = dict(
+            zip(attrs_df["planet"].to_list(), attrs_df["biomass"].to_list())
+        )
+        _class_map = dict(
+            zip(attrs_df["planet"].to_list(), attrs_df["food_classification"].to_list())
+        )
 
-        _prices_classified = food_prices.with_columns([
-            pl.col("planet_name").replace(_biomass_map, default=0.5).alias("biomass_attr"),
-            pl.col("planet_name").replace(_class_map, default="Unknown").alias("food_classification")
-        ])
+        _prices_classified = food_prices.with_columns(
+            [
+                pl.col("planet_name")
+                .replace(_biomass_map, default=0.5)
+                .alias("biomass_attr"),
+                pl.col("planet_name")
+                .replace(_class_map, default="Unknown")
+                .alias("food_classification"),
+            ]
+        )
 
         food_price_fig = px.line(
             _prices_classified.to_pandas(),
@@ -593,8 +644,8 @@ def _(attrs_df, food_prices, mo, pl, px):
             labels={
                 "avg_price": "Average Food Price",
                 "turn": "Turn",
-                "planet_name": "Planet"
-            }
+                "planet_name": "Planet",
+            },
         )
 
         food_price_fig.update_layout(hovermode="x unified")
@@ -622,16 +673,20 @@ def _(attrs_df, food_prices, mo, pl, px):
         price_vs_biomass_fig = None
     else:
         # Calculate average food price per planet
-        _avg_prices = food_prices.group_by("planet_name").agg([
-            pl.col("avg_price").mean().alias("mean_food_price"),
-            pl.col("avg_price").std().alias("price_std")
-        ])
+        _avg_prices = food_prices.group_by("planet_name").agg(
+            [
+                pl.col("avg_price").mean().alias("mean_food_price"),
+                pl.col("avg_price").std().alias("price_std"),
+            ]
+        )
 
         # Join with biomass
         _comparison = _avg_prices.join(
-            attrs_df.select(["planet", "biomass", "food_classification"]).rename({"planet": "planet_name"}),
+            attrs_df.select(["planet", "biomass", "food_classification"]).rename(
+                {"planet": "planet_name"}
+            ),
             on="planet_name",
-            how="left"
+            how="left",
         )
 
         price_vs_biomass_fig = px.scatter(
@@ -642,26 +697,28 @@ def _(attrs_df, food_prices, mo, pl, px):
             color_discrete_map={
                 "Food-Poor": "#ff6b6b",
                 "Moderate": "#ffd93d",
-                "Food-Rich": "#6bcb77"
+                "Food-Rich": "#6bcb77",
             },
             text="planet_name",
             title="Average Food Price vs Biomass Attribute",
             labels={
                 "biomass": "Biomass Attribute",
                 "mean_food_price": "Average Food Price",
-                "food_classification": "Classification"
+                "food_classification": "Classification",
             },
-            size_max=15
+            size_max=15,
         )
 
         price_vs_biomass_fig.update_traces(textposition="top center")
         price_vs_biomass_fig.update_layout(showlegend=True)
 
         # Calculate correlation
-        _values = _comparison.select([
-            pl.col("biomass").cast(pl.Float64),
-            pl.col("mean_food_price").cast(pl.Float64)
-        ]).drop_nulls()
+        _values = _comparison.select(
+            [
+                pl.col("biomass").cast(pl.Float64),
+                pl.col("mean_food_price").cast(pl.Float64),
+            ]
+        ).drop_nulls()
 
         if len(_values) >= 3:
             _biomass_vals = _values["biomass"].to_list()
@@ -671,11 +728,16 @@ def _(attrs_df, food_prices, mo, pl, px):
             _mean_b = sum(_biomass_vals) / _n
             _mean_p = sum(_price_vals) / _n
 
-            _num = sum((b - _mean_b) * (p - _mean_p) for b, p in zip(_biomass_vals, _price_vals))
+            _num = sum(
+                (b - _mean_b) * (p - _mean_p)
+                for b, p in zip(_biomass_vals, _price_vals)
+            )
             _denom_b = sum((b - _mean_b) ** 2 for b in _biomass_vals) ** 0.5
             _denom_p = sum((p - _mean_p) ** 2 for p in _price_vals) ** 0.5
 
-            _corr = _num / (_denom_b * _denom_p) if (_denom_b > 0 and _denom_p > 0) else 0
+            _corr = (
+                _num / (_denom_b * _denom_p) if (_denom_b > 0 and _denom_p > 0) else 0
+            )
         else:
             _corr = 0
 
@@ -711,7 +773,15 @@ def _(mo):
 
 
 @app.cell
-def _(attrs_df, drives_with_planet, food_prices, mo, pl, trader_food_buys, trader_food_sells):
+def _(
+    attrs_df,
+    drives_with_planet,
+    food_prices,
+    mo,
+    pl,
+    trader_food_buys,
+    trader_food_sells,
+):
     # Build comprehensive correlation analysis
     if attrs_df is None:
         _output = mo.md("No data for correlation analysis")
@@ -728,82 +798,134 @@ def _(attrs_df, drives_with_planet, food_prices, mo, pl, trader_food_buys, trade
             _num = sum((x - _mean_x) * (y - _mean_y) for x, y in zip(x_vals, y_vals))
             _denom_x = sum((x - _mean_x) ** 2 for x in x_vals) ** 0.5
             _denom_y = sum((y - _mean_y) ** 2 for y in y_vals) ** 0.5
-            return _num / (_denom_x * _denom_y) if (_denom_x > 0 and _denom_y > 0) else 0
+            return (
+                _num / (_denom_x * _denom_y) if (_denom_x > 0 and _denom_y > 0) else 0
+            )
 
         # 1. Biomass vs Average Food Price
         if food_prices is not None and len(food_prices) > 0:
-            _avg_prices = food_prices.group_by("planet_name").agg([
-                pl.col("avg_price").mean().alias("mean_price")
-            ])
+            _avg_prices = food_prices.group_by("planet_name").agg(
+                [pl.col("avg_price").mean().alias("mean_price")]
+            )
             _joined = _avg_prices.join(
-                attrs_df.select(["planet", "biomass"]).rename({"planet": "planet_name"}),
-                on="planet_name", how="inner"
+                attrs_df.select(["planet", "biomass"]).rename(
+                    {"planet": "planet_name"}
+                ),
+                on="planet_name",
+                how="inner",
             )
             if len(_joined) >= 3:
-                _corr = _calc_corr(_joined["biomass"].to_list(), _joined["mean_price"].to_list())
-                _correlations.append({
-                    "Relationship": "Biomass vs Food Price",
-                    "Correlation": round(_corr, 3),
-                    "Expected": "Negative",
-                    "Interpretation": "Low biomass = higher prices" if _corr < -0.2 else "No clear relationship"
-                })
+                _corr = _calc_corr(
+                    _joined["biomass"].to_list(), _joined["mean_price"].to_list()
+                )
+                _correlations.append(
+                    {
+                        "Relationship": "Biomass vs Food Price",
+                        "Correlation": round(_corr, 3),
+                        "Expected": "Negative",
+                        "Interpretation": "Low biomass = higher prices"
+                        if _corr < -0.2
+                        else "No clear relationship",
+                    }
+                )
 
         # 2. Biomass vs Net Imports
         if trader_food_buys is not None and trader_food_sells is not None:
-            _exports = trader_food_buys.group_by("planet_name").agg([pl.col("quantity").sum().alias("exported")])
-            _imports = trader_food_sells.group_by("planet_name").agg([pl.col("quantity").sum().alias("imported")])
+            _exports = trader_food_buys.group_by("planet_name").agg(
+                [pl.col("quantity").sum().alias("exported")]
+            )
+            _imports = trader_food_sells.group_by("planet_name").agg(
+                [pl.col("quantity").sum().alias("imported")]
+            )
             _net = _exports.join(_imports, on="planet_name", how="outer").fill_null(0)
-            _net = _net.with_columns([(pl.col("imported") - pl.col("exported")).alias("net_imports")])
+            _net = _net.with_columns(
+                [(pl.col("imported") - pl.col("exported")).alias("net_imports")]
+            )
 
             _joined = _net.join(
-                attrs_df.select(["planet", "biomass"]).rename({"planet": "planet_name"}),
-                on="planet_name", how="inner"
+                attrs_df.select(["planet", "biomass"]).rename(
+                    {"planet": "planet_name"}
+                ),
+                on="planet_name",
+                how="inner",
             )
             if len(_joined) >= 3:
-                _corr = _calc_corr(_joined["biomass"].to_list(), _joined["net_imports"].to_list())
-                _correlations.append({
-                    "Relationship": "Biomass vs Net Food Imports",
-                    "Correlation": round(_corr, 3),
-                    "Expected": "Negative",
-                    "Interpretation": "Low biomass = more imports" if _corr < -0.2 else "No clear relationship"
-                })
+                _corr = _calc_corr(
+                    _joined["biomass"].to_list(), _joined["net_imports"].to_list()
+                )
+                _correlations.append(
+                    {
+                        "Relationship": "Biomass vs Net Food Imports",
+                        "Correlation": round(_corr, 3),
+                        "Expected": "Negative",
+                        "Interpretation": "Low biomass = more imports"
+                        if _corr < -0.2
+                        else "No clear relationship",
+                    }
+                )
 
         # 3. Biomass vs Food Drive Health (final turn)
         if drives_with_planet is not None and len(drives_with_planet) > 0:
             _max_turn = drives_with_planet["turn"].max()
-            _final_health = drives_with_planet.filter(pl.col("turn") == _max_turn).group_by("planet_name").agg([
-                pl.col("health").mean().alias("mean_health")
-            ])
+            _final_health = (
+                drives_with_planet.filter(pl.col("turn") == _max_turn)
+                .group_by("planet_name")
+                .agg([pl.col("health").mean().alias("mean_health")])
+            )
             _joined = _final_health.join(
-                attrs_df.select(["planet", "biomass"]).rename({"planet": "planet_name"}),
-                on="planet_name", how="inner"
+                attrs_df.select(["planet", "biomass"]).rename(
+                    {"planet": "planet_name"}
+                ),
+                on="planet_name",
+                how="inner",
             )
             if len(_joined) >= 3:
-                _corr = _calc_corr(_joined["biomass"].to_list(), _joined["mean_health"].to_list())
-                _correlations.append({
-                    "Relationship": "Biomass vs Final Food Health",
-                    "Correlation": round(_corr, 3),
-                    "Expected": "Positive (if ships ineffective) or Neutral (if ships effective)",
-                    "Interpretation": "Higher biomass = better health" if _corr > 0.2 else "Health equalized across planets" if abs(_corr) < 0.2 else "Unexpected pattern"
-                })
+                _corr = _calc_corr(
+                    _joined["biomass"].to_list(), _joined["mean_health"].to_list()
+                )
+                _correlations.append(
+                    {
+                        "Relationship": "Biomass vs Final Food Health",
+                        "Correlation": round(_corr, 3),
+                        "Expected": "Positive (if ships ineffective) or Neutral (if ships effective)",
+                        "Interpretation": "Higher biomass = better health"
+                        if _corr > 0.2
+                        else "Health equalized across planets"
+                        if abs(_corr) < 0.2
+                        else "Unexpected pattern",
+                    }
+                )
 
         # 4. Biomass vs Food Drive Debt
         if drives_with_planet is not None and len(drives_with_planet) > 0:
-            _final_debt = drives_with_planet.filter(pl.col("turn") == _max_turn).group_by("planet_name").agg([
-                pl.col("debt").mean().alias("mean_debt")
-            ])
+            _final_debt = (
+                drives_with_planet.filter(pl.col("turn") == _max_turn)
+                .group_by("planet_name")
+                .agg([pl.col("debt").mean().alias("mean_debt")])
+            )
             _joined = _final_debt.join(
-                attrs_df.select(["planet", "biomass"]).rename({"planet": "planet_name"}),
-                on="planet_name", how="inner"
+                attrs_df.select(["planet", "biomass"]).rename(
+                    {"planet": "planet_name"}
+                ),
+                on="planet_name",
+                how="inner",
             )
             if len(_joined) >= 3:
-                _corr = _calc_corr(_joined["biomass"].to_list(), _joined["mean_debt"].to_list())
-                _correlations.append({
-                    "Relationship": "Biomass vs Final Food Debt",
-                    "Correlation": round(_corr, 3),
-                    "Expected": "Negative (if ships ineffective) or Neutral (if ships effective)",
-                    "Interpretation": "Low biomass = more debt" if _corr < -0.2 else "Debt equalized across planets" if abs(_corr) < 0.2 else "Unexpected pattern"
-                })
+                _corr = _calc_corr(
+                    _joined["biomass"].to_list(), _joined["mean_debt"].to_list()
+                )
+                _correlations.append(
+                    {
+                        "Relationship": "Biomass vs Final Food Debt",
+                        "Correlation": round(_corr, 3),
+                        "Expected": "Negative (if ships ineffective) or Neutral (if ships effective)",
+                        "Interpretation": "Low biomass = more debt"
+                        if _corr < -0.2
+                        else "Debt equalized across planets"
+                        if abs(_corr) < 0.2
+                        else "Unexpected pattern",
+                    }
+                )
 
         if _correlations:
             _corr_df = pl.DataFrame(_correlations)
@@ -840,8 +962,12 @@ def _(attrs_df, drives_with_planet, mo, pl, trader_food_buys, trader_food_sells)
         _summary = "Insufficient data for summary"
     else:
         # Calculate key metrics
-        _food_poor_planets = attrs_df.filter(pl.col("food_classification") == "Food-Poor")["planet"].to_list()
-        _food_rich_planets = attrs_df.filter(pl.col("food_classification") == "Food-Rich")["planet"].to_list()
+        _food_poor_planets = attrs_df.filter(
+            pl.col("food_classification") == "Food-Poor"
+        )["planet"].to_list()
+        _food_rich_planets = attrs_df.filter(
+            pl.col("food_classification") == "Food-Rich"
+        )["planet"].to_list()
 
         # Trading activity
         _total_food_trades = 0
@@ -857,12 +983,16 @@ def _(attrs_df, drives_with_planet, mo, pl, trader_food_buys, trader_food_sells)
             _final = drives_with_planet.filter(pl.col("turn") == _max_turn)
 
             if len(_food_poor_planets) > 0:
-                _poor_health = _final.filter(pl.col("planet_name").is_in(_food_poor_planets))["health"].mean()
+                _poor_health = _final.filter(
+                    pl.col("planet_name").is_in(_food_poor_planets)
+                )["health"].mean()
             else:
                 _poor_health = None
 
             if len(_food_rich_planets) > 0:
-                _rich_health = _final.filter(pl.col("planet_name").is_in(_food_rich_planets))["health"].mean()
+                _rich_health = _final.filter(
+                    pl.col("planet_name").is_in(_food_rich_planets)
+                )["health"].mean()
             else:
                 _rich_health = None
 

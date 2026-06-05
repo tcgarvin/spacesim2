@@ -44,7 +44,9 @@ class TestBootstrapPath:
 
         # Making wood tools should be possible with no tools
         can_execute = actor.can_execute_process("make_simple_tools_wood")
-        assert can_execute, "Should be able to make simple tools from wood without existing tools"
+        assert can_execute, (
+            "Should be able to make simple tools from wood without existing tools"
+        )
 
     def test_build_smelting_facility_requires_tools(self):
         """Test that building a smelting facility requires tools."""
@@ -58,12 +60,16 @@ class TestBootstrapPath:
 
         actor = sim.actors[0]
 
-        building_materials = sim.commodity_registry.get_commodity("simple_building_materials")
+        building_materials = sim.commodity_registry.get_commodity(
+            "simple_building_materials"
+        )
         actor.inventory.add_commodity(building_materials, 10)
 
         # Without tools, cannot build
         can_execute = actor.can_execute_process("build_smelting_facility")
-        assert not can_execute, "Should not be able to build smelting facility without tools"
+        assert not can_execute, (
+            "Should not be able to build smelting facility without tools"
+        )
 
         # With tools, can build
         simple_tools = sim.commodity_registry.get_commodity("simple_tools")
@@ -83,12 +89,16 @@ class TestBootstrapPath:
 
         actor = sim.actors[0]
 
-        building_materials = sim.commodity_registry.get_commodity("simple_building_materials")
+        building_materials = sim.commodity_registry.get_commodity(
+            "simple_building_materials"
+        )
         actor.inventory.add_commodity(building_materials, 10)
 
         # Without tools, cannot build
         can_execute = actor.can_execute_process("build_metalworking_facility")
-        assert not can_execute, "Should not be able to build metalworking facility without tools"
+        assert not can_execute, (
+            "Should not be able to build metalworking facility without tools"
+        )
 
         # With tools, can build
         simple_tools = sim.commodity_registry.get_commodity("simple_tools")
@@ -110,7 +120,9 @@ class TestBootstrapPath:
 
         # Give actor required resources
         common_metal = sim.commodity_registry.get_commodity("common_metal")
-        metalworking_facility = sim.commodity_registry.get_commodity("metalworking_facility")
+        metalworking_facility = sim.commodity_registry.get_commodity(
+            "metalworking_facility"
+        )
 
         actor.inventory.add_commodity(common_metal, 10)
         actor.inventory.add_commodity(metalworking_facility, 1)
@@ -161,9 +173,10 @@ class TestBootstrapPath:
         actor = sim.actors[0]
 
         # Disable skill checks and planet attribute effects for deterministic testing
-        with patch('spacesim2.core.skill.SkillCheck.success_check', return_value=True), \
-             patch('spacesim2.core.commands.random.random', return_value=0.5):
-
+        with (
+            patch("spacesim2.core.skill.SkillCheck.success_check", return_value=True),
+            patch("spacesim2.core.commands.random.random", return_value=0.5),
+        ):
             if actor.planet and actor.planet.attributes:
                 actor.planet.attributes.wood = 1.0
                 actor.planet.attributes.common_metal_ore = 1.0
@@ -178,51 +191,65 @@ class TestBootstrapPath:
             # Step 2: Make simple tools from wood (no tools needed)
             ProcessCommand("make_simple_tools_wood").execute(actor)
             simple_tools = sim.commodity_registry.get_commodity("simple_tools")
-            assert actor.inventory.get_quantity(simple_tools) >= 1, "Should have wood tools"
+            assert actor.inventory.get_quantity(simple_tools) >= 1, (
+                "Should have wood tools"
+            )
 
             # Step 3: Make building materials (requires tools)
             for _ in range(10):
                 ProcessCommand("make_building_materials_wood").execute(actor)
 
-            building_materials = sim.commodity_registry.get_commodity("simple_building_materials")
-            assert actor.inventory.get_quantity(building_materials) >= 5, \
+            building_materials = sim.commodity_registry.get_commodity(
+                "simple_building_materials"
+            )
+            assert actor.inventory.get_quantity(building_materials) >= 5, (
                 "Should have building materials"
+            )
 
             # Step 4: Build smelting facility (requires tools + building materials)
             ProcessCommand("build_smelting_facility").execute(actor)
-            smelting_facility = sim.commodity_registry.get_commodity("smelting_facility")
-            assert actor.inventory.get_quantity(smelting_facility) >= 1, \
+            smelting_facility = sim.commodity_registry.get_commodity(
+                "smelting_facility"
+            )
+            assert actor.inventory.get_quantity(smelting_facility) >= 1, (
                 "Should have built smelting facility"
+            )
 
             # Step 5: Mine common metal ore (requires tools)
             for _ in range(20):
                 ProcessCommand("mine_common_metal_ore").execute(actor)
 
             common_metal_ore = sim.commodity_registry.get_commodity("common_metal_ore")
-            assert actor.inventory.get_quantity(common_metal_ore) >= 3, \
+            assert actor.inventory.get_quantity(common_metal_ore) >= 3, (
                 "Should have mined ore"
+            )
 
             # Step 6: Refine metal (requires smelting facility, no tools)
             while actor.inventory.get_quantity(common_metal_ore) >= 3:
                 ProcessCommand("refine_common_metal").execute(actor)
 
             common_metal = sim.commodity_registry.get_commodity("common_metal")
-            assert actor.inventory.get_quantity(common_metal) >= 2, \
+            assert actor.inventory.get_quantity(common_metal) >= 2, (
                 "Should have refined metal"
+            )
 
             # Step 7: Make more building materials and build metalworking facility
             for _ in range(10):
                 ProcessCommand("make_building_materials_wood").execute(actor)
 
             ProcessCommand("build_metalworking_facility").execute(actor)
-            metalworking_facility = sim.commodity_registry.get_commodity("metalworking_facility")
-            assert actor.inventory.get_quantity(metalworking_facility) >= 1, \
+            metalworking_facility = sim.commodity_registry.get_commodity(
+                "metalworking_facility"
+            )
+            assert actor.inventory.get_quantity(metalworking_facility) >= 1, (
                 "Should have built metalworking facility"
+            )
 
             # Step 8: Make metal tools (requires metalworking facility, no tools)
             ProcessCommand("make_simple_tools").execute(actor)
-            assert actor.inventory.get_quantity(simple_tools) >= 1, \
+            assert actor.inventory.get_quantity(simple_tools) >= 1, (
                 "Should have bootstrapped to metal tools!"
+            )
 
 
 class TestToolRequirements:
@@ -242,7 +269,9 @@ class TestToolRequirements:
 
         # Without tools, should not be able to mine
         can_execute = actor.can_execute_process("mine_common_metal_ore")
-        assert not can_execute, "Should not be able to mine common metal ore without tools"
+        assert not can_execute, (
+            "Should not be able to mine common metal ore without tools"
+        )
 
         # With tools, should be able to
         simple_tools = sim.commodity_registry.get_commodity("simple_tools")
@@ -364,10 +393,14 @@ class TestFacilityRequirements:
 
         # Without facility, should not be able to make tools
         can_execute = actor.can_execute_process("make_simple_tools")
-        assert not can_execute, "Should not be able to make tools without metalworking facility"
+        assert not can_execute, (
+            "Should not be able to make tools without metalworking facility"
+        )
 
         # With facility, should be able to
-        metalworking_facility = sim.commodity_registry.get_commodity("metalworking_facility")
+        metalworking_facility = sim.commodity_registry.get_commodity(
+            "metalworking_facility"
+        )
         actor.inventory.add_commodity(metalworking_facility, 1)
         can_execute = actor.can_execute_process("make_simple_tools")
         assert can_execute, "Should be able to make tools with metalworking facility"

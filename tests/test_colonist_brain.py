@@ -3,7 +3,11 @@ from unittest.mock import Mock, MagicMock
 
 from spacesim2.core.brains.colonist import ColonistBrain
 from spacesim2.core.actor import Actor, ActorType
-from spacesim2.core.commands import ProcessCommand, GovernmentWorkCommand, PlaceBuyOrderCommand
+from spacesim2.core.commands import (
+    ProcessCommand,
+    GovernmentWorkCommand,
+    PlaceBuyOrderCommand,
+)
 from spacesim2.core.commodity import CommodityDefinition, Inventory
 from spacesim2.core.process import ProcessDefinition
 
@@ -70,7 +74,9 @@ class TestColonistBrainToolMarket:
         result = brain._calculate_turn_opportunity_cost(mock_actor)
         assert result == 10  # Government wage
 
-    def test_calculates_turn_opportunity_cost_from_profitable_process(self, brain, mock_actor):
+    def test_calculates_turn_opportunity_cost_from_profitable_process(
+        self, brain, mock_actor
+    ):
         """Test that opportunity cost reflects profit from best available process."""
         # Create a profitable process
         input_commodity = Mock()
@@ -100,7 +106,9 @@ class TestColonistBrainToolMarket:
         result = brain._calculate_turn_opportunity_cost(mock_actor)
         assert result == 25  # Profit from process
 
-    def test_calculates_tool_willingness_to_pay(self, brain, mock_actor, mock_commodities):
+    def test_calculates_tool_willingness_to_pay(
+        self, brain, mock_actor, mock_commodities
+    ):
         """Test willingness to pay includes input cost + opportunity cost."""
 
         def get_commodity(name):

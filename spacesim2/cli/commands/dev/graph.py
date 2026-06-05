@@ -147,7 +147,7 @@ def _generate_mermaid_processes(
         pid = f"R{i}"
         process_ids.append((pid, process))
         # Quote label to handle special chars like parentheses
-        label = process['name'].replace('"', '\\"')
+        label = process["name"].replace('"', '\\"')
 
         # Collect tool and facility requirements
         requirements: List[str] = []
@@ -223,7 +223,9 @@ def _generate_mermaid(things_yaml: Path, processes_yaml: Path) -> str:
     return "\n".join(lines)
 
 
-def _run_mmdc(args: list[str], tmpdir: Path | None = None) -> subprocess.CompletedProcess[bytes]:
+def _run_mmdc(
+    args: list[str], tmpdir: Path | None = None
+) -> subprocess.CompletedProcess[bytes]:
     """Run mermaid-cli via npx.
 
     Args:
@@ -242,7 +244,9 @@ def _run_mmdc(args: list[str], tmpdir: Path | None = None) -> subprocess.Complet
     # Create puppeteer config to handle sandbox issues on Linux
     if tmpdir is not None:
         puppeteer_config = tmpdir / "puppeteer-config.json"
-        puppeteer_config.write_text('{"args": ["--no-sandbox", "--disable-setuid-sandbox"]}')
+        puppeteer_config.write_text(
+            '{"args": ["--no-sandbox", "--disable-setuid-sandbox"]}'
+        )
         extra_args = ["-p", str(puppeteer_config)]
 
     return subprocess.run(
@@ -272,11 +276,15 @@ def _render_mermaid_to_file(mermaid_code: str, output_path: Path, format: str) -
         tmpdir_path = Path(tmpdir)
 
         try:
-            _run_mmdc(["-i", str(mmd_path), "-o", str(output_path), "-f", format], tmpdir_path)
+            _run_mmdc(
+                ["-i", str(mmd_path), "-o", str(output_path), "-f", format], tmpdir_path
+            )
             print_success(f"Diagram saved to {output_path}")
             return True
         except FileNotFoundError:
-            print_error("npx not found. Please ensure Node.js is installed and npx is on PATH.")
+            print_error(
+                "npx not found. Please ensure Node.js is installed and npx is on PATH."
+            )
             return False
         except subprocess.CalledProcessError as e:
             print_error(f"Rendering failed: {e.stderr.decode() if e.stderr else e}")

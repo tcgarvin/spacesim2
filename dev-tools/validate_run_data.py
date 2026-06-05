@@ -17,10 +17,34 @@ def validate_run(run_path: Path) -> None:
         SystemExit: If validation fails
     """
     required_files = {
-        'actor_turns.parquet': ['simulation_id', 'turn', 'actor_id', 'actor_name', 'money'],
-        'market_snapshots.parquet': ['simulation_id', 'turn', 'planet_name', 'commodity_id', 'avg_price'],
-        'market_transactions.parquet': ['simulation_id', 'turn', 'commodity_id', 'quantity', 'price'],
-        'actor_drives.parquet': ['simulation_id', 'turn', 'actor_id', 'drive_name', 'health'],
+        "actor_turns.parquet": [
+            "simulation_id",
+            "turn",
+            "actor_id",
+            "actor_name",
+            "money",
+        ],
+        "market_snapshots.parquet": [
+            "simulation_id",
+            "turn",
+            "planet_name",
+            "commodity_id",
+            "avg_price",
+        ],
+        "market_transactions.parquet": [
+            "simulation_id",
+            "turn",
+            "commodity_id",
+            "quantity",
+            "price",
+        ],
+        "actor_drives.parquet": [
+            "simulation_id",
+            "turn",
+            "actor_id",
+            "drive_name",
+            "health",
+        ],
     }
 
     for filename, expected_cols in required_files.items():

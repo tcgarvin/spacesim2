@@ -85,7 +85,9 @@ class TestFoodDriveTick:
         actor.food_consumed_this_turn = False
         return actor
 
-    def test_tick_consumes_food_when_available(self, food_drive, mock_actor, commodity_registry):
+    def test_tick_consumes_food_when_available(
+        self, food_drive, mock_actor, commodity_registry
+    ):
         """Test that tick() consumes food when actor has food."""
         food = commodity_registry.get_commodity("food")
         mock_actor.inventory.add_commodity(food, 5)
@@ -99,7 +101,9 @@ class TestFoodDriveTick:
         assert final_food == 5 - DAILY_CONSUMPTION
         assert mock_actor.food_consumed_this_turn is True
 
-    def test_tick_sets_food_consumed_flag_true_when_ate(self, food_drive, mock_actor, commodity_registry):
+    def test_tick_sets_food_consumed_flag_true_when_ate(
+        self, food_drive, mock_actor, commodity_registry
+    ):
         """Test that food_consumed_this_turn is set to True when food is consumed."""
         food = commodity_registry.get_commodity("food")
         mock_actor.inventory.add_commodity(food, 1)
@@ -110,7 +114,9 @@ class TestFoodDriveTick:
 
         assert mock_actor.food_consumed_this_turn is True
 
-    def test_tick_sets_food_consumed_flag_false_when_no_food(self, food_drive, mock_actor):
+    def test_tick_sets_food_consumed_flag_false_when_no_food(
+        self, food_drive, mock_actor
+    ):
         """Test that food_consumed_this_turn is set to False when no food available."""
         mock_actor.food_consumed_this_turn = True  # Start with True
 
@@ -118,7 +124,9 @@ class TestFoodDriveTick:
 
         assert mock_actor.food_consumed_this_turn is False
 
-    def test_tick_updates_health_when_ate(self, food_drive, mock_actor, commodity_registry):
+    def test_tick_updates_health_when_ate(
+        self, food_drive, mock_actor, commodity_registry
+    ):
         """Test that health metric is 1.0 when food was consumed."""
         food = commodity_registry.get_commodity("food")
         mock_actor.inventory.add_commodity(food, 1)
@@ -150,7 +158,9 @@ class TestFoodDriveTick:
         expected = debt_after_one_miss * DEBT_DECAY_FACTOR + DEBT_MISS_PENALTY
         assert abs(debt_after_two_misses - expected) < 0.001
 
-    def test_tick_decays_debt_when_eating(self, food_drive, mock_actor, commodity_registry):
+    def test_tick_decays_debt_when_eating(
+        self, food_drive, mock_actor, commodity_registry
+    ):
         """Test that debt decays when actor eats."""
         # First, accumulate some debt
         food_drive.tick(mock_actor)  # Miss a meal
@@ -166,7 +176,9 @@ class TestFoodDriveTick:
         expected_debt = initial_debt * DEBT_DECAY_FACTOR
         assert abs(food_drive.metrics.debt - expected_debt) < 0.001
 
-    def test_tick_updates_buffer_based_on_pantry(self, food_drive, mock_actor, commodity_registry):
+    def test_tick_updates_buffer_based_on_pantry(
+        self, food_drive, mock_actor, commodity_registry
+    ):
         """Test that buffer metric reflects pantry days."""
         food = commodity_registry.get_commodity("food")
 
@@ -186,10 +198,14 @@ class TestFoodDriveTick:
         # Buffer should be higher with more food
         assert buffer_with_max >= buffer_with_target
 
-    def test_tick_buffer_zero_when_no_food_remaining(self, food_drive, mock_actor, commodity_registry):
+    def test_tick_buffer_zero_when_no_food_remaining(
+        self, food_drive, mock_actor, commodity_registry
+    ):
         """Test that buffer is 0 when no food remains after eating."""
         food = commodity_registry.get_commodity("food")
-        mock_actor.inventory.add_commodity(food, DAILY_CONSUMPTION)  # Exactly enough for one meal
+        mock_actor.inventory.add_commodity(
+            food, DAILY_CONSUMPTION
+        )  # Exactly enough for one meal
 
         food_drive.tick(mock_actor)
 
@@ -233,11 +249,11 @@ class TestFoodDriveIntegration:
             drives=[food_drive],
             brain=Mock(
                 decide_economic_action=lambda _: None,
-                decide_market_actions=lambda _: []
+                decide_market_actions=lambda _: [],
             ),
             planet=None,
             initial_money=50,
-            initial_skills={}
+            initial_skills={},
         )
 
         # Actor starts hungry (no food)
@@ -269,11 +285,11 @@ class TestFoodDriveIntegration:
             drives=[food_drive],
             brain=Mock(
                 decide_economic_action=lambda _: None,
-                decide_market_actions=lambda _: []
+                decide_market_actions=lambda _: [],
             ),
             planet=None,
             initial_money=50,
-            initial_skills={}
+            initial_skills={},
         )
 
         # Give actor 3 units of food

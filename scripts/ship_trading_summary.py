@@ -36,9 +36,7 @@ def analyze_ship_trading(run_path: Path) -> None:
         print(f"  Ships: {', '.join(ship_actors.to_series().to_list())}")
     else:
         print("⚠️  Ships are NOT being logged in actor_turns!")
-        print(
-            "   To fix: Use --log-actor-types ship when running spacesim2 analyze"
-        )
+        print("   To fix: Use --log-actor-types ship when running spacesim2 analyze")
 
     print()
 
@@ -93,9 +91,7 @@ def analyze_ship_trading(run_path: Path) -> None:
             buys.select(pl.col("total_amount").sum()).item() if len(buys) > 0 else 0
         )
         sell_total = (
-            sells.select(pl.col("total_amount").sum()).item()
-            if len(sells) > 0
-            else 0
+            sells.select(pl.col("total_amount").sum()).item() if len(sells) > 0 else 0
         )
         net_profit = sell_total - buy_total
 
@@ -121,7 +117,9 @@ def analyze_ship_trading(run_path: Path) -> None:
                 .agg([pl.col("quantity").sum().alias("qty")])
                 .sort("qty", descending=True)
             )
-            print(f"  Buying: {', '.join([f'{row[0]} ({row[1]})' for row in buy_commodities.rows()])}")
+            print(
+                f"  Buying: {', '.join([f'{row[0]} ({row[1]})' for row in buy_commodities.rows()])}"
+            )
 
         if len(sells) > 0:
             sell_commodities = (
@@ -183,9 +181,7 @@ def analyze_ship_trading(run_path: Path) -> None:
 
     if len(ship_actors) == 0:
         print("\n⚠️  NOTE: Ships are not being logged, so money tracking is incomplete.")
-        print(
-            "   Run: uv run spacesim2 analyze --turns 100 --log-actor-types ship"
-        )
+        print("   Run: uv run spacesim2 analyze --turns 100 --log-actor-types ship")
 
     print()
 

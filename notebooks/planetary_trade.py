@@ -13,6 +13,7 @@ def _():
     import plotly.graph_objects as go
     from spacesim2.analysis.loading.loader import SimulationData
     from pathlib import Path
+
     return Path, SimulationData, go, mo, os, pl, px
 
 
@@ -56,7 +57,14 @@ def _(mo, os):
     {run_selector}
     """)
 
-    return NoRunsFoundError, auto_run_path, get_run_path_with_fallback, run_path_str, run_selector, status_msg
+    return (
+        NoRunsFoundError,
+        auto_run_path,
+        get_run_path_with_fallback,
+        run_path_str,
+        run_selector,
+        status_msg,
+    )
 
 
 @app.cell
@@ -89,17 +97,17 @@ def _(data, mo, pl):
 
         # Identify ship transactions (ships have "Trader" in name)
         ship_txns = txns.filter(
-            pl.col('buyer_name').str.contains('Trader') |
-            pl.col('seller_name').str.contains('Trader')
+            pl.col("buyer_name").str.contains("Trader")
+            | pl.col("seller_name").str.contains("Trader")
         )
 
-        planets = txns['planet_name'].unique().sort().to_list()
-        total_turns = txns['turn'].max()
+        planets = txns["planet_name"].unique().sort().to_list()
+        total_turns = txns["turn"].max()
 
         overview_content = mo.md(f"""
         ## Simulation Overview
         - **Turns:** {total_turns}
-        - **Planets:** {len(planets)} ({', '.join(planets)})
+        - **Planets:** {len(planets)} ({", ".join(planets)})
         - **Total Transactions:** {len(txns):,}
         - **Ship Transactions:** {len(ship_txns):,}
         """)
@@ -127,36 +135,44 @@ def _(pl, px, ship_txns):
         fig_balance = None
     else:
         # Imports: ships SELL to planet (seller contains Trader)
-        imports = ship_txns.filter(
-            pl.col('seller_name').str.contains('Trader')
-        ).group_by('planet_name').agg(
-            pl.col('quantity').sum().alias('import_qty'),
-            pl.col('total_amount').sum().alias('import_value')
+        imports = (
+            ship_txns.filter(pl.col("seller_name").str.contains("Trader"))
+            .group_by("planet_name")
+            .agg(
+                pl.col("quantity").sum().alias("import_qty"),
+                pl.col("total_amount").sum().alias("import_value"),
+            )
         )
 
         # Exports: ships BUY from planet (buyer contains Trader)
-        exports = ship_txns.filter(
-            pl.col('buyer_name').str.contains('Trader')
-        ).group_by('planet_name').agg(
-            pl.col('quantity').sum().alias('export_qty'),
-            pl.col('total_amount').sum().alias('export_value')
+        exports = (
+            ship_txns.filter(pl.col("buyer_name").str.contains("Trader"))
+            .group_by("planet_name")
+            .agg(
+                pl.col("quantity").sum().alias("export_qty"),
+                pl.col("total_amount").sum().alias("export_value"),
+            )
         )
 
         # Join and calculate net
-        trade_balance = imports.join(exports, on='planet_name', how='outer').fill_null(0)
-        trade_balance = trade_balance.with_columns([
-            (pl.col('import_qty') - pl.col('export_qty')).alias('net_qty'),
-            (pl.col('import_value') - pl.col('export_value')).alias('net_value')
-        ]).sort('net_value', descending=True)
+        trade_balance = imports.join(exports, on="planet_name", how="outer").fill_null(
+            0
+        )
+        trade_balance = trade_balance.with_columns(
+            [
+                (pl.col("import_qty") - pl.col("export_qty")).alias("net_qty"),
+                (pl.col("import_value") - pl.col("export_value")).alias("net_value"),
+            ]
+        ).sort("net_value", descending=True)
 
         fig_balance = px.bar(
             trade_balance.to_pandas(),
-            x='planet_name',
-            y='net_value',
-            color='net_value',
-            color_continuous_scale='RdBu',
-            title='Net Trade Balance by Planet (positive = net importer)',
-            labels={'net_value': 'Net Value ($)', 'planet_name': 'Planet'}
+            x="planet_name",
+            y="net_value",
+            color="net_value",
+            color_continuous_scale="RdBu",
+            title="Net Trade Balance by Planet (positive = net importer)",
+            labels={"net_value": "Net Value ($)", "planet_name": "Planet"},
         )
         fig_balance.update_layout(coloraxis_showscale=False)
 
@@ -182,37 +198,49 @@ def _(pl, px, ship_txns):
         fig_imports = None
     else:
         # Imports per turn per planet
-        imports_by_turn = ship_txns.filter(
-            pl.col('seller_name').str.contains('Trader')
-        ).group_by(['turn', 'planet_name']).agg(
-            pl.col('quantity').sum().alias('import_qty')
+        imports_by_turn = (
+            ship_txns.filter(pl.col("seller_name").str.contains("Trader"))
+            .group_by(["turn", "planet_name"])
+            .agg(pl.col("quantity").sum().alias("import_qty"))
         )
 
         # Exports per turn per planet
-        exports_by_turn = ship_txns.filter(
-            pl.col('buyer_name').str.contains('Trader')
-        ).group_by(['turn', 'planet_name']).agg(
-            pl.col('quantity').sum().alias('export_qty')
+        exports_by_turn = (
+            ship_txns.filter(pl.col("buyer_name").str.contains("Trader"))
+            .group_by(["turn", "planet_name"])
+            .agg(pl.col("quantity").sum().alias("export_qty"))
         )
 
         # Join and fill missing values
-        trade_by_turn = imports_by_turn.join(
-            exports_by_turn, on=['turn', 'planet_name'], how='outer'
-        ).fill_null(0).sort(['planet_name', 'turn'])
+        trade_by_turn = (
+            imports_by_turn.join(
+                exports_by_turn, on=["turn", "planet_name"], how="outer"
+            )
+            .fill_null(0)
+            .sort(["planet_name", "turn"])
+        )
 
         # Calculate rolling average (50 turns)
-        trade_smoothed = trade_by_turn.with_columns([
-            pl.col('import_qty').rolling_mean(window_size=50, min_periods=1).over('planet_name').alias('import_avg'),
-            pl.col('export_qty').rolling_mean(window_size=50, min_periods=1).over('planet_name').alias('export_avg'),
-        ])
+        trade_smoothed = trade_by_turn.with_columns(
+            [
+                pl.col("import_qty")
+                .rolling_mean(window_size=50, min_periods=1)
+                .over("planet_name")
+                .alias("import_avg"),
+                pl.col("export_qty")
+                .rolling_mean(window_size=50, min_periods=1)
+                .over("planet_name")
+                .alias("export_avg"),
+            ]
+        )
 
         fig_imports = px.line(
             trade_smoothed.to_pandas(),
-            x='turn',
-            y='import_avg',
-            color='planet_name',
-            title='Imports Over Time (50-turn rolling avg)',
-            labels={'import_avg': 'Quantity', 'turn': 'Turn', 'planet_name': 'Planet'}
+            x="turn",
+            y="import_avg",
+            color="planet_name",
+            title="Imports Over Time (50-turn rolling avg)",
+            labels={"import_avg": "Quantity", "turn": "Turn", "planet_name": "Planet"},
         )
 
     fig_imports
@@ -227,11 +255,11 @@ def _(px, trade_smoothed):
     else:
         fig_exports = px.line(
             trade_smoothed.to_pandas(),
-            x='turn',
-            y='export_avg',
-            color='planet_name',
-            title='Exports Over Time (50-turn rolling avg)',
-            labels={'export_avg': 'Quantity', 'turn': 'Turn', 'planet_name': 'Planet'}
+            x="turn",
+            y="export_avg",
+            color="planet_name",
+            title="Exports Over Time (50-turn rolling avg)",
+            labels={"export_avg": "Quantity", "turn": "Turn", "planet_name": "Planet"},
         )
 
     fig_exports
@@ -254,20 +282,24 @@ def _(pl, px, ship_txns):
     if ship_txns is None or len(ship_txns) == 0:
         fig_imports_commodity = None
     else:
-        imports_by_commodity = ship_txns.filter(
-            pl.col('seller_name').str.contains('Trader')
-        ).group_by(['planet_name', 'commodity_id']).agg(
-            pl.col('quantity').sum().alias('quantity')
+        imports_by_commodity = (
+            ship_txns.filter(pl.col("seller_name").str.contains("Trader"))
+            .group_by(["planet_name", "commodity_id"])
+            .agg(pl.col("quantity").sum().alias("quantity"))
         )
 
         fig_imports_commodity = px.bar(
             imports_by_commodity.to_pandas(),
-            x='planet_name',
-            y='quantity',
-            color='commodity_id',
-            title='Imports by Planet and Commodity',
-            labels={'quantity': 'Total Quantity', 'planet_name': 'Planet', 'commodity_id': 'Commodity'},
-            barmode='stack'
+            x="planet_name",
+            y="quantity",
+            color="commodity_id",
+            title="Imports by Planet and Commodity",
+            labels={
+                "quantity": "Total Quantity",
+                "planet_name": "Planet",
+                "commodity_id": "Commodity",
+            },
+            barmode="stack",
         )
 
     fig_imports_commodity
@@ -280,20 +312,24 @@ def _(pl, px, ship_txns):
     if ship_txns is None or len(ship_txns) == 0:
         fig_exports_commodity = None
     else:
-        exports_by_commodity = ship_txns.filter(
-            pl.col('buyer_name').str.contains('Trader')
-        ).group_by(['planet_name', 'commodity_id']).agg(
-            pl.col('quantity').sum().alias('quantity')
+        exports_by_commodity = (
+            ship_txns.filter(pl.col("buyer_name").str.contains("Trader"))
+            .group_by(["planet_name", "commodity_id"])
+            .agg(pl.col("quantity").sum().alias("quantity"))
         )
 
         fig_exports_commodity = px.bar(
             exports_by_commodity.to_pandas(),
-            x='planet_name',
-            y='quantity',
-            color='commodity_id',
-            title='Exports by Planet and Commodity',
-            labels={'quantity': 'Total Quantity', 'planet_name': 'Planet', 'commodity_id': 'Commodity'},
-            barmode='stack'
+            x="planet_name",
+            y="quantity",
+            color="commodity_id",
+            title="Exports by Planet and Commodity",
+            labels={
+                "quantity": "Total Quantity",
+                "planet_name": "Planet",
+                "commodity_id": "Commodity",
+            },
+            barmode="stack",
         )
 
     fig_exports_commodity
@@ -317,11 +353,11 @@ def _(mo, ship_txns):
         planet_selector = None
         selector_output = mo.md("No data available")
     else:
-        planet_options = ship_txns['planet_name'].unique().sort().to_list()
+        planet_options = ship_txns["planet_name"].unique().sort().to_list()
         planet_selector = mo.ui.dropdown(
             options=planet_options,
             value=planet_options[0] if planet_options else None,
-            label="Select Planet:"
+            label="Select Planet:",
         )
         selector_output = planet_selector
 
@@ -336,41 +372,60 @@ def _(mo, pl, planet_selector, px, ship_txns):
         fig_planet = mo.md("Select a planet above")
     else:
         selected_planet = planet_selector.value
-        planet_txns = ship_txns.filter(pl.col('planet_name') == selected_planet)
+        planet_txns = ship_txns.filter(pl.col("planet_name") == selected_planet)
 
         # Get imports (ships sell) and exports (ships buy) per turn
-        planet_imports = planet_txns.filter(
-            pl.col('seller_name').str.contains('Trader')
-        ).group_by(['turn', 'commodity_id']).agg(
-            pl.col('quantity').sum().alias('quantity')
-        ).with_columns(pl.lit('import').alias('flow_type'))
+        planet_imports = (
+            planet_txns.filter(pl.col("seller_name").str.contains("Trader"))
+            .group_by(["turn", "commodity_id"])
+            .agg(pl.col("quantity").sum().alias("quantity"))
+            .with_columns(pl.lit("import").alias("flow_type"))
+        )
 
-        planet_exports = planet_txns.filter(
-            pl.col('buyer_name').str.contains('Trader')
-        ).group_by(['turn', 'commodity_id']).agg(
-            pl.col('quantity').sum().alias('quantity')
-        ).with_columns(pl.lit('export').alias('flow_type'))
+        planet_exports = (
+            planet_txns.filter(pl.col("buyer_name").str.contains("Trader"))
+            .group_by(["turn", "commodity_id"])
+            .agg(pl.col("quantity").sum().alias("quantity"))
+            .with_columns(pl.lit("export").alias("flow_type"))
+        )
 
         # Combine
         planet_flows = pl.concat([planet_imports, planet_exports])
 
         # Apply rolling average
-        planet_flows_smooth = planet_flows.sort(['commodity_id', 'flow_type', 'turn']).with_columns(
-            pl.col('quantity').rolling_mean(window_size=25, min_periods=1).over(['commodity_id', 'flow_type']).alias('quantity_smooth')
+        planet_flows_smooth = planet_flows.sort(
+            ["commodity_id", "flow_type", "turn"]
+        ).with_columns(
+            pl.col("quantity")
+            .rolling_mean(window_size=25, min_periods=1)
+            .over(["commodity_id", "flow_type"])
+            .alias("quantity_smooth")
         )
 
         fig_planet = px.line(
             planet_flows_smooth.to_pandas(),
-            x='turn',
-            y='quantity_smooth',
-            color='commodity_id',
-            line_dash='flow_type',
-            title=f'{selected_planet}: Trade Flows by Commodity (25-turn rolling avg)',
-            labels={'quantity_smooth': 'Quantity', 'turn': 'Turn', 'commodity_id': 'Commodity'}
+            x="turn",
+            y="quantity_smooth",
+            color="commodity_id",
+            line_dash="flow_type",
+            title=f"{selected_planet}: Trade Flows by Commodity (25-turn rolling avg)",
+            labels={
+                "quantity_smooth": "Quantity",
+                "turn": "Turn",
+                "commodity_id": "Commodity",
+            },
         )
 
     fig_planet
-    return fig_planet, planet_exports, planet_flows, planet_flows_smooth, planet_imports, planet_txns, selected_planet
+    return (
+        fig_planet,
+        planet_exports,
+        planet_flows,
+        planet_flows_smooth,
+        planet_imports,
+        planet_txns,
+        selected_planet,
+    )
 
 
 @app.cell

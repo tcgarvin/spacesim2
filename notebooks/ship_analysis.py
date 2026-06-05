@@ -22,6 +22,7 @@ def _():
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
     from pathlib import Path
+
     return Path, mo, os, pl, px
 
 
@@ -343,9 +344,9 @@ def _(all_ship_txns, mo, pl, selected_ship_dropdown):
         current_ship = selected_ship_dropdown.value
 
         # Get ship's transactions
-        current_buys = all_ship_txns.filter(
-            pl.col("buyer_name") == current_ship
-        ).sort("turn")
+        current_buys = all_ship_txns.filter(pl.col("buyer_name") == current_ship).sort(
+            "turn"
+        )
         current_sells = all_ship_txns.filter(
             pl.col("seller_name") == current_ship
         ).sort("turn")
@@ -394,28 +395,36 @@ def _(current_buys, current_sells, mo, pl):
     if current_buys is not None and current_sells is not None:
         # Trading locations
         if len(current_buys) > 0:
-            buy_planets = current_buys.group_by("planet_name").agg(
-                [
-                    pl.len().alias("txns"),
-                    pl.col("total_amount").sum().alias("spent"),
-                    (
-                        pl.col("total_amount").sum() / pl.col("quantity").sum()
-                    ).alias("avg_price"),
-                ]
-            ).sort("spent", descending=True)
+            buy_planets = (
+                current_buys.group_by("planet_name")
+                .agg(
+                    [
+                        pl.len().alias("txns"),
+                        pl.col("total_amount").sum().alias("spent"),
+                        (pl.col("total_amount").sum() / pl.col("quantity").sum()).alias(
+                            "avg_price"
+                        ),
+                    ]
+                )
+                .sort("spent", descending=True)
+            )
         else:
             buy_planets = None
 
         if len(current_sells) > 0:
-            sell_planets = current_sells.group_by("planet_name").agg(
-                [
-                    pl.len().alias("txns"),
-                    pl.col("total_amount").sum().alias("revenue"),
-                    (
-                        pl.col("total_amount").sum() / pl.col("quantity").sum()
-                    ).alias("avg_price"),
-                ]
-            ).sort("revenue", descending=True)
+            sell_planets = (
+                current_sells.group_by("planet_name")
+                .agg(
+                    [
+                        pl.len().alias("txns"),
+                        pl.col("total_amount").sum().alias("revenue"),
+                        (pl.col("total_amount").sum() / pl.col("quantity").sum()).alias(
+                            "avg_price"
+                        ),
+                    ]
+                )
+                .sort("revenue", descending=True)
+            )
         else:
             sell_planets = None
 
@@ -456,7 +465,9 @@ def _(buy_planets, mo):
 
 @app.cell
 def _(buy_planets, mo):
-    buy_table = mo.ui.table(buy_planets, selection=None) if buy_planets is not None else ""
+    buy_table = (
+        mo.ui.table(buy_planets, selection=None) if buy_planets is not None else ""
+    )
     buy_table
     return
 
@@ -470,7 +481,9 @@ def _(mo, sell_planets):
 
 @app.cell
 def _(mo, sell_planets):
-    sell_table = mo.ui.table(sell_planets, selection=None) if sell_planets is not None else ""
+    sell_table = (
+        mo.ui.table(sell_planets, selection=None) if sell_planets is not None else ""
+    )
     sell_table
     return
 
@@ -489,10 +502,24 @@ def _(current_buys, current_sells, mo, pl):
         timeline_txns = pl.concat(
             [
                 current_buys.select(
-                    ["turn", "planet_name", "commodity_id", "quantity", "price", "total_amount"]
+                    [
+                        "turn",
+                        "planet_name",
+                        "commodity_id",
+                        "quantity",
+                        "price",
+                        "total_amount",
+                    ]
                 ).with_columns([pl.lit("BUY").alias("type")]),
                 current_sells.select(
-                    ["turn", "planet_name", "commodity_id", "quantity", "price", "total_amount"]
+                    [
+                        "turn",
+                        "planet_name",
+                        "commodity_id",
+                        "quantity",
+                        "price",
+                        "total_amount",
+                    ]
                 ).with_columns([pl.lit("SELL").alias("type")]),
             ]
         ).sort("turn")
@@ -542,14 +569,18 @@ def _(mo, pl, txns_data):
     if txns_data is not None:
         food_market_txns = txns_data.filter(pl.col("commodity_id") == "food")
 
-        market_prices = food_market_txns.group_by("planet_name").agg(
-            [
-                pl.col("price").mean().alias("avg_price"),
-                pl.col("price").min().alias("min_price"),
-                pl.col("price").max().alias("max_price"),
-                pl.len().alias("transactions"),
-            ]
-        ).sort("avg_price")
+        market_prices = (
+            food_market_txns.group_by("planet_name")
+            .agg(
+                [
+                    pl.col("price").mean().alias("avg_price"),
+                    pl.col("price").min().alias("min_price"),
+                    pl.col("price").max().alias("max_price"),
+                    pl.len().alias("transactions"),
+                ]
+            )
+            .sort("avg_price")
+        )
 
         price_table_output = mo.ui.table(market_prices, selection=None)
     else:

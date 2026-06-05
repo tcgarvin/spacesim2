@@ -4,19 +4,33 @@ from spacesim2.core.actor import Actor, ActorType
 from spacesim2.core.commodity import CommodityRegistry
 from spacesim2.core.commands import GovernmentWorkCommand
 
+
 def _get_mock_sim():
-    return type('MockSimulation', (object,), {
-        'commodity_registry': CommodityRegistry()
-    })()
+    return type(
+        "MockSimulation", (object,), {"commodity_registry": CommodityRegistry()}
+    )()
+
 
 def _get_mock_brain():
-    return type('MockBrain', (object,), {
-        'decide_economic_action': lambda _: GovernmentWorkCommand(),
-        'decide_market_actions': lambda _: []
-    })
+    return type(
+        "MockBrain",
+        (object,),
+        {
+            "decide_economic_action": lambda _: GovernmentWorkCommand(),
+            "decide_market_actions": lambda _: [],
+        },
+    )
 
 
-def get_actor(name="DefaultTestActor", sim=None, actor_type=ActorType.REGULAR, brain=None, planet = None, initial_money = 50, initial_skills={}) -> Actor:
+def get_actor(
+    name="DefaultTestActor",
+    sim=None,
+    actor_type=ActorType.REGULAR,
+    brain=None,
+    planet=None,
+    initial_money=50,
+    initial_skills={},
+) -> Actor:
     if sim is None:
         sim = _get_mock_sim()
 

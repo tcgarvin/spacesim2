@@ -1,10 +1,17 @@
 import random
 
-from spacesim2.core.drives.actor_drive import ActorDrive, DriveMetrics, clamp01, log_norm_ratio
+from spacesim2.core.drives.actor_drive import (
+    ActorDrive,
+    DriveMetrics,
+    clamp01,
+    log_norm_ratio,
+)
 from spacesim2.core.commodity import CommodityRegistry
 
 # Stochastic maintenance model matching ClothingDrive pattern
-BASE_EVENT_PROB = 1.0 / 120.0  # ~1 maintenance event per 120 days (less frequent than clothing)
+BASE_EVENT_PROB = (
+    1.0 / 120.0
+)  # ~1 maintenance event per 120 days (less frequent than clothing)
 DEBT_DECAY_FACTOR = 0.8
 QUALITY_DEBT_DECAY_FACTOR = 0.5
 DEBT_MISS_PENALTY = 0.5  # Shelter debt is serious
@@ -38,9 +45,13 @@ class ShelterDrive(ActorDrive):
 
     def __init__(self, commodity_registry: CommodityRegistry):
         super().__init__(commodity_registry=commodity_registry)
-        self.building_materials = commodity_registry.get_commodity(BUILDING_MATERIALS_NAME)
+        self.building_materials = commodity_registry.get_commodity(
+            BUILDING_MATERIALS_NAME
+        )
         self.quality_materials = commodity_registry.get_commodity(PREFAB_HOUSING_NAME)
-        self.metrics = ShelterDriveMetrics(health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY)
+        self.metrics = ShelterDriveMetrics(
+            health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY
+        )
 
     def tick(self, actor) -> DriveMetrics:
         """Process shelter maintenance for this turn."""
@@ -73,7 +84,9 @@ class ShelterDrive(ActorDrive):
                 did_maintain = True
 
             # Recalculate post-consumption
-            materials_qty = actor.inventory.get_available_quantity(self.building_materials)
+            materials_qty = actor.inventory.get_available_quantity(
+                self.building_materials
+            )
             quality_qty = (
                 actor.inventory.get_available_quantity(self.quality_materials)
                 if self.quality_materials
@@ -95,7 +108,9 @@ class ShelterDrive(ActorDrive):
         # Buffer from remaining inventory (both types)
         exp_events_per_day = max(p_event, 1e-9)
         expected_coverage_days = total_qty / exp_events_per_day
-        buffer = log_norm_ratio(expected_coverage_days, BUFFER_TARGET_DAYS, BUFFER_MAX_DAYS)
+        buffer = log_norm_ratio(
+            expected_coverage_days, BUFFER_TARGET_DAYS, BUFFER_MAX_DAYS
+        )
 
         self._update_metrics(health=health, debt=debt, buffer=buffer, urgency=URGENCY)
         return self.metrics

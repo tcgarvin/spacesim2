@@ -73,7 +73,9 @@ def test_tool_not_consumed_on_successful_process():
 
     # Execute process with controlled randomness (no degradation)
     # Patch in commands module specifically
-    with patch('spacesim2.core.commands.random.random', return_value=0.5):  # Above 0.01 threshold
+    with patch(
+        "spacesim2.core.commands.random.random", return_value=0.5
+    ):  # Above 0.01 threshold
         command = ProcessCommand("test_process")
         result = command.execute(actor)
 
@@ -96,7 +98,9 @@ def test_tool_breaks_when_random_below_threshold():
 
     # Execute process with controlled randomness (force degradation)
     # Patch in commands module specifically
-    with patch('spacesim2.core.commands.random.random', return_value=0.005):  # Below 0.01 threshold
+    with patch(
+        "spacesim2.core.commands.random.random", return_value=0.005
+    ):  # Below 0.01 threshold
         command = ProcessCommand("test_process")
         result = command.execute(actor)
 
@@ -123,7 +127,9 @@ def test_tool_break_logged_when_data_logger_present():
 
     # Execute process with controlled randomness (force degradation)
     # Patch in commands module specifically
-    with patch('spacesim2.core.commands.random.random', return_value=0.005):  # Below 0.01 threshold
+    with patch(
+        "spacesim2.core.commands.random.random", return_value=0.005
+    ):  # Below 0.01 threshold
         command = ProcessCommand("test_process")
         result = command.execute(actor)
 
@@ -150,7 +156,9 @@ def test_tool_degradation_only_after_successful_process():
     # Note: no input_commodity added
 
     # Try to execute process - should fail due to missing inputs
-    with patch('spacesim2.core.commands.random.random', return_value=0.005):  # Would cause degradation
+    with patch(
+        "spacesim2.core.commands.random.random", return_value=0.005
+    ):  # Would cause degradation
         command = ProcessCommand("test_process")
         result = command.execute(actor)
 
@@ -217,7 +225,9 @@ def test_tool_degradation_probability_is_independent_per_tool():
 
     # Both tools break (both random calls below threshold)
     random_values = iter([0.005, 0.005])
-    with patch('spacesim2.core.commands.random.random', side_effect=lambda: next(random_values)):
+    with patch(
+        "spacesim2.core.commands.random.random", side_effect=lambda: next(random_values)
+    ):
         command = ProcessCommand("multi_tool_process")
         result = command.execute(actor)
 

@@ -13,6 +13,7 @@ def _():
     from spacesim2.analysis.loading.loader import SimulationData
     from spacesim2.analysis.loading import get_run_path_with_fallback
     from pathlib import Path
+
     return Path, SimulationData, get_run_path_with_fallback, mo, os, pl, px
 
 
@@ -60,9 +61,9 @@ def _(mo, pl, shelter):
     | Metric | Count | Percentage |
     |--------|-------|------------|
     | Total records | {total} | 100% |
-    | Unhealthy (health < 0.5) | {unhealthy} | {100*unhealthy/total:.1f}% |
-    | High debt (debt > 0.5) | {high_debt} | {100*high_debt/total:.1f}% |
-    | Very high debt (debt > 0.8) | {very_high_debt} | {100*very_high_debt/total:.1f}% |
+    | Unhealthy (health < 0.5) | {unhealthy} | {100 * unhealthy / total:.1f}% |
+    | High debt (debt > 0.5) | {high_debt} | {100 * high_debt / total:.1f}% |
+    | Very high debt (debt > 0.8) | {very_high_debt} | {100 * very_high_debt / total:.1f}% |
     """)
     return high_debt, total, unhealthy, very_high_debt
 
@@ -70,18 +71,22 @@ def _(mo, pl, shelter):
 @app.cell
 def _(pl, px, shelter):
     # Shelter health over time
-    avg_health = shelter.group_by("turn").agg(
-        pl.col("health").mean().alias("avg_health"),
-        pl.col("debt").mean().alias("avg_debt"),
-        pl.col("buffer").mean().alias("avg_buffer"),
-    ).sort("turn")
+    avg_health = (
+        shelter.group_by("turn")
+        .agg(
+            pl.col("health").mean().alias("avg_health"),
+            pl.col("debt").mean().alias("avg_debt"),
+            pl.col("buffer").mean().alias("avg_buffer"),
+        )
+        .sort("turn")
+    )
 
     fig = px.line(
         avg_health.to_pandas(),
         x="turn",
         y=["avg_health", "avg_debt", "avg_buffer"],
         title="Shelter Drive Metrics Over Time",
-        labels={"value": "Value (0-1)", "turn": "Turn", "variable": "Metric"}
+        labels={"value": "Value (0-1)", "turn": "Turn", "variable": "Metric"},
     )
     fig
     return avg_health, fig
@@ -107,7 +112,9 @@ def _(data, mo, pl):
     )
 
     # Check what commodities exist in market data
-    all_commodities = data.market_snapshots.select("commodity_id").unique().to_series().to_list()
+    all_commodities = (
+        data.market_snapshots.select("commodity_id").unique().to_series().to_list()
+    )
     shelter_found = [c for c in shelter_commodities if c in all_commodities]
     shelter_missing = [c for c in shelter_commodities if c not in all_commodities]
 
@@ -127,12 +134,19 @@ def _(data, mo, pl):
     ### Market Price Statistics
 
     **Commodities in market:** {len(all_commodities)} total
-    **Shelter commodities found:** {shelter_found if shelter_found else 'NONE'}
-    **Shelter commodities missing:** {shelter_missing if shelter_missing else 'none'}
+    **Shelter commodities found:** {shelter_found if shelter_found else "NONE"}
+    **Shelter commodities missing:** {shelter_missing if shelter_missing else "none"}
 
     {price_table}
     """)
-    return all_commodities, market_data, price_stats, shelter_commodities, shelter_found, shelter_missing
+    return (
+        all_commodities,
+        market_data,
+        price_stats,
+        shelter_commodities,
+        shelter_found,
+        shelter_missing,
+    )
 
 
 @app.cell
@@ -144,7 +158,11 @@ def _(market_data, px):
         y="avg_price",
         color="commodity_id",
         title="Shelter Material Prices Over Time",
-        labels={"avg_price": "Average Price ($)", "turn": "Turn", "commodity_id": "Commodity"}
+        labels={
+            "avg_price": "Average Price ($)",
+            "turn": "Turn",
+            "commodity_id": "Commodity",
+        },
     )
     fig_prices
     return (fig_prices,)
@@ -158,7 +176,9 @@ def _(data, mo, pl, shelter_commodities):
     )
 
     # Check all commodities that have transactions
-    all_txn_commodities = data.market_transactions.select("commodity_id").unique().to_series().to_list()
+    all_txn_commodities = (
+        data.market_transactions.select("commodity_id").unique().to_series().to_list()
+    )
 
     if txns.height > 0:
         volume_by_commodity = txns.group_by("commodity_id").agg(
@@ -186,9 +206,11 @@ def _(data, mo, pl, shelter_commodities):
 @app.cell
 def _(mo, pl, txns):
     # Transaction timeline
-    txn_timeline = txns.group_by(["turn", "commodity_id"]).agg(
-        pl.col("quantity").sum().alias("volume")
-    ).sort("turn")
+    txn_timeline = (
+        txns.group_by(["turn", "commodity_id"])
+        .agg(pl.col("quantity").sum().alias("volume"))
+        .sort("turn")
+    )
 
     if txn_timeline.height == 0:
         mo.md("**Warning: No transactions for shelter materials!**")
@@ -206,7 +228,11 @@ def _(px, txn_timeline):
             y="volume",
             color="commodity_id",
             title="Transaction Volume Over Time",
-            labels={"volume": "Quantity Traded", "turn": "Turn", "commodity_id": "Commodity"}
+            labels={
+                "volume": "Quantity Traded",
+                "turn": "Turn",
+                "commodity_id": "Commodity",
+            },
         )
         fig_volume
     else:
@@ -236,7 +262,11 @@ def _(mo, all_drives, pl, shelter):
     # Final assessment
     shelter_avg_health = shelter.select(pl.col("health").mean()).item()
     shelter_avg_debt = shelter.select(pl.col("debt").mean()).item()
-    shelter_end_health = shelter.filter(pl.col("turn") == shelter["turn"].max()).select(pl.col("health").mean()).item()
+    shelter_end_health = (
+        shelter.filter(pl.col("turn") == shelter["turn"].max())
+        .select(pl.col("health").mean())
+        .item()
+    )
 
     if shelter_avg_health > 0.5 and shelter_avg_debt < 0.5:
         status = "HEALTHY"

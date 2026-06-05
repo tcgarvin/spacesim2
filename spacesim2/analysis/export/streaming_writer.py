@@ -9,12 +9,7 @@ import pyarrow.parquet as pq
 class StreamingParquetWriter:
     """Write data to Parquet in batches to avoid memory issues."""
 
-    def __init__(
-        self,
-        filepath: Path,
-        schema: pa.Schema,
-        batch_size: int = 1000
-    ):
+    def __init__(self, filepath: Path, schema: pa.Schema, batch_size: int = 1000):
         """
         Initialize streaming Parquet writer.
 
@@ -59,9 +54,7 @@ class StreamingParquetWriter:
         if self.writer is None:
             # First write - create file
             self.writer = pq.ParquetWriter(
-                self.filepath,
-                self.schema,
-                compression='snappy'
+                self.filepath, self.schema, compression="snappy"
             )
 
         self.writer.write_table(table)
@@ -77,5 +70,7 @@ class StreamingParquetWriter:
             self.writer = None
         elif not self.filepath.exists():
             # Create empty file if no data was written
-            empty_table = pa.table({field.name: [] for field in self.schema}, schema=self.schema)
-            pq.write_table(empty_table, self.filepath, compression='snappy')
+            empty_table = pa.table(
+                {field.name: [] for field in self.schema}, schema=self.schema
+            )
+            pq.write_table(empty_table, self.filepath, compression="snappy")

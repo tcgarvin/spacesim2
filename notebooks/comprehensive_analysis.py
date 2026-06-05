@@ -24,7 +24,20 @@ def _():
     from spacesim2.analysis.loading.loader import SimulationData
     from spacesim2.analysis.loading import get_run_path_with_fallback, NoRunsFoundError
     from pathlib import Path
-    return Path, SimulationData, NoRunsFoundError, get_run_path_with_fallback, go, json, make_subplots, mo, os, pl, px
+
+    return (
+        Path,
+        SimulationData,
+        NoRunsFoundError,
+        get_run_path_with_fallback,
+        go,
+        json,
+        make_subplots,
+        mo,
+        os,
+        pl,
+        px,
+    )
 
 
 @app.cell
@@ -89,15 +102,29 @@ def _(data, mo, pl):
         _overview = mo.md("## Simulation Overview\n\nNo data loaded")
     else:
         _num_turns = data.actor_turns["turn"].max() if len(data.actor_turns) > 0 else 0
-        _num_actors = data.actor_turns["actor_id"].n_unique() if len(data.actor_turns) > 0 else 0
+        _num_actors = (
+            data.actor_turns["actor_id"].n_unique() if len(data.actor_turns) > 0 else 0
+        )
         _num_transactions = len(data.market_transactions)
-        _planets = data.actor_turns["planet_name"].unique().to_list() if len(data.actor_turns) > 0 else []
-        _drive_names = data.actor_drives.select("drive_name").unique().to_series().to_list() if len(data.actor_drives) > 0 else []
+        _planets = (
+            data.actor_turns["planet_name"].unique().to_list()
+            if len(data.actor_turns) > 0
+            else []
+        )
+        _drive_names = (
+            data.actor_drives.select("drive_name").unique().to_series().to_list()
+            if len(data.actor_drives) > 0
+            else []
+        )
 
         # Count ships
-        _ships = data.actor_turns.filter(
-            pl.col("actor_name").str.contains("(?i)ship|trader")
-        ).select("actor_name").unique()
+        _ships = (
+            data.actor_turns.filter(
+                pl.col("actor_name").str.contains("(?i)ship|trader")
+            )
+            .select("actor_name")
+            .unique()
+        )
         _num_ships = len(_ships)
 
         _overview = mo.md(f"""
@@ -108,9 +135,9 @@ def _(data, mo, pl):
         | Turns | {_num_turns} |
         | Actors Tracked | {_num_actors} |
         | Ships | {_num_ships} |
-        | Planets | {len(_planets)} ({', '.join(_planets[:5])}{'...' if len(_planets) > 5 else ''}) |
+        | Planets | {len(_planets)} ({", ".join(_planets[:5])}{"..." if len(_planets) > 5 else ""}) |
         | Total Transactions | {_num_transactions:,} |
-        | Drives Tracked | {', '.join(_drive_names)} |
+        | Drives Tracked | {", ".join(_drive_names)} |
         """)
     _overview
     return
@@ -147,7 +174,7 @@ def _(data, mo, pl, px):
         _drive_with_planet = data.actor_drives.join(
             data.actor_turns.select(["turn", "actor_id", "planet_name"]),
             on=["turn", "actor_id"],
-            how="left"
+            how="left",
         )
 
         # Get final turn data for snapshot
@@ -161,7 +188,11 @@ def _(data, mo, pl, px):
             y="health",
             color="drive_name",
             title=f"Drive Health Distribution by Planet (Turn {_final_turn})",
-            labels={"health": "Health (0-1)", "planet_name": "Planet", "drive_name": "Drive"},
+            labels={
+                "health": "Health (0-1)",
+                "planet_name": "Planet",
+                "drive_name": "Drive",
+            },
         )
         _fig.update_layout(
             xaxis_tickangle=-45,
@@ -181,16 +212,19 @@ def _(data, mo, pl, px):
         _drive_with_planet = data.actor_drives.join(
             data.actor_turns.select(["turn", "actor_id", "planet_name"]),
             on=["turn", "actor_id"],
-            how="left"
+            how="left",
         )
 
-        _food_by_planet = _drive_with_planet.filter(
-            pl.col("drive_name") == "food"
-        ).group_by(["turn", "planet_name"]).agg(
-            pl.col("health").mean().alias("avg_health"),
-            pl.col("health").std().alias("health_std"),
-            pl.col("debt").mean().alias("avg_debt"),
-        ).sort(["planet_name", "turn"])
+        _food_by_planet = (
+            _drive_with_planet.filter(pl.col("drive_name") == "food")
+            .group_by(["turn", "planet_name"])
+            .agg(
+                pl.col("health").mean().alias("avg_health"),
+                pl.col("health").std().alias("health_std"),
+                pl.col("debt").mean().alias("avg_debt"),
+            )
+            .sort(["planet_name", "turn"])
+        )
 
         _fig = px.line(
             _food_by_planet.to_pandas(),
@@ -198,7 +232,11 @@ def _(data, mo, pl, px):
             y="avg_health",
             color="planet_name",
             title="Food Drive: Average Health Over Time by Planet",
-            labels={"avg_health": "Average Health", "turn": "Turn", "planet_name": "Planet"},
+            labels={
+                "avg_health": "Average Health",
+                "turn": "Turn",
+                "planet_name": "Planet",
+            },
         )
         _fig.update_layout(hovermode="x unified")
     _fig
@@ -214,15 +252,18 @@ def _(data, mo, pl, px):
         _drive_with_planet = data.actor_drives.join(
             data.actor_turns.select(["turn", "actor_id", "planet_name"]),
             on=["turn", "actor_id"],
-            how="left"
+            how="left",
         )
 
-        _clothing_by_planet = _drive_with_planet.filter(
-            pl.col("drive_name") == "clothing"
-        ).group_by(["turn", "planet_name"]).agg(
-            pl.col("health").mean().alias("avg_health"),
-            pl.col("debt").mean().alias("avg_debt"),
-        ).sort(["planet_name", "turn"])
+        _clothing_by_planet = (
+            _drive_with_planet.filter(pl.col("drive_name") == "clothing")
+            .group_by(["turn", "planet_name"])
+            .agg(
+                pl.col("health").mean().alias("avg_health"),
+                pl.col("debt").mean().alias("avg_debt"),
+            )
+            .sort(["planet_name", "turn"])
+        )
 
         if _clothing_by_planet.height == 0:
             _fig = mo.md("No clothing drive data found")
@@ -233,7 +274,11 @@ def _(data, mo, pl, px):
                 y="avg_health",
                 color="planet_name",
                 title="Clothing Drive: Average Health Over Time by Planet",
-                labels={"avg_health": "Average Health", "turn": "Turn", "planet_name": "Planet"},
+                labels={
+                    "avg_health": "Average Health",
+                    "turn": "Turn",
+                    "planet_name": "Planet",
+                },
             )
             _fig.update_layout(hovermode="x unified")
     _fig
@@ -249,15 +294,18 @@ def _(data, mo, pl, px):
         _drive_with_planet = data.actor_drives.join(
             data.actor_turns.select(["turn", "actor_id", "planet_name"]),
             on=["turn", "actor_id"],
-            how="left"
+            how="left",
         )
 
-        _shelter_by_planet = _drive_with_planet.filter(
-            pl.col("drive_name") == "shelter"
-        ).group_by(["turn", "planet_name"]).agg(
-            pl.col("health").mean().alias("avg_health"),
-            pl.col("debt").mean().alias("avg_debt"),
-        ).sort(["planet_name", "turn"])
+        _shelter_by_planet = (
+            _drive_with_planet.filter(pl.col("drive_name") == "shelter")
+            .group_by(["turn", "planet_name"])
+            .agg(
+                pl.col("health").mean().alias("avg_health"),
+                pl.col("debt").mean().alias("avg_debt"),
+            )
+            .sort(["planet_name", "turn"])
+        )
 
         if _shelter_by_planet.height == 0:
             _fig = mo.md("No shelter drive data found")
@@ -268,7 +316,11 @@ def _(data, mo, pl, px):
                 y="avg_health",
                 color="planet_name",
                 title="Shelter Drive: Average Health Over Time by Planet",
-                labels={"avg_health": "Average Health", "turn": "Turn", "planet_name": "Planet"},
+                labels={
+                    "avg_health": "Average Health",
+                    "turn": "Turn",
+                    "planet_name": "Planet",
+                },
             )
             _fig.update_layout(hovermode="x unified")
     _fig
@@ -284,15 +336,19 @@ def _(data, go, make_subplots, mo, pl):
         _drive_with_planet = data.actor_drives.join(
             data.actor_turns.select(["turn", "actor_id", "planet_name"]),
             on=["turn", "actor_id"],
-            how="left"
+            how="left",
         )
 
         # Aggregate by planet and drive
-        _summary = _drive_with_planet.group_by(["planet_name", "drive_name"]).agg(
-            pl.col("health").mean().alias("avg_health"),
-            pl.col("debt").mean().alias("avg_debt"),
-            pl.col("buffer").mean().alias("avg_buffer"),
-        ).sort(["planet_name", "drive_name"])
+        _summary = (
+            _drive_with_planet.group_by(["planet_name", "drive_name"])
+            .agg(
+                pl.col("health").mean().alias("avg_health"),
+                pl.col("debt").mean().alias("avg_debt"),
+                pl.col("buffer").mean().alias("avg_buffer"),
+            )
+            .sort(["planet_name", "drive_name"])
+        )
 
         # Pivot for heatmap
         _health_pivot = _summary.pivot(
@@ -304,20 +360,27 @@ def _(data, go, make_subplots, mo, pl):
         _planets = _health_pivot["planet_name"].to_list()
         _drives = [c for c in _health_pivot.columns if c != "planet_name"]
 
-        _z_values = [[_health_pivot[drive][i] for drive in _drives] for i in range(len(_planets))]
+        _z_values = [
+            [_health_pivot[drive][i] for drive in _drives] for i in range(len(_planets))
+        ]
 
-        _fig = go.Figure(data=go.Heatmap(
-            z=_z_values,
-            x=_drives,
-            y=_planets,
-            colorscale="RdYlGn",
-            zmin=0,
-            zmax=1,
-            text=[[f"{v:.2f}" if v is not None else "" for v in row] for row in _z_values],
-            texttemplate="%{text}",
-            textfont={"size": 12},
-            hovertemplate="Planet: %{y}<br>Drive: %{x}<br>Avg Health: %{z:.2f}<extra></extra>",
-        ))
+        _fig = go.Figure(
+            data=go.Heatmap(
+                z=_z_values,
+                x=_drives,
+                y=_planets,
+                colorscale="RdYlGn",
+                zmin=0,
+                zmax=1,
+                text=[
+                    [f"{v:.2f}" if v is not None else "" for v in row]
+                    for row in _z_values
+                ],
+                texttemplate="%{text}",
+                textfont={"size": 12},
+                hovertemplate="Planet: %{y}<br>Drive: %{x}<br>Avg Health: %{z:.2f}<extra></extra>",
+            )
+        )
         _fig.update_layout(
             title="Average Drive Health by Planet (All Time)",
             xaxis_title="Drive",
@@ -359,10 +422,14 @@ def _(data, mo, pl, px):
         )
 
         # Aggregate by planet and commodity
-        _production_by_planet = _local_sales.group_by(["planet_name", "commodity_id"]).agg(
-            pl.col("quantity").sum().alias("total_sold"),
-            pl.col("quantity").count().alias("num_transactions"),
-        ).sort(["planet_name", "total_sold"], descending=[False, True])
+        _production_by_planet = (
+            _local_sales.group_by(["planet_name", "commodity_id"])
+            .agg(
+                pl.col("quantity").sum().alias("total_sold"),
+                pl.col("quantity").count().alias("num_transactions"),
+            )
+            .sort(["planet_name", "total_sold"], descending=[False, True])
+        )
 
         _fig = px.bar(
             _production_by_planet.to_pandas(),
@@ -370,7 +437,11 @@ def _(data, mo, pl, px):
             y="total_sold",
             color="commodity_id",
             title="Production by Planet (Local Actor Sales, Excluding Ships)",
-            labels={"total_sold": "Total Quantity Sold", "planet_name": "Planet", "commodity_id": "Commodity"},
+            labels={
+                "total_sold": "Total Quantity Sold",
+                "planet_name": "Planet",
+                "commodity_id": "Commodity",
+            },
             barmode="stack",
         )
         _fig.update_layout(
@@ -392,7 +463,9 @@ def _(data, mo, pl, px):
             ~pl.col("seller_name").str.contains("(?i)ship|trader")
         )
 
-        _production_by_planet = _local_sales.group_by(["planet_name", "commodity_id"]).agg(
+        _production_by_planet = _local_sales.group_by(
+            ["planet_name", "commodity_id"]
+        ).agg(
             pl.col("quantity").sum().alias("total_sold"),
         )
 
@@ -401,11 +474,15 @@ def _(data, mo, pl, px):
             pl.col("total_sold").sum().alias("planet_total")
         )
 
-        _production_pct = _production_by_planet.join(
-            _planet_totals, on="planet_name"
-        ).with_columns(
-            (pl.col("total_sold") / pl.col("planet_total") * 100).alias("pct_of_planet")
-        ).sort(["planet_name", "pct_of_planet"], descending=[False, True])
+        _production_pct = (
+            _production_by_planet.join(_planet_totals, on="planet_name")
+            .with_columns(
+                (pl.col("total_sold") / pl.col("planet_total") * 100).alias(
+                    "pct_of_planet"
+                )
+            )
+            .sort(["planet_name", "pct_of_planet"], descending=[False, True])
+        )
 
         _fig = px.bar(
             _production_pct.to_pandas(),
@@ -413,7 +490,11 @@ def _(data, mo, pl, px):
             y="pct_of_planet",
             color="commodity_id",
             title="Production Mix by Planet (% of Local Sales)",
-            labels={"pct_of_planet": "% of Planet Production", "planet_name": "Planet", "commodity_id": "Commodity"},
+            labels={
+                "pct_of_planet": "% of Planet Production",
+                "planet_name": "Planet",
+                "commodity_id": "Commodity",
+            },
             barmode="stack",
         )
         _fig.update_layout(
@@ -436,13 +517,20 @@ def _(data, mo, pl, px):
         )
 
         # Aggregate by turn and planet
-        _production_by_turn = _local_sales.group_by(["turn", "planet_name"]).agg(
-            pl.col("quantity").sum().alias("total_production"),
-        ).sort(["planet_name", "turn"])
+        _production_by_turn = (
+            _local_sales.group_by(["turn", "planet_name"])
+            .agg(
+                pl.col("quantity").sum().alias("total_production"),
+            )
+            .sort(["planet_name", "turn"])
+        )
 
         # Rolling average
         _production_smoothed = _production_by_turn.with_columns(
-            pl.col("total_production").rolling_mean(window_size=50, min_periods=1).over("planet_name").alias("production_avg")
+            pl.col("total_production")
+            .rolling_mean(window_size=50, min_periods=1)
+            .over("planet_name")
+            .alias("production_avg")
         )
 
         _fig = px.line(
@@ -451,7 +539,11 @@ def _(data, mo, pl, px):
             y="production_avg",
             color="planet_name",
             title="Local Production Activity Over Time (50-turn rolling avg)",
-            labels={"production_avg": "Production Volume", "turn": "Turn", "planet_name": "Planet"},
+            labels={
+                "production_avg": "Production Volume",
+                "turn": "Turn",
+                "planet_name": "Planet",
+            },
         )
         _fig.update_layout(hovermode="x unified")
     _fig
@@ -468,16 +560,29 @@ def _(data, mo, pl):
             ~pl.col("seller_name").str.contains("(?i)ship|trader")
         )
 
-        _production_by_planet = _local_sales.group_by(["planet_name", "commodity_id"]).agg(
-            pl.col("quantity").sum().alias("total_sold"),
-        ).sort(["planet_name", "total_sold"], descending=[False, True])
+        _production_by_planet = (
+            _local_sales.group_by(["planet_name", "commodity_id"])
+            .agg(
+                pl.col("quantity").sum().alias("total_sold"),
+            )
+            .sort(["planet_name", "total_sold"], descending=[False, True])
+        )
 
         # Get top 3 commodities per planet
-        _top_by_planet = _production_by_planet.with_columns(
-            pl.col("total_sold").rank(descending=True).over("planet_name").alias("rank")
-        ).filter(pl.col("rank") <= 3).sort(["planet_name", "rank"])
+        _top_by_planet = (
+            _production_by_planet.with_columns(
+                pl.col("total_sold")
+                .rank(descending=True)
+                .over("planet_name")
+                .alias("rank")
+            )
+            .filter(pl.col("rank") <= 3)
+            .sort(["planet_name", "rank"])
+        )
 
-        _table = mo.ui.table(_top_by_planet.to_pandas(), label="Top 3 Produced Commodities per Planet")
+        _table = mo.ui.table(
+            _top_by_planet.to_pandas(), label="Top 3 Produced Commodities per Planet"
+        )
     _table
     return
 
@@ -535,18 +640,24 @@ def _(mo, pl, px, ship_actors):
         _fig = mo.md("No ship data available")
     else:
         _ship_profits = (
-            ship_actors
-            .sort(["actor_name", "turn"])
-            .with_columns([
-                (pl.col("money") - pl.col("money").shift(1).over("actor_name")).alias("profit_per_turn"),
-                pl.col("money").first().over("actor_name").alias("starting_money"),
-            ])
+            ship_actors.sort(["actor_name", "turn"])
+            .with_columns(
+                [
+                    (
+                        pl.col("money") - pl.col("money").shift(1).over("actor_name")
+                    ).alias("profit_per_turn"),
+                    pl.col("money").first().over("actor_name").alias("starting_money"),
+                ]
+            )
             .filter(pl.col("profit_per_turn").is_not_null())
         )
 
         # Rolling average of profit
         _ship_profits_smooth = _ship_profits.with_columns(
-            pl.col("profit_per_turn").rolling_mean(window_size=20, min_periods=1).over("actor_name").alias("profit_avg")
+            pl.col("profit_per_turn")
+            .rolling_mean(window_size=20, min_periods=1)
+            .over("actor_name")
+            .alias("profit_avg")
         )
 
         _fig = px.line(
@@ -557,7 +668,9 @@ def _(mo, pl, px, ship_actors):
             title="Ship Profit per Turn (20-turn rolling avg)",
             labels={"profit_avg": "Profit ($)", "turn": "Turn", "actor_name": "Ship"},
         )
-        _fig.add_hline(y=0, line_dash="dash", line_color="gray", annotation_text="Break Even")
+        _fig.add_hline(
+            y=0, line_dash="dash", line_color="gray", annotation_text="Break Even"
+        )
         _fig.update_layout(hovermode="x unified")
     _fig
     return
@@ -572,31 +685,36 @@ def _(data, mo, pl, px):
     else:
         # Get ship transactions
         ship_txns = data.market_transactions.filter(
-            pl.col("buyer_name").str.contains("(?i)ship|trader") |
-            pl.col("seller_name").str.contains("(?i)ship|trader")
+            pl.col("buyer_name").str.contains("(?i)ship|trader")
+            | pl.col("seller_name").str.contains("(?i)ship|trader")
         )
 
         if ship_txns.height == 0:
             _fig = mo.md("No ship transactions found")
         else:
             # Separate buys and sells
-            _ship_buys = ship_txns.filter(
-                pl.col("buyer_name").str.contains("(?i)ship|trader")
-            ).group_by("turn").agg(
-                pl.col("quantity").sum().alias("quantity")
-            ).with_columns(pl.lit("buy").alias("type"))
+            _ship_buys = (
+                ship_txns.filter(pl.col("buyer_name").str.contains("(?i)ship|trader"))
+                .group_by("turn")
+                .agg(pl.col("quantity").sum().alias("quantity"))
+                .with_columns(pl.lit("buy").alias("type"))
+            )
 
-            _ship_sells = ship_txns.filter(
-                pl.col("seller_name").str.contains("(?i)ship|trader")
-            ).group_by("turn").agg(
-                pl.col("quantity").sum().alias("quantity")
-            ).with_columns(pl.lit("sell").alias("type"))
+            _ship_sells = (
+                ship_txns.filter(pl.col("seller_name").str.contains("(?i)ship|trader"))
+                .group_by("turn")
+                .agg(pl.col("quantity").sum().alias("quantity"))
+                .with_columns(pl.lit("sell").alias("type"))
+            )
 
             _volume_by_turn = pl.concat([_ship_buys, _ship_sells]).sort("turn")
 
             # Rolling average
             _volume_smooth = _volume_by_turn.with_columns(
-                pl.col("quantity").rolling_mean(window_size=25, min_periods=1).over("type").alias("volume_avg")
+                pl.col("quantity")
+                .rolling_mean(window_size=25, min_periods=1)
+                .over("type")
+                .alias("volume_avg")
             )
 
             _fig = px.line(
@@ -605,7 +723,11 @@ def _(data, mo, pl, px):
                 y="volume_avg",
                 color="type",
                 title="Ship Trading Volume Over Time (25-turn rolling avg)",
-                labels={"volume_avg": "Quantity", "turn": "Turn", "type": "Transaction Type"},
+                labels={
+                    "volume_avg": "Quantity",
+                    "turn": "Turn",
+                    "type": "Transaction Type",
+                },
             )
             _fig.update_layout(hovermode="x unified")
     _fig
@@ -618,17 +740,19 @@ def _(mo, pl, px, ship_txns):
     if ship_txns is None or ship_txns.height == 0:
         _fig = mo.md("No ship transaction data")
     else:
-        _ship_buys = ship_txns.filter(
-            pl.col("buyer_name").str.contains("(?i)ship|trader")
-        ).group_by("commodity_id").agg(
-            pl.col("quantity").sum().alias("quantity")
-        ).with_columns(pl.lit("Bought").alias("type"))
+        _ship_buys = (
+            ship_txns.filter(pl.col("buyer_name").str.contains("(?i)ship|trader"))
+            .group_by("commodity_id")
+            .agg(pl.col("quantity").sum().alias("quantity"))
+            .with_columns(pl.lit("Bought").alias("type"))
+        )
 
-        _ship_sells = ship_txns.filter(
-            pl.col("seller_name").str.contains("(?i)ship|trader")
-        ).group_by("commodity_id").agg(
-            pl.col("quantity").sum().alias("quantity")
-        ).with_columns(pl.lit("Sold").alias("type"))
+        _ship_sells = (
+            ship_txns.filter(pl.col("seller_name").str.contains("(?i)ship|trader"))
+            .group_by("commodity_id")
+            .agg(pl.col("quantity").sum().alias("quantity"))
+            .with_columns(pl.lit("Sold").alias("type"))
+        )
 
         _commodity_volume = pl.concat([_ship_buys, _ship_sells])
 
@@ -639,7 +763,11 @@ def _(mo, pl, px, ship_txns):
             color="type",
             barmode="group",
             title="Ship Trading by Commodity (Total Volume)",
-            labels={"quantity": "Total Quantity", "commodity_id": "Commodity", "type": "Direction"},
+            labels={
+                "quantity": "Total Quantity",
+                "commodity_id": "Commodity",
+                "type": "Direction",
+            },
         )
         _fig.update_layout(xaxis_tickangle=-45)
     _fig
@@ -652,17 +780,19 @@ def _(mo, pl, px, ship_txns):
     if ship_txns is None or ship_txns.height == 0:
         _fig = mo.md("No ship transaction data")
     else:
-        _ship_buys = ship_txns.filter(
-            pl.col("buyer_name").str.contains("(?i)ship|trader")
-        ).group_by("planet_name").agg(
-            pl.col("quantity").sum().alias("quantity")
-        ).with_columns(pl.lit("Bought from").alias("type"))
+        _ship_buys = (
+            ship_txns.filter(pl.col("buyer_name").str.contains("(?i)ship|trader"))
+            .group_by("planet_name")
+            .agg(pl.col("quantity").sum().alias("quantity"))
+            .with_columns(pl.lit("Bought from").alias("type"))
+        )
 
-        _ship_sells = ship_txns.filter(
-            pl.col("seller_name").str.contains("(?i)ship|trader")
-        ).group_by("planet_name").agg(
-            pl.col("quantity").sum().alias("quantity")
-        ).with_columns(pl.lit("Sold to").alias("type"))
+        _ship_sells = (
+            ship_txns.filter(pl.col("seller_name").str.contains("(?i)ship|trader"))
+            .group_by("planet_name")
+            .agg(pl.col("quantity").sum().alias("quantity"))
+            .with_columns(pl.lit("Sold to").alias("type"))
+        )
 
         _planet_volume = pl.concat([_ship_buys, _ship_sells])
 
@@ -673,7 +803,11 @@ def _(mo, pl, px, ship_txns):
             color="type",
             barmode="group",
             title="Ship Trading Activity by Planet",
-            labels={"quantity": "Total Quantity", "planet_name": "Planet", "type": "Direction"},
+            labels={
+                "quantity": "Total Quantity",
+                "planet_name": "Planet",
+                "type": "Direction",
+            },
         )
         _fig.update_layout(xaxis_tickangle=-45)
     _fig
@@ -689,7 +823,8 @@ def _(go, make_subplots, mo, pl, ship_actors, ship_txns):
         _ship_names = ship_actors.select("actor_name").unique().to_series().to_list()
 
         _fig = make_subplots(
-            rows=2, cols=2,
+            rows=2,
+            cols=2,
             subplot_titles=(
                 "Cash Reserves",
                 "Trading Volume (Buys)",
@@ -707,51 +842,87 @@ def _(go, make_subplots, mo, pl, ship_actors, ship_txns):
             _color = _colors[_i % len(_colors)]
 
             # Cash reserves
-            _ship_data = ship_actors.filter(pl.col("actor_name") == _ship_name).to_pandas()
+            _ship_data = ship_actors.filter(
+                pl.col("actor_name") == _ship_name
+            ).to_pandas()
             _fig.add_trace(
-                go.Scatter(x=_ship_data["turn"], y=_ship_data["money"],
-                          name=_ship_name, line=dict(color=_color), legendgroup=_ship_name),
-                row=1, col=1
+                go.Scatter(
+                    x=_ship_data["turn"],
+                    y=_ship_data["money"],
+                    name=_ship_name,
+                    line=dict(color=_color),
+                    legendgroup=_ship_name,
+                ),
+                row=1,
+                col=1,
             )
 
             # Profit per turn
-            _ship_profits = ship_actors.filter(
-                pl.col("actor_name") == _ship_name
-            ).sort("turn").with_columns(
-                (pl.col("money") - pl.col("money").shift(1)).alias("profit")
-            ).filter(pl.col("profit").is_not_null()).to_pandas()
+            _ship_profits = (
+                ship_actors.filter(pl.col("actor_name") == _ship_name)
+                .sort("turn")
+                .with_columns(
+                    (pl.col("money") - pl.col("money").shift(1)).alias("profit")
+                )
+                .filter(pl.col("profit").is_not_null())
+                .to_pandas()
+            )
 
             if len(_ship_profits) > 0:
                 _fig.add_trace(
-                    go.Scatter(x=_ship_profits["turn"], y=_ship_profits["profit"],
-                              name=_ship_name, line=dict(color=_color), legendgroup=_ship_name,
-                              showlegend=False),
-                    row=2, col=1
+                    go.Scatter(
+                        x=_ship_profits["turn"],
+                        y=_ship_profits["profit"],
+                        name=_ship_name,
+                        line=dict(color=_color),
+                        legendgroup=_ship_name,
+                        showlegend=False,
+                    ),
+                    row=2,
+                    col=1,
                 )
 
             # Trading volume
             if ship_txns is not None and ship_txns.height > 0:
-                _buys = ship_txns.filter(
-                    pl.col("buyer_name") == _ship_name
-                ).group_by("turn").agg(pl.col("quantity").sum()).to_pandas()
+                _buys = (
+                    ship_txns.filter(pl.col("buyer_name") == _ship_name)
+                    .group_by("turn")
+                    .agg(pl.col("quantity").sum())
+                    .to_pandas()
+                )
 
-                _sells = ship_txns.filter(
-                    pl.col("seller_name") == _ship_name
-                ).group_by("turn").agg(pl.col("quantity").sum()).to_pandas()
+                _sells = (
+                    ship_txns.filter(pl.col("seller_name") == _ship_name)
+                    .group_by("turn")
+                    .agg(pl.col("quantity").sum())
+                    .to_pandas()
+                )
 
                 if len(_buys) > 0:
                     _fig.add_trace(
-                        go.Scatter(x=_buys["turn"], y=_buys["quantity"],
-                                  name=_ship_name, line=dict(color=_color), legendgroup=_ship_name,
-                                  showlegend=False),
-                        row=1, col=2
+                        go.Scatter(
+                            x=_buys["turn"],
+                            y=_buys["quantity"],
+                            name=_ship_name,
+                            line=dict(color=_color),
+                            legendgroup=_ship_name,
+                            showlegend=False,
+                        ),
+                        row=1,
+                        col=2,
                     )
                 if len(_sells) > 0:
                     _fig.add_trace(
-                        go.Scatter(x=_sells["turn"], y=_sells["quantity"],
-                                  name=_ship_name, line=dict(color=_color), legendgroup=_ship_name,
-                                  showlegend=False),
-                        row=2, col=2
+                        go.Scatter(
+                            x=_sells["turn"],
+                            y=_sells["quantity"],
+                            name=_ship_name,
+                            line=dict(color=_color),
+                            legendgroup=_ship_name,
+                            showlegend=False,
+                        ),
+                        row=2,
+                        col=2,
                     )
 
         _fig.update_layout(
@@ -784,7 +955,11 @@ def _(mo, pl, ship_actors, ship_txns):
             _ship_data = ship_actors.filter(pl.col("actor_name") == _ship_name)
             _start_money = _ship_data.sort("turn").head(1)["money"][0]
             _end_money = _ship_data.sort("turn").tail(1)["money"][0]
-            _roi = ((_end_money - _start_money) / _start_money * 100) if _start_money > 0 else 0
+            _roi = (
+                ((_end_money - _start_money) / _start_money * 100)
+                if _start_money > 0
+                else 0
+            )
 
             _buy_count = 0
             _sell_count = 0
@@ -796,25 +971,37 @@ def _(mo, pl, ship_actors, ship_txns):
                 _sells = ship_txns.filter(pl.col("seller_name") == _ship_name)
                 _buy_count = len(_buys)
                 _sell_count = len(_sells)
-                _total_bought = _buys.select(pl.col("quantity").sum()).item() if len(_buys) > 0 else 0
-                _total_sold = _sells.select(pl.col("quantity").sum()).item() if len(_sells) > 0 else 0
+                _total_bought = (
+                    _buys.select(pl.col("quantity").sum()).item()
+                    if len(_buys) > 0
+                    else 0
+                )
+                _total_sold = (
+                    _sells.select(pl.col("quantity").sum()).item()
+                    if len(_sells) > 0
+                    else 0
+                )
 
-            _stats.append({
-                "Ship": _ship_name,
-                "Start Cash": f"${_start_money:,.0f}",
-                "End Cash": f"${_end_money:,.0f}",
-                "ROI": f"{_roi:+.1f}%",
-                "Buy Txns": _buy_count,
-                "Sell Txns": _sell_count,
-                "Qty Bought": _total_bought,
-                "Qty Sold": _total_sold,
-            })
+            _stats.append(
+                {
+                    "Ship": _ship_name,
+                    "Start Cash": f"${_start_money:,.0f}",
+                    "End Cash": f"${_end_money:,.0f}",
+                    "ROI": f"{_roi:+.1f}%",
+                    "Buy Txns": _buy_count,
+                    "Sell Txns": _sell_count,
+                    "Qty Bought": _total_bought,
+                    "Qty Sold": _total_sold,
+                }
+            )
 
         _stats_df = pl.DataFrame(_stats)
-        _summary = mo.vstack([
-            mo.md("### Ship Performance Summary"),
-            mo.ui.table(_stats_df.to_pandas()),
-        ])
+        _summary = mo.vstack(
+            [
+                mo.md("### Ship Performance Summary"),
+                mo.ui.table(_stats_df.to_pandas()),
+            ]
+        )
     _summary
     return
 

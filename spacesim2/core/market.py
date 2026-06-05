@@ -16,14 +16,14 @@ class Order:
     """Represents a buy or sell order in the market."""
 
     actor: Actor
-    commodity_type: 'CommodityDefinition'  # Must be a CommodityDefinition
+    commodity_type: "CommodityDefinition"  # Must be a CommodityDefinition
     quantity: int
     price: int
     is_buy: bool  # True for buy order, False for sell order
     timestamp: int = 0  # For ordering when prices are the same
     order_id: str = ""  # Unique identifier for the order
     created_turn: int = 0  # Turn when order was created
-    
+
     def __post_init__(self):
         """Generate a unique order ID if not provided."""
         if not self.order_id:
@@ -33,6 +33,7 @@ class Order:
 @dataclass
 class OrderEvent:
     """Represents an order lifecycle event."""
+
     order_id: str
     actor_name: str
     event_type: str  # "created", "filled", "cancelled"
@@ -46,7 +47,7 @@ class Transaction:
 
     buyer: Actor
     seller: Actor
-    commodity_type: 'CommodityDefinition'  # Must be a CommodityDefinition
+    commodity_type: "CommodityDefinition"  # Must be a CommodityDefinition
     quantity: int
     price: int
     total_amount: int
@@ -60,33 +61,41 @@ class Market:
 
     def __init__(self) -> None:
         # Order books for each commodity type
-        self.buy_orders: Dict['CommodityDefinition', List[Order]] = defaultdict(list)
-        self.sell_orders: Dict['CommodityDefinition', List[Order]] = defaultdict(list)
-        
+        self.buy_orders: Dict["CommodityDefinition", List[Order]] = defaultdict(list)
+        self.sell_orders: Dict["CommodityDefinition", List[Order]] = defaultdict(list)
+
         # Track orders by ID for quick lookup
         self.orders_by_id: Dict[str, Order] = {}
-        
+
         # Track orders by actor
-        self.actor_orders: Dict[Actor, Dict[str, List[str]]] = defaultdict(lambda: {"buy": [], "sell": []})
-        
+        self.actor_orders: Dict[Actor, Dict[str, List[str]]] = defaultdict(
+            lambda: {"buy": [], "sell": []}
+        )
+
         # Track completed trades
         self.transaction_history: List[Transaction] = []
         self.actor_transaction_history: Dict[str, List[Transaction]] = defaultdict(list)
-        
+
         # Track order lifecycle events
         self.order_events: List[OrderEvent] = []  # Chronologically ordered
         self.order_events_by_actor: Dict[str, List[OrderEvent]] = defaultdict(list)
-        
+
         # Track current turn for timestamping orders
         self.current_turn = 0
-        
+
         # Track market statistics
-        self.last_traded_prices: Dict['CommodityDefinition', List[int]] = defaultdict(list)
-        
+        self.last_traded_prices: Dict["CommodityDefinition", List[int]] = defaultdict(
+            list
+        )
+
         # Extended market history (for sophisticated market makers)
-        self.price_history: Dict['CommodityDefinition', List[int]] = defaultdict(list)  # All historical prices
-        self.volume_history: Dict['CommodityDefinition', List[int]] = defaultdict(list)  # Daily trading volumes
-        
+        self.price_history: Dict["CommodityDefinition", List[int]] = defaultdict(
+            list
+        )  # All historical prices
+        self.volume_history: Dict["CommodityDefinition", List[int]] = defaultdict(
+            list
+        )  # Daily trading volumes
+
         # Reference to commodity registry (will be set by simulation)
         self.commodity_registry = None
 
@@ -94,7 +103,7 @@ class Market:
         """Trim the transaction history to the last 1000 transactions for global transactions and last 100 transactions for actor transactions."""
         if len(self.transaction_history) > 1000:
             self.transaction_history = self.transaction_history[-1000:]
-        
+
         # Also trim actor transaction histories
         for actor_transactions in self.actor_transaction_history.values():
             if len(actor_transactions) > 100:
@@ -103,7 +112,7 @@ class Market:
     def get_actor_transaction_history(self, actor: Actor) -> List[Transaction]:
         """Get the transaction history for a specific actor."""
         return self.actor_transaction_history.get(actor.name, [])
-    
+
     def _record_order_event(self, event_type: str, order: Order) -> None:
         """Internal: record order lifecycle events."""
         event = OrderEvent(
@@ -111,15 +120,15 @@ class Market:
             actor_name=order.actor.name,
             event_type=event_type,
             turn=self.current_turn,
-            order=order
+            order=order,
         )
         self.order_events.append(event)
         self.order_events_by_actor[order.actor.name].append(event)
-    
+
     def get_actor_current_orders(self, actor: Actor) -> Dict[str, Dict]:
         """Market's authority: what orders are currently open for this actor."""
         result = {}
-        
+
         # Get buy orders
         for order_id in self.actor_orders[actor]["buy"]:
             if order_id in self.orders_by_id:  # Still active
@@ -129,10 +138,10 @@ class Market:
                     "commodity": order.commodity_type.id,
                     "quantity": order.quantity,
                     "price": order.price,
-                    "created_turn": order.created_turn
+                    "created_turn": order.created_turn,
                 }
-        
-        # Get sell orders  
+
+        # Get sell orders
         for order_id in self.actor_orders[actor]["sell"]:
             if order_id in self.orders_by_id:  # Still active
                 order = self.orders_by_id[order_id]
@@ -141,18 +150,20 @@ class Market:
                     "commodity": order.commodity_type.id,
                     "quantity": order.quantity,
                     "price": order.price,
-                    "created_turn": order.created_turn
+                    "created_turn": order.created_turn,
                 }
-        
+
         return result
-    
-    def get_actor_order_events(self, actor: Actor, since_turn: int = 0, until_turn: Optional[int] = None) -> List[OrderEvent]:
+
+    def get_actor_order_events(
+        self, actor: Actor, since_turn: int = 0, until_turn: Optional[int] = None
+    ) -> List[OrderEvent]:
         """Efficient time-range query for actor order events using chronological ordering."""
         actor_events = self.order_events_by_actor[actor.name]
-        
+
         if until_turn is None:
             until_turn = self.current_turn
-        
+
         result = []
         # Use reverse iteration + early stopping for efficiency
         for event in reversed(actor_events):
@@ -160,16 +171,18 @@ class Market:
                 break  # Stop - everything before is older
             if event.turn <= until_turn:
                 result.append(event)
-        
+
         return list(reversed(result))  # Return in chronological order
-    
-    def get_actor_transactions_range(self, actor: Actor, since_turn: int = 0, until_turn: Optional[int] = None) -> List[Transaction]:
+
+    def get_actor_transactions_range(
+        self, actor: Actor, since_turn: int = 0, until_turn: Optional[int] = None
+    ) -> List[Transaction]:
         """Efficient time-range query for actor transactions using chronological ordering."""
         actor_transactions = self.actor_transaction_history[actor.name]
-        
+
         if until_turn is None:
             until_turn = self.current_turn
-        
+
         result = []
         # Use reverse iteration + early stopping for efficiency
         for transaction in reversed(actor_transactions):
@@ -177,109 +190,117 @@ class Market:
                 break  # Stop - everything before is older
             if transaction.turn <= until_turn:
                 result.append(transaction)
-        
+
         return list(reversed(result))  # Return in chronological order
 
     def place_buy_order(
-        self, actor: Actor, commodity_type: 'CommodityDefinition', quantity: int, price: int
+        self,
+        actor: Actor,
+        commodity_type: "CommodityDefinition",
+        quantity: int,
+        price: int,
     ) -> str:
         """Place a buy order (bid) in the market.
-        
+
         Args:
             actor: The actor placing the order
             commodity_type: A CommodityDefinition object
             quantity: The quantity to buy
             price: The price per unit
-            
+
         Returns:
             str: The order ID if placed successfully, empty string otherwise.
         """
         # Price is already an integer
-        
+
         # Verify the actor has enough money to cover the potential transaction
         total_cost = quantity * price
         if actor.money < total_cost:
             # Adjust quantity based on available money
             quantity = int(actor.money / price) if price > 0 else 0
-            
+
         if quantity <= 0:
             return ""  # Cannot place order with zero or negative quantity
-        
+
         # Reserve the funds from the actor for this order
         actor.money -= total_cost
         actor.reserved_money += total_cost
-        
+
         order = Order(
-            actor=actor, 
-            commodity_type=commodity_type, 
-            quantity=quantity, 
-            price=price, 
+            actor=actor,
+            commodity_type=commodity_type,
+            quantity=quantity,
+            price=price,
             is_buy=True,
             timestamp=self.current_turn,
-            created_turn=self.current_turn
+            created_turn=self.current_turn,
         )
-        
+
         # Add order to various tracking collections
         self.buy_orders[commodity_type].append(order)
         self.orders_by_id[order.order_id] = order
         self.actor_orders[actor]["buy"].append(order.order_id)
-        
+
         # Add to actor's active orders
         actor.active_orders[order.order_id] = f"buy {commodity_type.id}"
-        
+
         # Record order creation event
         self._record_order_event("created", order)
-        
+
         return order.order_id
 
     def place_sell_order(
-        self, actor: Actor, commodity_type: 'CommodityDefinition', quantity: int, price: int
+        self,
+        actor: Actor,
+        commodity_type: "CommodityDefinition",
+        quantity: int,
+        price: int,
     ) -> str:
         """Place a sell order (ask) in the market.
-        
+
         Args:
             actor: The actor placing the order
             commodity_type: A CommodityDefinition object
             quantity: The quantity to sell
             price: The price per unit
-            
+
         Returns:
             str: The order ID if placed successfully, empty string otherwise.
         """
         # Price is already an integer
-        
+
         # Verify the actor has enough of the commodity to sell
         available_quantity = actor.inventory.get_available_quantity(commodity_type)
         if available_quantity < quantity:
             quantity = available_quantity
-            
+
         if quantity <= 0:
             return ""  # Cannot place order with zero or negative quantity
-        
+
         # Reserve the commodity from the actor's inventory
         actor.inventory.reserve_commodity(commodity_type, quantity)
-        
+
         order = Order(
-            actor=actor, 
-            commodity_type=commodity_type, 
-            quantity=quantity, 
-            price=price, 
+            actor=actor,
+            commodity_type=commodity_type,
+            quantity=quantity,
+            price=price,
             is_buy=False,
             timestamp=self.current_turn,
-            created_turn=self.current_turn
+            created_turn=self.current_turn,
         )
-        
+
         # Add order to various tracking collections
         self.sell_orders[commodity_type].append(order)
         self.orders_by_id[order.order_id] = order
         self.actor_orders[actor]["sell"].append(order.order_id)
-        
+
         # Add to actor's active orders
         actor.active_orders[order.order_id] = f"sell {commodity_type.id}"
-        
+
         # Record order creation event
         self._record_order_event("created", order)
-        
+
         return order.order_id
 
     def match_orders(self) -> None:
@@ -287,8 +308,12 @@ class Market:
         self._trim_transaction_history()
 
         # Process orders for all commodity types (both enum and string IDs)
-        all_commodities = set(list(self.buy_orders.keys())).union(self.sell_orders.keys()).union(self.volume_history.keys())
-        
+        all_commodities = (
+            set(list(self.buy_orders.keys()))
+            .union(self.sell_orders.keys())
+            .union(self.volume_history.keys())
+        )
+
         # Process orders
         for commodity_type in all_commodities:
             before_count = len(self.transaction_history)
@@ -298,131 +323,151 @@ class Market:
             # Record daily volumes for each commodity
             daily_volume = 0
             average_price_numerator = 0
-            
+
             # Calculate volume and prices for this turn
             new_transactions = self.transaction_history[before_count:after_count]
             for tx in new_transactions:
                 if tx.commodity_type == commodity_type:
                     daily_volume += tx.quantity
                     average_price_numerator += tx.total_amount
-        
+
             if daily_volume > 0:
                 self.volume_history[commodity_type].append(daily_volume)
-                self.price_history[commodity_type].append(average_price_numerator // daily_volume)
+                self.price_history[commodity_type].append(
+                    average_price_numerator // daily_volume
+                )
 
             elif len(self.volume_history[commodity_type]) > 0:
                 # Append 0 volume and last known price
                 self.volume_history[commodity_type].append(0)
-                self.price_history[commodity_type].append(self.price_history[commodity_type][-1])
+                self.price_history[commodity_type].append(
+                    self.price_history[commodity_type][-1]
+                )
 
-    def _match_orders_for_commodity(self, commodity_type: 'CommodityDefinition') -> None:
+    def _match_orders_for_commodity(
+        self, commodity_type: "CommodityDefinition"
+    ) -> None:
         """Match buy and sell orders for a specific commodity."""
         # Sort buy orders by price (highest first) and timestamp (oldest first)
         buy_orders = sorted(
             self.buy_orders.get(commodity_type, []),
-            key=lambda o: (-o.price, o.timestamp)
+            key=lambda o: (-o.price, o.timestamp),
         )
-        
+
         # Sort sell orders by price (lowest first) and timestamp (oldest first)
         sell_orders = sorted(
             self.sell_orders.get(commodity_type, []),
-            key=lambda o: (o.price, o.timestamp)
+            key=lambda o: (o.price, o.timestamp),
         )
-        
+
         # Match orders
         remaining_buy_orders = []
         remaining_sell_orders = []
-        
+
         # Continue matching as long as there are both buy and sell orders
         while buy_orders and sell_orders:
             buy_order = buy_orders[0]
             sell_order = sell_orders[0]
-            
+
             # Check if the orders can be matched (bid >= ask)
             if buy_order.price >= sell_order.price:
                 # Determine the transaction quantity
                 quantity = min(buy_order.quantity, sell_order.quantity)
-                
+
                 # Use the lower of the two prices (sell price) for the transaction
                 # This is a very simple pricing model - could be improved
                 transaction_price = sell_order.price
-                
+
                 # Process the transaction
                 self._execute_transaction(
-                    buyer=buy_order.actor, 
-                    seller=sell_order.actor, 
-                    commodity_type=commodity_type, 
-                    quantity=quantity, 
+                    buyer=buy_order.actor,
+                    seller=sell_order.actor,
+                    commodity_type=commodity_type,
+                    quantity=quantity,
                     price=transaction_price,
                     buy_order=buy_order,
-                    sell_order=sell_order
+                    sell_order=sell_order,
                 )
-                
+
                 # Update the order quantities
                 buy_order.quantity -= quantity
                 sell_order.quantity -= quantity
-                
+
                 # Record the transaction price for market statistics
                 self.last_traded_prices[commodity_type].append(transaction_price)
-                
+
                 # Keep only the last 10 prices for each commodity
                 if len(self.last_traded_prices[commodity_type]) > 10:
-                    self.last_traded_prices[commodity_type] = self.last_traded_prices[commodity_type][-10:]
-                
+                    self.last_traded_prices[commodity_type] = self.last_traded_prices[
+                        commodity_type
+                    ][-10:]
+
                 # Handle filled orders
                 if buy_order.quantity <= 0:
                     # Record filled event before removing
                     self._record_order_event("filled", buy_order)
-                    
+
                     # Remove from master order list
                     if buy_order.order_id in self.orders_by_id:
                         del self.orders_by_id[buy_order.order_id]
-                    
+
                     # Remove from actor's order list
                     buyer = buy_order.actor
-                    if buyer in self.actor_orders and buy_order.order_id in self.actor_orders[buyer]["buy"]:
+                    if (
+                        buyer in self.actor_orders
+                        and buy_order.order_id in self.actor_orders[buyer]["buy"]
+                    ):
                         self.actor_orders[buyer]["buy"].remove(buy_order.order_id)
-                    
+
                     # Remove from actor's tracking
                     if buy_order.order_id in buyer.active_orders:
                         del buyer.active_orders[buy_order.order_id]
-                    
+
                     # Remove from orders list
                     buy_orders.pop(0)
-                
+
                 if sell_order.quantity <= 0:
                     # Record filled event before removing
                     self._record_order_event("filled", sell_order)
-                    
+
                     # Remove from master order list
                     if sell_order.order_id in self.orders_by_id:
                         del self.orders_by_id[sell_order.order_id]
-                    
+
                     # Remove from actor's order list
                     seller = sell_order.actor
-                    if seller in self.actor_orders and sell_order.order_id in self.actor_orders[seller]["sell"]:
+                    if (
+                        seller in self.actor_orders
+                        and sell_order.order_id in self.actor_orders[seller]["sell"]
+                    ):
                         self.actor_orders[seller]["sell"].remove(sell_order.order_id)
-                    
+
                     # Remove from actor's tracking
                     if sell_order.order_id in seller.active_orders:
                         del seller.active_orders[sell_order.order_id]
-                    
+
                     # Remove from orders list
                     sell_orders.pop(0)
             else:
                 # No more matches possible (highest bid < lowest ask)
                 break
-                
+
         # Update remaining orders
         self.buy_orders[commodity_type] = buy_orders
         self.sell_orders[commodity_type] = sell_orders
 
     def _execute_transaction(
-        self, buyer: Actor, seller: Actor, commodity_type: 'CommodityDefinition', 
-        quantity: int, price: int, buy_order: Order = None, sell_order: Order = None
+        self,
+        buyer: Actor,
+        seller: Actor,
+        commodity_type: "CommodityDefinition",
+        quantity: int,
+        price: int,
+        buy_order: Order = None,
+        sell_order: Order = None,
     ) -> None:
         """Execute a transaction between two actors.
-        
+
         Args:
             buyer: The actor buying the commodity
             seller: The actor selling the commodity
@@ -434,40 +479,50 @@ class Market:
         """
         # Handle commodity transfer first to determine actual quantity
         actual_quantity = quantity  # Track the actual quantity being transferred
-        
+
         if sell_order:
             # For sell orders, we need to unreserve the commodity (which makes it available again)
             # and then remove it from the seller's inventory
-            reserved_quantity = min(quantity, seller.inventory.get_reserved_quantity(commodity_type))
+            reserved_quantity = min(
+                quantity, seller.inventory.get_reserved_quantity(commodity_type)
+            )
             if reserved_quantity < quantity:
                 # This should not happen, but log it if it does
                 actual_quantity = reserved_quantity
-                print(f"WARNING: Reserved quantity ({reserved_quantity}) less than transfer quantity ({quantity})")
-                
+                print(
+                    f"WARNING: Reserved quantity ({reserved_quantity}) less than transfer quantity ({quantity})"
+                )
+
             # First unreserve the commodity (moves from reserved to available)
             seller.inventory.unreserve_commodity(commodity_type, actual_quantity)
-            
+
             # Then remove from available inventory
             if not seller.inventory.remove_commodity(commodity_type, actual_quantity):
-                print(f"ERROR: Failed to remove {actual_quantity} of {commodity_type.id} from seller inventory")
+                print(
+                    f"ERROR: Failed to remove {actual_quantity} of {commodity_type.id} from seller inventory"
+                )
                 actual_quantity = 0
         else:
             # Immediate transaction - remove directly from available inventory
             if not seller.inventory.remove_commodity(commodity_type, quantity):
                 # This should not happen, but log it if it does
-                print(f"ERROR: Failed to remove {quantity} of {commodity_type.id} from seller inventory")
+                print(
+                    f"ERROR: Failed to remove {quantity} of {commodity_type.id} from seller inventory"
+                )
                 actual_quantity = 0
-        
+
         # Calculate the actual price based on the quantity that was transferred
         total_amount = actual_quantity * price
-        
+
         # Handle money transfers differently based on whether order exists
         if buy_order:
             # Money is already reserved - adjust from reserved to spent
             # Calculate the exact amount to unreserve based on the actual quantity transferred
-            reserved_amount = min(actual_quantity * buy_order.price, buyer.reserved_money)
+            reserved_amount = min(
+                actual_quantity * buy_order.price, buyer.reserved_money
+            )
             buyer.reserved_money -= reserved_amount
-            
+
             # If transaction price differs from order price, adjust the difference
             price_diff = buy_order.price - price
             if price_diff > 0 and actual_quantity > 0:
@@ -477,13 +532,13 @@ class Market:
         else:
             # Immediate transaction - reduce available money
             buyer.money -= total_amount
-            
+
         # Add money to seller (always goes to available money)
         seller.money += total_amount
-            
+
         # Add commodity to buyer (only the amount actually taken from seller)
         buyer.inventory.add_commodity(commodity_type, actual_quantity)
-        
+
         # Record the transaction (with the actual quantity transferred)
         transaction = Transaction(
             buyer=buyer,
@@ -494,86 +549,97 @@ class Market:
             total_amount=total_amount,
             turn=self.current_turn,
             buy_order_id=buy_order.order_id,
-            sell_order_id=sell_order.order_id
+            sell_order_id=sell_order.order_id,
         )
         self.transaction_history.append(transaction)
         self.actor_transaction_history[buyer.name].append(transaction)
         self.actor_transaction_history[seller.name].append(transaction)
 
-    def get_avg_price(self, commodity_type: 'CommodityDefinition') -> int:
+    def get_avg_price(self, commodity_type: "CommodityDefinition") -> int:
         """Get the average price for a commodity based on recent transactions."""
         prices = self.last_traded_prices.get(commodity_type, [])
         if not prices:
             # If no recent trades, use the price history or a default base price
-            if commodity_type in self.price_history and self.price_history[commodity_type]:
+            if (
+                commodity_type in self.price_history
+                and self.price_history[commodity_type]
+            ):
                 return self.price_history[commodity_type][-1]
-            
+
             # Use a default price of 10 if no history exists
             return 10
-            
+
         return int(statistics.mean(prices))
-    
-    def get_bid_ask_spread(self, commodity_type: 'CommodityDefinition') -> Tuple[Optional[int], Optional[int]]:
+
+    def get_bid_ask_spread(
+        self, commodity_type: "CommodityDefinition"
+    ) -> Tuple[Optional[int], Optional[int]]:
         """Get the current highest bid and lowest ask for a commodity."""
         buy_orders = self.buy_orders.get(commodity_type, [])
         sell_orders = self.sell_orders.get(commodity_type, [])
-        
-        highest_bid = max(buy_orders, key=lambda o: o.price).price if buy_orders else None
-        lowest_ask = min(sell_orders, key=lambda o: o.price).price if sell_orders else None
-        
+
+        highest_bid = (
+            max(buy_orders, key=lambda o: o.price).price if buy_orders else None
+        )
+        lowest_ask = (
+            min(sell_orders, key=lambda o: o.price).price if sell_orders else None
+        )
+
         return highest_bid, lowest_ask
-        
-    def get_30_day_average_price(self, commodity_type: 'CommodityDefinition') -> float:
+
+    def get_30_day_average_price(self, commodity_type: "CommodityDefinition") -> float:
         """Get the 30-day moving average price for a commodity."""
         prices = self.price_history.get(commodity_type, [])
         if not prices:
             return 10.0  # Default base price
-        
+
         # Take the last 30 days (or as many as we have)
         recent_prices = prices[-30:] if len(prices) >= 30 else prices
         return statistics.mean(recent_prices) if recent_prices else 10.0
-    
-    def get_30_day_average_volume(self, commodity_type: 'CommodityDefinition') -> float:
+
+    def get_30_day_average_volume(self, commodity_type: "CommodityDefinition") -> float:
         """Get the 30-day moving average trading volume for a commodity."""
         volumes = self.volume_history.get(commodity_type, [])
         if not volumes:
             return 1.0  # Default to 1 unit if no history
-        
+
         # Take the last 30 days (or as many as we have)
         recent_volumes = volumes[-30:] if len(volumes) >= 30 else volumes
         return statistics.mean(recent_volumes) if recent_volumes else 1.0
-    
-    def get_30_day_standard_deviation(self, commodity_type: 'CommodityDefinition') -> float:
+
+    def get_30_day_standard_deviation(
+        self, commodity_type: "CommodityDefinition"
+    ) -> float:
         """Get the standard deviation of prices over the last 30 days."""
         prices = self.price_history.get(commodity_type, [])
         if not prices or len(prices) < 2:  # Need at least 2 prices to calculate std dev
             # Default to 10% of average price or 1.0
             avg_price = self.get_30_day_average_price(commodity_type)
             return max(1.0, avg_price * 0.1)
-        
+
         # Take the last 30 days (or as many as we have)
         recent_prices = prices[-30:] if len(prices) >= 30 else prices
         try:
             return statistics.stdev(recent_prices)
         except statistics.StatisticsError:
             return 1.0  # Default in case of error
-    
-    def has_history(self, commodity_type: 'CommodityDefinition') -> bool:
+
+    def has_history(self, commodity_type: "CommodityDefinition") -> bool:
         """Check if there is sufficient price history for sophisticated market making."""
         # Need activity in any 5 of the last 30 days
         commodity_volume_history = self.volume_history[commodity_type]
         return len([v for v in commodity_volume_history if v > 0]) >= 5
-    
+
     def set_current_turn(self, turn: int) -> None:
         """Update the current turn for timestamping new orders."""
         self.current_turn = turn
 
     def cancel_order(self, order_id: str) -> bool:
         """Cancel an existing order and release reserved resources.
-        
+
         Args:
             order_id: The ID of the order to cancel
-            
+
         Returns:
             bool: True if order was found and cancelled, False otherwise
         """
@@ -583,70 +649,74 @@ class Market:
         order = self.orders_by_id[order_id]
         actor = order.actor
         commodity_type = order.commodity_type
-        
+
         # Record order cancellation event before removing
         self._record_order_event("cancelled", order)
-        
+
         # Remove from orders by ID
         del self.orders_by_id[order_id]
-        
+
         # Remove from order books
         if order.is_buy:
             buy_orders = self.buy_orders.get(commodity_type, [])
-            self.buy_orders[commodity_type] = [o for o in buy_orders if o.order_id != order_id]
-            
+            self.buy_orders[commodity_type] = [
+                o for o in buy_orders if o.order_id != order_id
+            ]
+
             # Return reserved money to actor
             actor.reserved_money -= order.quantity * order.price
             actor.money += order.quantity * order.price
-            
+
             # Remove from actor orders
             if actor in self.actor_orders:
                 self.actor_orders[actor]["buy"].remove(order_id)
-                
+
         else:  # Sell order
             sell_orders = self.sell_orders.get(commodity_type, [])
-            self.sell_orders[commodity_type] = [o for o in sell_orders if o.order_id != order_id]
-            
+            self.sell_orders[commodity_type] = [
+                o for o in sell_orders if o.order_id != order_id
+            ]
+
             # Return reserved inventory to actor
             actor.inventory.unreserve_commodity(commodity_type, order.quantity)
-            
+
             # Remove from actor orders
             if actor in self.actor_orders:
                 self.actor_orders[actor]["sell"].remove(order_id)
-                
+
         # Update actor's active orders
         if order_id in actor.active_orders:
             del actor.active_orders[order_id]
-            
+
         return True
-        
+
     def modify_order(self, order_id: str, new_price: int) -> bool:
         """Modify an existing order's price.
-        
+
         Args:
             order_id: The ID of the order to modify
             new_price: The new price for the order
-            
+
         Returns:
             bool: True if order was found and modified, False otherwise
         """
         if order_id not in self.orders_by_id:
             return False
-            
+
         order = self.orders_by_id[order_id]
-        
+
         # For buy orders, we need to adjust reserved money
         if order.is_buy:
             actor = order.actor
             old_reserved = order.quantity * order.price
             new_reserved = order.quantity * new_price
-            
+
             # Check if actor has enough money for the price increase
             if new_reserved > old_reserved:
                 extra_needed = new_reserved - old_reserved
                 if actor.money < extra_needed:
                     return False
-                    
+
                 # Adjust money and reserved money
                 actor.money -= extra_needed
                 actor.reserved_money += extra_needed
@@ -655,59 +725,61 @@ class Market:
                 refund = old_reserved - new_reserved
                 actor.reserved_money -= refund
                 actor.money += refund
-        
+
         # Update the price
         order.price = new_price
         order.timestamp = self.current_turn  # Reset timestamp for priority
-        
+
         return True
-        
+
     def get_actor_orders(self, actor: Actor) -> Dict[str, List[Order]]:
         """Get all active orders for an actor.
-        
+
         Args:
             actor: The actor to get orders for
-            
+
         Returns:
             Dict with 'buy' and 'sell' keys, each containing a list of Order objects
         """
         result = {"buy": [], "sell": []}
-        
+
         if actor not in self.actor_orders:
             return result
-            
+
         for order_id in self.actor_orders[actor]["buy"]:
             if order_id in self.orders_by_id:
                 result["buy"].append(self.orders_by_id[order_id])
-                
+
         for order_id in self.actor_orders[actor]["sell"]:
             if order_id in self.orders_by_id:
                 result["sell"].append(self.orders_by_id[order_id])
-                
+
         return result
-        
+
     def clear_orders(self) -> None:
         """Clear all orders and release all reserved resources.
-        
+
         WARNING: This should generally not be used with persistent orders.
         Use cancel_order instead to properly handle individual orders.
         """
         # Return all reserved resources first
         for order_id, order in self.orders_by_id.items():
             actor = order.actor
-            
+
             if order.is_buy:
                 # Return reserved money
                 actor.reserved_money -= order.quantity * order.price
                 actor.money += order.quantity * order.price
             else:
                 # Return reserved inventory
-                actor.inventory.unreserve_commodity(order.commodity_type, order.quantity)
-                
+                actor.inventory.unreserve_commodity(
+                    order.commodity_type, order.quantity
+                )
+
             # Clear from actor's tracking
             if order_id in actor.active_orders:
                 del actor.active_orders[order_id]
-        
+
         # Clear all order collections
         self.buy_orders.clear()
         self.sell_orders.clear()

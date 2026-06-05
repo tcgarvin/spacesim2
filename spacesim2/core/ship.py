@@ -22,6 +22,7 @@ class TradePlan:
     - What commodity to trade
     - Expected costs and profits including round-trip fuel
     """
+
     origin: Planet
     destination: Planet
     commodity: CommodityDefinition
@@ -76,6 +77,7 @@ class TradePlan:
 
 class ShipStatus(enum.Enum):
     """Possible statuses for a ship."""
+
     DOCKED = "docked"  # Ship is docked at a planet
     TRAVELING = "traveling"  # Ship is traveling between planets
     NEEDS_MAINTENANCE = "needs_maintenance"  # Ship needs maintenance before traveling
@@ -83,15 +85,15 @@ class ShipStatus(enum.Enum):
 
 class ShipBrain:
     """Base class for ship decision making strategies."""
-    
-    def __init__(self, ship: 'Ship') -> None:
+
+    def __init__(self, ship: "Ship") -> None:
         """Initialize the brain with a reference to its ship."""
         self.ship = ship
-    
+
     def decide_trade_actions(self) -> None:
         """Decide what trade actions to take at the current planet."""
         raise NotImplementedError("Subclasses must implement this method")
-    
+
     def decide_travel(self) -> Optional[Planet]:
         """Decide whether to travel to another planet, and if so, which one."""
         raise NotImplementedError("Subclasses must implement this method")
@@ -104,7 +106,7 @@ class TraderBrain(ShipBrain):
     before committing to purchases. Plans for round-trip fuel to ensure safe return.
     """
 
-    def __init__(self, ship: 'Ship') -> None:
+    def __init__(self, ship: "Ship") -> None:
         """Initialize the trader brain."""
         super().__init__(ship)
         # Track average purchase price per commodity for profitability calculations
@@ -122,7 +124,8 @@ class TraderBrain(ShipBrain):
 
         # Look at last 10 purchases of this commodity
         recent_purchases = [
-            t for t in transactions[-10:]
+            t
+            for t in transactions[-10:]
             if t.buyer == self.ship and t.commodity_type == commodity
         ]
 
@@ -308,7 +311,9 @@ class TraderBrain(ShipBrain):
                 self.ship.cargo_capacity - self.ship.cargo.get_total_quantity()
             )
 
-            quantity = min(plan.quantity, money_available // commodity_ask, cargo_available)
+            quantity = min(
+                plan.quantity, money_available // commodity_ask, cargo_available
+            )
 
             if quantity > 0:
                 order_id = market.place_buy_order(
@@ -372,7 +377,9 @@ class TraderBrain(ShipBrain):
                     continue
 
                 local_bid, _ = market.get_bid_ask_spread(commodity)
-                local_price = local_bid if local_bid else market.get_avg_price(commodity)
+                local_price = (
+                    local_bid if local_bid else market.get_avg_price(commodity)
+                )
 
                 # Check other planets for better prices
                 for planet in self.ship.simulation.planets:
@@ -386,7 +393,9 @@ class TraderBrain(ShipBrain):
                         continue
 
                     dest_bid, _ = planet.market.get_bid_ask_spread(commodity)
-                    dest_price = dest_bid if dest_bid else planet.market.get_avg_price(commodity)
+                    dest_price = (
+                        dest_bid if dest_bid else planet.market.get_avg_price(commodity)
+                    )
 
                     if dest_price and local_price and dest_price > local_price * 1.15:
                         # Better price elsewhere (>15% higher), don't sell here
@@ -410,7 +419,9 @@ class TraderBrain(ShipBrain):
                                 actions.append(
                                     f"Selling {quantity} {commodity.name} at {highest_bid}"
                                 )
-                                self.ship.active_orders[order_id] = f"sell {commodity.id}"
+                                self.ship.active_orders[order_id] = (
+                                    f"sell {commodity.id}"
+                                )
                         else:
                             avg_price = max(1, market.get_avg_price(commodity) or 1)
                             order_id = market.place_sell_order(
@@ -420,7 +431,9 @@ class TraderBrain(ShipBrain):
                                 actions.append(
                                     f"Offering {quantity} {commodity.name} at {avg_price} (no buyers)"
                                 )
-                                self.ship.active_orders[order_id] = f"sell {commodity.id}"
+                                self.ship.active_orders[order_id] = (
+                                    f"sell {commodity.id}"
+                                )
             else:
                 # Better price elsewhere - will travel in decide_travel()
                 actions.append("Holding cargo for better price elsewhere")
@@ -457,7 +470,7 @@ class TraderBrain(ShipBrain):
             self.ship.last_action = "; ".join(actions)
         else:
             self.ship.last_action = "No trade actions (waiting for opportunities)"
-    
+
     def decide_travel(self) -> Optional[Planet]:
         """Decide whether to travel based on current cargo and trade plan.
 
@@ -535,16 +548,16 @@ class TraderBrain(ShipBrain):
 
 class Ship:
     """Represents a trading ship that can travel between planets."""
-    
+
     def __init__(
         self,
         name: str,
-        simulation: 'Simulation',
+        simulation: "Simulation",
         planet: Optional[Planet] = None,
         cargo_capacity: int = 100,
         fuel_capacity: int = 50,
         fuel_efficiency: float = 1.0,
-        initial_money: int = 1000
+        initial_money: int = 1000,
     ) -> None:
         self.name = name
         self.money = initial_money
@@ -558,38 +571,42 @@ class Ship:
         self.fuel_efficiency = fuel_efficiency  # Multiplier for fuel consumption
         self.travel_progress = 0.0  # Progress toward destination (0.0 to 1.0)
         self.travel_time = 0  # Total turns needed for current journey
-        self.active_orders: Dict[str, str] = {}  # Track active order IDs and their types
+        self.active_orders: Dict[
+            str, str
+        ] = {}  # Track active order IDs and their types
         self.last_action = "None"  # Track the last action performed
         self.maintenance_needed = False  # Whether maintenance is required
         self.status = ShipStatus.DOCKED
         self.simulation = simulation  # Reference to the simulation
         self.market_history = []  # Track market activity for compatibility with market code
-        self.food_consumed_this_turn = True  # Ships don't eat, but needed for compatibility
+        self.food_consumed_this_turn = (
+            True  # Ships don't eat, but needed for compatibility
+        )
         self.drives = []  # Ships don't have drives, but keep empty list for interface compatibility
 
         # Initialize with a brain
         self.brain = TraderBrain(self)
-    
+
     @staticmethod
     def calculate_distance(planet1: Planet, planet2: Planet) -> float:
         """Calculate the distance between two planets."""
         return math.sqrt((planet2.x - planet1.x) ** 2 + (planet2.y - planet1.y) ** 2)
-    
+
     @staticmethod
     def calculate_fuel_needed(distance: float) -> int:
         """Calculate fuel needed for a journey of given distance."""
         # Base calculation: 1 fuel per 20 distance units, rounded up
         return math.ceil(distance / 20)
-    
+
     def check_maintenance(self) -> bool:
         """Check if the ship needs maintenance before departure.
-        
+
         Returns:
             True if maintenance is needed, False otherwise.
         """
         # Random chance of needing maintenance: 10%
         return random.random() < 0.1
-    
+
     def perform_maintenance(self) -> bool:
         """Attempt to perform maintenance on the ship.
 
@@ -622,81 +639,85 @@ class Ship:
 
         self.last_action = "Cannot perform maintenance - insufficient supplies"
         return False
-    
+
     def start_journey(self, destination: Planet) -> bool:
         """Begin a journey to another planet.
-        
+
         Args:
             destination: The target planet
-            
+
         Returns:
             True if journey started successfully, False otherwise
         """
         if self.status != ShipStatus.DOCKED:
-            self.last_action = f"Cannot start journey - ship status: {self.status.value}"
+            self.last_action = (
+                f"Cannot start journey - ship status: {self.status.value}"
+            )
             return False
-            
+
         if self.planet == destination:
             self.last_action = "Already at destination"
             return False
-            
+
         # Set origin planet before starting journey - make sure the planet knows this ship
         if self.planet and self not in self.planet.ships:
             self.planet.ships.append(self)
-            
+
         # Check for maintenance needs
         if self.check_maintenance():
             self.maintenance_needed = True
             self.status = ShipStatus.NEEDS_MAINTENANCE
             self.last_action = "Maintenance required before departure"
             return False
-            
+
         # Get fuel commodity - simulation always available
         fuel_commodity = self.simulation.commodity_registry.get_commodity("nova_fuel")
-        
+
         if not fuel_commodity:
             self.last_action = "Cannot start journey - fuel commodity not defined"
             return False
-            
+
         # Calculate distance and fuel requirements
         distance = Ship.calculate_distance(self.planet, destination)
         fuel_needed = Ship.calculate_fuel_needed(distance)
         adjusted_fuel_needed = math.ceil(fuel_needed / self.fuel_efficiency)
-        
+
         # Check if we have enough fuel
         if not self.cargo.has_quantity(fuel_commodity, adjusted_fuel_needed):
-            self.last_action = f"Insufficient fuel for journey (need {adjusted_fuel_needed})"
+            self.last_action = (
+                f"Insufficient fuel for journey (need {adjusted_fuel_needed})"
+            )
             return False
-            
+
         # Consume fuel
         self.cargo.remove_commodity(fuel_commodity, adjusted_fuel_needed)
-        
+
         # Calculate travel time (1 turn per 20 distance units, minimum 1)
         self.travel_time = max(1, math.ceil(distance / 20))
         self.travel_progress = 0.0
         self.status = ShipStatus.TRAVELING
         self.destination = destination
-        
+
         self.last_action = f"Departed for {destination.name} ({self.travel_time} turns)"
         return True
-    
+
     def update_journey(self) -> bool:
         """Update journey progress.
-        
+
         Returns:
             True if journey is complete, False otherwise
         """
         if self.status != ShipStatus.TRAVELING:
             return False
-            
+
         if not self.destination:
             self.status = ShipStatus.DOCKED
             return False
-            
+
         # Update progress
         progress_increment = 1.0 / self.travel_time
         self.travel_progress += progress_increment
-        
+
         # Check if we've arrived
         if self.travel_progress >= 1.0:
             # Arrive at destination
@@ -705,17 +726,17 @@ class Ship:
             self.destination = None
             self.status = ShipStatus.DOCKED
             self.travel_progress = 0
-            
+
             # Update ship's planet reference - transfer from old planet to new planet
             if old_planet and self in old_planet.ships:
                 old_planet.ships.remove(self)
-            
+
             # Make sure destination planet has a ships list and add this ship to it
             if self.planet:
                 # Planet should always have ships list initialized
                 if self not in self.planet.ships:
                     self.planet.ships.append(self)
-            
+
             self.last_action = f"Arrived at {self.planet.name}"
             return True
         else:
@@ -723,10 +744,10 @@ class Ship:
             remaining_turns = math.ceil((1.0 - self.travel_progress) * self.travel_time)
             self.last_action = f"En route to {self.destination.name} ({remaining_turns} turns remaining)"
             return False
-    
+
     def take_turn(self) -> None:
         """Perform actions for this turn.
-        
+
         Each turn consists of:
         1. If traveling, update journey
         2. If docked, take trade actions
@@ -742,7 +763,7 @@ class Ship:
         elif self.status == ShipStatus.DOCKED:
             # Take trade actions at current planet
             self.brain.decide_trade_actions()
-            
+
             # Consider traveling
             destination = self.brain.decide_travel()
             if destination:

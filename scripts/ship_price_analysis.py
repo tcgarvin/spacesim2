@@ -94,7 +94,9 @@ def analyze_ship_prices(run_path: Path) -> None:
 
                 if len(commodity_buys) > 0 and len(commodity_sells) > 0:
                     margin = avg_sell_price - avg_buy_price
-                    margin_pct = (margin / avg_buy_price * 100) if avg_buy_price > 0 else 0
+                    margin_pct = (
+                        (margin / avg_buy_price * 100) if avg_buy_price > 0 else 0
+                    )
                     status = "✓ PROFITABLE" if margin > 0 else "❌ LOSS"
                     print(f"  Margin:  ${margin:+.2f} ({margin_pct:+.1f}%) {status}")
 
@@ -107,10 +109,24 @@ def analyze_ship_prices(run_path: Path) -> None:
             pl.concat(
                 [
                     buys.select(
-                        ["turn", "planet_name", "commodity_id", "quantity", "price", "total_amount"]
+                        [
+                            "turn",
+                            "planet_name",
+                            "commodity_id",
+                            "quantity",
+                            "price",
+                            "total_amount",
+                        ]
                     ).with_columns([pl.lit("BUY").alias("type")]),
                     sells.select(
-                        ["turn", "planet_name", "commodity_id", "quantity", "price", "total_amount"]
+                        [
+                            "turn",
+                            "planet_name",
+                            "commodity_id",
+                            "quantity",
+                            "price",
+                            "total_amount",
+                        ]
                     ).with_columns([pl.lit("SELL").alias("type")]),
                 ]
             )
@@ -118,9 +134,7 @@ def analyze_ship_prices(run_path: Path) -> None:
             .head(20)
         )
 
-        print(
-            "\nFirst 20 transactions (showing BUY/SELL pattern):"
-        )
+        print("\nFirst 20 transactions (showing BUY/SELL pattern):")
         print(
             f"{'Turn':<6} {'Type':<5} {'Planet':<15} {'Commodity':<12} {'Qty':>4} {'Price':>6} {'Total':>7}"
         )
@@ -136,7 +150,10 @@ def analyze_ship_prices(run_path: Path) -> None:
         print("-" * 80)
 
         buy_planets = buys.group_by("planet_name").agg(
-            [pl.len().alias("transactions"), pl.col("total_amount").sum().alias("spent")]
+            [
+                pl.len().alias("transactions"),
+                pl.col("total_amount").sum().alias("spent"),
+            ]
         )
         sell_planets = sells.group_by("planet_name").agg(
             [
@@ -171,12 +188,8 @@ def analyze_ship_prices(run_path: Path) -> None:
             print("✓ Ship is trading at different planets (spatial arbitrage possible)")
 
         # Check timing - is ship buying high and selling low?
-        avg_buy = (
-            buys.select(pl.col("price").mean()).item() if len(buys) > 0 else 0
-        )
-        avg_sell = (
-            sells.select(pl.col("price").mean()).item() if len(sells) > 0 else 0
-        )
+        avg_buy = buys.select(pl.col("price").mean()).item() if len(buys) > 0 else 0
+        avg_sell = sells.select(pl.col("price").mean()).item() if len(sells) > 0 else 0
 
         if avg_sell < avg_buy:
             print(

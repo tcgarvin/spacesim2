@@ -180,8 +180,7 @@ class TestSimulationIntegration:
 
         # With 5 planets, it's extremely unlikely they'd all be identical
         attributes_sets = [
-            (p.attributes.biomass, p.attributes.nova_fuel_ore)
-            for p in sim.planets
+            (p.attributes.biomass, p.attributes.nova_fuel_ore) for p in sim.planets
         ]
         # At least 2 different combinations should exist
         assert len(set(attributes_sets)) > 1

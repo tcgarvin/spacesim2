@@ -14,6 +14,7 @@ def _():
     from plotly.subplots import make_subplots
     from spacesim2.analysis.loading.loader import SimulationData
     from pathlib import Path
+
     return Path, SimulationData, go, make_subplots, mo, os, pl, px
 
 
@@ -82,13 +83,21 @@ def _(data, mo, pl):
     if data is None:
         _overview = mo.md("## Simulation Overview\n\nNo data loaded")
     else:
-        _total_turns = data.market_snapshots['turn'].max() if len(data.market_snapshots) > 0 else 0
+        _total_turns = (
+            data.market_snapshots["turn"].max() if len(data.market_snapshots) > 0 else 0
+        )
         _total_transactions = len(data.market_transactions)
-        _commodities_traded = data.market_transactions['commodity_id'].n_unique() if len(data.market_transactions) > 0 else 0
+        _commodities_traded = (
+            data.market_transactions["commodity_id"].n_unique()
+            if len(data.market_transactions) > 0
+            else 0
+        )
 
-        _tools_txns = data.market_transactions.filter(pl.col('commodity_id') == 'simple_tools')
+        _tools_txns = data.market_transactions.filter(
+            pl.col("commodity_id") == "simple_tools"
+        )
         _tools_txn_count = len(_tools_txns)
-        _tools_volume = _tools_txns['quantity'].sum() if len(_tools_txns) > 0 else 0
+        _tools_volume = _tools_txns["quantity"].sum() if len(_tools_txns) > 0 else 0
 
         _overview = mo.md(f"""
         ## Simulation Overview
@@ -120,73 +129,87 @@ def _(data, go, make_subplots, mo, pl):
     elif len(data.market_snapshots) == 0:
         _result = mo.md("No market snapshot data available")
     else:
-        _tools_snaps = data.market_snapshots.filter(pl.col('commodity_id') == 'simple_tools')
+        _tools_snaps = data.market_snapshots.filter(
+            pl.col("commodity_id") == "simple_tools"
+        )
 
         if len(_tools_snaps) == 0:
             _result = mo.md("No tool market data found")
         else:
             # Aggregate across all planets per turn
-            _tools_by_turn = _tools_snaps.group_by('turn').agg([
-                pl.col('num_buy_orders').sum().alias('total_buy_orders'),
-                pl.col('num_sell_orders').sum().alias('total_sell_orders'),
-                pl.col('best_bid').max().alias('max_bid'),
-                pl.col('best_ask').filter(pl.col('best_ask') > 0).min().alias('min_ask'),
-            ]).sort('turn')
+            _tools_by_turn = (
+                _tools_snaps.group_by("turn")
+                .agg(
+                    [
+                        pl.col("num_buy_orders").sum().alias("total_buy_orders"),
+                        pl.col("num_sell_orders").sum().alias("total_sell_orders"),
+                        pl.col("best_bid").max().alias("max_bid"),
+                        pl.col("best_ask")
+                        .filter(pl.col("best_ask") > 0)
+                        .min()
+                        .alias("min_ask"),
+                    ]
+                )
+                .sort("turn")
+            )
 
             _fig = make_subplots(
-                rows=2, cols=1,
-                subplot_titles=('Tool Order Book Over Time', 'Best Bid/Ask Prices'),
-                vertical_spacing=0.15
+                rows=2,
+                cols=1,
+                subplot_titles=("Tool Order Book Over Time", "Best Bid/Ask Prices"),
+                vertical_spacing=0.15,
             )
 
             _fig.add_trace(
                 go.Scatter(
-                    x=_tools_by_turn['turn'].to_list(),
-                    y=_tools_by_turn['total_buy_orders'].to_list(),
-                    name='Buy Orders',
-                    mode='lines',
-                    line=dict(color='green')
+                    x=_tools_by_turn["turn"].to_list(),
+                    y=_tools_by_turn["total_buy_orders"].to_list(),
+                    name="Buy Orders",
+                    mode="lines",
+                    line=dict(color="green"),
                 ),
-                row=1, col=1
+                row=1,
+                col=1,
             )
 
             _fig.add_trace(
                 go.Scatter(
-                    x=_tools_by_turn['turn'].to_list(),
-                    y=_tools_by_turn['total_sell_orders'].to_list(),
-                    name='Sell Orders',
-                    mode='lines',
-                    line=dict(color='red')
+                    x=_tools_by_turn["turn"].to_list(),
+                    y=_tools_by_turn["total_sell_orders"].to_list(),
+                    name="Sell Orders",
+                    mode="lines",
+                    line=dict(color="red"),
                 ),
-                row=1, col=1
+                row=1,
+                col=1,
             )
 
             _fig.add_trace(
                 go.Scatter(
-                    x=_tools_by_turn['turn'].to_list(),
-                    y=_tools_by_turn['max_bid'].to_list(),
-                    name='Best Bid',
-                    mode='lines',
-                    line=dict(color='green', dash='dash')
+                    x=_tools_by_turn["turn"].to_list(),
+                    y=_tools_by_turn["max_bid"].to_list(),
+                    name="Best Bid",
+                    mode="lines",
+                    line=dict(color="green", dash="dash"),
                 ),
-                row=2, col=1
+                row=2,
+                col=1,
             )
 
             _fig.add_trace(
                 go.Scatter(
-                    x=_tools_by_turn['turn'].to_list(),
-                    y=_tools_by_turn['min_ask'].to_list(),
-                    name='Best Ask',
-                    mode='lines',
-                    line=dict(color='red', dash='dash')
+                    x=_tools_by_turn["turn"].to_list(),
+                    y=_tools_by_turn["min_ask"].to_list(),
+                    name="Best Ask",
+                    mode="lines",
+                    line=dict(color="red", dash="dash"),
                 ),
-                row=2, col=1
+                row=2,
+                col=1,
             )
 
             _fig.update_layout(
-                height=600,
-                title_text="Simple Tools Market Activity",
-                showlegend=True
+                height=600, title_text="Simple Tools Market Activity", showlegend=True
             )
             _fig.update_xaxes(title_text="Turn", row=2, col=1)
             _fig.update_yaxes(title_text="Number of Orders", row=1, col=1)
@@ -205,13 +228,17 @@ def _(data, mo, pl):
     elif len(data.market_snapshots) == 0:
         _result = mo.md("No market snapshot data")
     else:
-        _tools_snaps = data.market_snapshots.filter(pl.col('commodity_id') == 'simple_tools')
-        _total_buy = _tools_snaps['num_buy_orders'].sum()
-        _total_sell = _tools_snaps['num_sell_orders'].sum()
-        _avg_buy = _tools_snaps['num_buy_orders'].mean()
-        _avg_sell = _tools_snaps['num_sell_orders'].mean()
-        _max_bid = _tools_snaps['best_bid'].max()
-        _min_ask_list = _tools_snaps.filter(pl.col('best_ask') > 0)['best_ask'].to_list()
+        _tools_snaps = data.market_snapshots.filter(
+            pl.col("commodity_id") == "simple_tools"
+        )
+        _total_buy = _tools_snaps["num_buy_orders"].sum()
+        _total_sell = _tools_snaps["num_sell_orders"].sum()
+        _avg_buy = _tools_snaps["num_buy_orders"].mean()
+        _avg_sell = _tools_snaps["num_sell_orders"].mean()
+        _max_bid = _tools_snaps["best_bid"].max()
+        _min_ask_list = _tools_snaps.filter(pl.col("best_ask") > 0)[
+            "best_ask"
+        ].to_list()
         _min_ask = min(_min_ask_list) if _min_ask_list else 0
 
         _result = mo.md(f"""
@@ -221,7 +248,7 @@ def _(data, mo, pl):
         |--------|----------|-----------|
         | Total Orders (all turns) | {_total_buy} | {_total_sell} |
         | Average per snapshot | {_avg_buy:.1f} | {_avg_sell:.1f} |
-        | Best Price Seen | Bid: {_max_bid} | Ask: {_min_ask if _min_ask > 0 else 'None'} |
+        | Best Price Seen | Bid: {_max_bid} | Ask: {_min_ask if _min_ask > 0 else "None"} |
 
         **Key Finding:** {"High demand but no supply - tool production is broken!" if _total_sell == 0 and _total_buy > 0 else "Market appears active" if _total_sell > 0 else "No market activity"}
         """)
@@ -248,7 +275,9 @@ def _(data, mo, pl, px):
     elif len(data.market_transactions) == 0:
         _result = mo.md("No transaction data available")
     else:
-        _tools_txns = data.market_transactions.filter(pl.col('commodity_id') == 'simple_tools')
+        _tools_txns = data.market_transactions.filter(
+            pl.col("commodity_id") == "simple_tools"
+        )
 
         if len(_tools_txns) == 0:
             _result = mo.md("""
@@ -262,17 +291,23 @@ def _(data, mo, pl, px):
             3. Bootstrap path is blocked (missing facilities)
             """)
         else:
-            _txn_by_turn = _tools_txns.group_by('turn').agg([
-                pl.col('quantity').sum().alias('volume'),
-                pl.col('price').mean().alias('avg_price'),
-            ]).sort('turn')
+            _txn_by_turn = (
+                _tools_txns.group_by("turn")
+                .agg(
+                    [
+                        pl.col("quantity").sum().alias("volume"),
+                        pl.col("price").mean().alias("avg_price"),
+                    ]
+                )
+                .sort("turn")
+            )
 
             _fig = px.bar(
                 _txn_by_turn.to_pandas(),
-                x='turn',
-                y='volume',
-                title='Tool Trading Volume by Turn',
-                labels={'volume': 'Quantity Traded', 'turn': 'Turn'}
+                x="turn",
+                y="volume",
+                title="Tool Trading Volume by Turn",
+                labels={"volume": "Quantity Traded", "turn": "Turn"},
             )
             _result = _fig
 
@@ -301,25 +336,29 @@ def _(data, mo, pl, px):
         _result = mo.md("No market snapshot data")
     else:
         # Check facility market activity
-        _facilities = ['smelting_facility', 'metalworking_facility']
+        _facilities = ["smelting_facility", "metalworking_facility"]
         _facility_snaps = data.market_snapshots.filter(
-            pl.col('commodity_id').is_in(_facilities)
+            pl.col("commodity_id").is_in(_facilities)
         )
 
-        _facility_summary = _facility_snaps.group_by('commodity_id').agg([
-            pl.col('num_buy_orders').sum().alias('total_buy_orders'),
-            pl.col('num_sell_orders').sum().alias('total_sell_orders'),
-        ])
+        _facility_summary = _facility_snaps.group_by("commodity_id").agg(
+            [
+                pl.col("num_buy_orders").sum().alias("total_buy_orders"),
+                pl.col("num_sell_orders").sum().alias("total_sell_orders"),
+            ]
+        )
 
         if len(_facility_summary) > 0:
-            _result = mo.vstack([
-                mo.md("""
+            _result = mo.vstack(
+                [
+                    mo.md("""
                 ### Facility Market Activity
 
                 Facilities are not traded (they're non-transportable), but let's check if there's any market activity:
                 """),
-                mo.ui.table(_facility_summary.to_pandas())
-            ])
+                    mo.ui.table(_facility_summary.to_pandas()),
+                ]
+            )
         else:
             _result = mo.md("No facility market data found")
 
@@ -336,63 +375,74 @@ def _(data, go, make_subplots, mo, pl):
     else:
         # Check the supply chain commodities
         _supply_chain = [
-            'simple_building_materials',
-            'common_metal_ore',
-            'common_metal',
-            'simple_tools'
+            "simple_building_materials",
+            "common_metal_ore",
+            "common_metal",
+            "simple_tools",
         ]
 
         _chain_snaps = data.market_snapshots.filter(
-            pl.col('commodity_id').is_in(_supply_chain)
+            pl.col("commodity_id").is_in(_supply_chain)
         )
 
-        _chain_by_turn = _chain_snaps.group_by(['turn', 'commodity_id']).agg([
-            pl.col('num_buy_orders').sum().alias('buy_orders'),
-            pl.col('num_sell_orders').sum().alias('sell_orders'),
-        ]).sort('turn')
+        _chain_by_turn = (
+            _chain_snaps.group_by(["turn", "commodity_id"])
+            .agg(
+                [
+                    pl.col("num_buy_orders").sum().alias("buy_orders"),
+                    pl.col("num_sell_orders").sum().alias("sell_orders"),
+                ]
+            )
+            .sort("turn")
+        )
 
         _fig = make_subplots(
-            rows=2, cols=2,
-            subplot_titles=[f'{c}' for c in _supply_chain],
+            rows=2,
+            cols=2,
+            subplot_titles=[f"{c}" for c in _supply_chain],
             vertical_spacing=0.15,
-            horizontal_spacing=0.1
+            horizontal_spacing=0.1,
         )
 
         for _i, _commodity in enumerate(_supply_chain):
             _row = _i // 2 + 1
             _col = _i % 2 + 1
 
-            _commodity_data = _chain_by_turn.filter(pl.col('commodity_id') == _commodity)
+            _commodity_data = _chain_by_turn.filter(
+                pl.col("commodity_id") == _commodity
+            )
 
             if len(_commodity_data) > 0:
                 _fig.add_trace(
                     go.Scatter(
-                        x=_commodity_data['turn'].to_list(),
-                        y=_commodity_data['buy_orders'].to_list(),
-                        name=f'{_commodity} Buy',
-                        mode='lines',
-                        line=dict(color='green'),
-                        showlegend=(_i == 0)
+                        x=_commodity_data["turn"].to_list(),
+                        y=_commodity_data["buy_orders"].to_list(),
+                        name=f"{_commodity} Buy",
+                        mode="lines",
+                        line=dict(color="green"),
+                        showlegend=(_i == 0),
                     ),
-                    row=_row, col=_col
+                    row=_row,
+                    col=_col,
                 )
 
                 _fig.add_trace(
                     go.Scatter(
-                        x=_commodity_data['turn'].to_list(),
-                        y=_commodity_data['sell_orders'].to_list(),
-                        name=f'{_commodity} Sell',
-                        mode='lines',
-                        line=dict(color='red'),
-                        showlegend=(_i == 0)
+                        x=_commodity_data["turn"].to_list(),
+                        y=_commodity_data["sell_orders"].to_list(),
+                        name=f"{_commodity} Sell",
+                        mode="lines",
+                        line=dict(color="red"),
+                        showlegend=(_i == 0),
                     ),
-                    row=_row, col=_col
+                    row=_row,
+                    col=_col,
                 )
 
         _fig.update_layout(
             height=600,
             title_text="Tool Supply Chain - Buy vs Sell Orders",
-            showlegend=True
+            showlegend=True,
         )
 
         _result = _fig
@@ -419,27 +469,35 @@ def _(data, mo, pl, px):
     elif len(data.market_transactions) == 0:
         _result = mo.md("No transaction data")
     else:
-        _volume_by_commodity = data.market_transactions.group_by('commodity_id').agg([
-            pl.col('quantity').sum().alias('total_volume'),
-            pl.col('quantity').count().alias('num_transactions'),
-            pl.col('price').mean().alias('avg_price'),
-        ]).sort('total_volume', descending=True)
+        _volume_by_commodity = (
+            data.market_transactions.group_by("commodity_id")
+            .agg(
+                [
+                    pl.col("quantity").sum().alias("total_volume"),
+                    pl.col("quantity").count().alias("num_transactions"),
+                    pl.col("price").mean().alias("avg_price"),
+                ]
+            )
+            .sort("total_volume", descending=True)
+        )
 
         _fig = px.bar(
             _volume_by_commodity.to_pandas(),
-            x='commodity_id',
-            y='total_volume',
-            title='Total Transaction Volume by Commodity',
-            labels={'total_volume': 'Total Quantity', 'commodity_id': 'Commodity'},
-            text='total_volume'
+            x="commodity_id",
+            y="total_volume",
+            title="Total Transaction Volume by Commodity",
+            labels={"total_volume": "Total Quantity", "commodity_id": "Commodity"},
+            text="total_volume",
         )
-        _fig.update_traces(textposition='outside')
+        _fig.update_traces(textposition="outside")
 
-        _result = mo.vstack([
-            _fig,
-            mo.md("### Detailed Transaction Summary"),
-            mo.ui.table(_volume_by_commodity.to_pandas())
-        ])
+        _result = mo.vstack(
+            [
+                _fig,
+                mo.md("### Detailed Transaction Summary"),
+                mo.ui.table(_volume_by_commodity.to_pandas()),
+            ]
+        )
 
     _result
     return
@@ -471,10 +529,10 @@ def _(data, mo, pl, px):
         _result = mo.md("No transaction data")
     else:
         # Check for outputs from tool-requiring processes
-        _tool_process_outputs = ['wood', 'nova_fuel_ore', 'clothing', 'nova_fuel']
+        _tool_process_outputs = ["wood", "nova_fuel_ore", "clothing", "nova_fuel"]
 
         _tool_outputs = data.market_transactions.filter(
-            pl.col('commodity_id').is_in(_tool_process_outputs)
+            pl.col("commodity_id").is_in(_tool_process_outputs)
         )
 
         if len(_tool_outputs) == 0:
@@ -490,16 +548,22 @@ def _(data, mo, pl, px):
             **This confirms that actors cannot execute tool-requiring processes** because they don't have tools.
             """)
         else:
-            _output_volume = _tool_outputs.group_by('commodity_id').agg([
-                pl.col('quantity').sum().alias('total_volume'),
-            ]).sort('total_volume', descending=True)
+            _output_volume = (
+                _tool_outputs.group_by("commodity_id")
+                .agg(
+                    [
+                        pl.col("quantity").sum().alias("total_volume"),
+                    ]
+                )
+                .sort("total_volume", descending=True)
+            )
 
             _fig = px.bar(
                 _output_volume.to_pandas(),
-                x='commodity_id',
-                y='total_volume',
-                title='Transaction Volume from Tool-Requiring Processes',
-                labels={'total_volume': 'Total Quantity', 'commodity_id': 'Commodity'}
+                x="commodity_id",
+                y="total_volume",
+                title="Transaction Volume from Tool-Requiring Processes",
+                labels={"total_volume": "Total Quantity", "commodity_id": "Commodity"},
             )
             _result = _fig
 
@@ -525,45 +589,58 @@ def _(data, go, make_subplots, mo, pl):
     elif len(data.market_transactions) == 0:
         _result = mo.md("No transaction data")
     else:
-        _metal_chain = ['common_metal_ore', 'common_metal']
+        _metal_chain = ["common_metal_ore", "common_metal"]
 
         _metal_txns = data.market_transactions.filter(
-            pl.col('commodity_id').is_in(_metal_chain)
+            pl.col("commodity_id").is_in(_metal_chain)
         )
 
         if len(_metal_txns) == 0:
             _result = mo.md("No common metal or ore transactions found")
         else:
-            _metal_by_turn = _metal_txns.group_by(['turn', 'commodity_id']).agg([
-                pl.col('quantity').sum().alias('volume'),
-            ]).sort('turn')
+            _metal_by_turn = (
+                _metal_txns.group_by(["turn", "commodity_id"])
+                .agg(
+                    [
+                        pl.col("quantity").sum().alias("volume"),
+                    ]
+                )
+                .sort("turn")
+            )
 
             _fig = make_subplots(rows=1, cols=1)
 
             for _commodity in _metal_chain:
-                _commodity_data = _metal_by_turn.filter(pl.col('commodity_id') == _commodity)
+                _commodity_data = _metal_by_turn.filter(
+                    pl.col("commodity_id") == _commodity
+                )
                 if len(_commodity_data) > 0:
                     _fig.add_trace(
                         go.Scatter(
-                            x=_commodity_data['turn'].to_list(),
-                            y=_commodity_data['volume'].to_list(),
+                            x=_commodity_data["turn"].to_list(),
+                            y=_commodity_data["volume"].to_list(),
                             name=_commodity,
-                            mode='lines'
+                            mode="lines",
                         )
                     )
 
             _fig.update_layout(
-                title='Common Metal Supply Chain Transactions',
-                xaxis_title='Turn',
-                yaxis_title='Volume'
+                title="Common Metal Supply Chain Transactions",
+                xaxis_title="Turn",
+                yaxis_title="Volume",
             )
 
-            _ore_vol = _metal_txns.filter(pl.col('commodity_id') == 'common_metal_ore')['quantity'].sum()
-            _metal_vol = _metal_txns.filter(pl.col('commodity_id') == 'common_metal')['quantity'].sum()
+            _ore_vol = _metal_txns.filter(pl.col("commodity_id") == "common_metal_ore")[
+                "quantity"
+            ].sum()
+            _metal_vol = _metal_txns.filter(pl.col("commodity_id") == "common_metal")[
+                "quantity"
+            ].sum()
 
-            _result = mo.vstack([
-                _fig,
-                mo.md(f"""
+            _result = mo.vstack(
+                [
+                    _fig,
+                    mo.md(f"""
                 ### Metal Supply Chain Summary
 
                 - **Common Metal Ore Traded:** {_ore_vol}
@@ -571,8 +648,9 @@ def _(data, go, make_subplots, mo, pl):
 
                 Note: Refining ore to metal requires a smelting_facility. If ore is being traded
                 but refined metal is scarce, actors may be stockpiling ore without facilities.
-                """)
-            ])
+                """),
+                ]
+            )
 
     _result
     return
@@ -607,39 +685,45 @@ def _(data, mo, pl):
     else:
         # Check each stage's output commodity
         _bootstrap_commodities = [
-            ('simple_building_materials', 'Stage 1: Gathering materials'),
-            ('smelting_facility', 'Stage 2: Building smelters'),
-            ('common_metal_ore', 'Stage 3: Mining ore'),
-            ('common_metal', 'Stage 4: Refining metal'),
-            ('metalworking_facility', 'Stage 5: Building workshops'),
-            ('simple_tools', 'Stage 6: Making tools'),
+            ("simple_building_materials", "Stage 1: Gathering materials"),
+            ("smelting_facility", "Stage 2: Building smelters"),
+            ("common_metal_ore", "Stage 3: Mining ore"),
+            ("common_metal", "Stage 4: Refining metal"),
+            ("metalworking_facility", "Stage 5: Building workshops"),
+            ("simple_tools", "Stage 6: Making tools"),
         ]
 
         _results = []
         for _commodity, _stage in _bootstrap_commodities:
-            _txns = data.market_transactions.filter(pl.col('commodity_id') == _commodity)
-            _volume = _txns['quantity'].sum() if len(_txns) > 0 else 0
+            _txns = data.market_transactions.filter(
+                pl.col("commodity_id") == _commodity
+            )
+            _volume = _txns["quantity"].sum() if len(_txns) > 0 else 0
             _count = len(_txns)
-            _results.append({
-                'Stage': _stage,
-                'Commodity': _commodity,
-                'Transactions': _count,
-                'Volume': _volume,
-            })
+            _results.append(
+                {
+                    "Stage": _stage,
+                    "Commodity": _commodity,
+                    "Transactions": _count,
+                    "Volume": _volume,
+                }
+            )
 
         _df = pl.DataFrame(_results)
 
-        _result = mo.vstack([
-            mo.md("### Bootstrap Path Status"),
-            mo.ui.table(_df.to_pandas()),
-            mo.md("""
+        _result = mo.vstack(
+            [
+                mo.md("### Bootstrap Path Status"),
+                mo.ui.table(_df.to_pandas()),
+                mo.md("""
             **Interpretation:**
             - Stages with 0 volume are blocked
             - Facilities (smelting/metalworking) won't appear in transactions (non-transportable)
             - If Stage 4 (refining) shows low volume, smelting facilities aren't being built
             - If Stage 6 (tools) shows 0 volume, metalworking facilities aren't available
-            """)
-        ])
+            """),
+            ]
+        )
 
     _result
     return
@@ -664,32 +748,36 @@ def _(data, mo, pl, px):
         _result = mo.md("No market snapshot data")
     else:
         _key_commodities = [
-            'simple_building_materials',
-            'common_metal_ore',
-            'common_metal',
-            'simple_tools'
+            "simple_building_materials",
+            "common_metal_ore",
+            "common_metal",
+            "simple_tools",
         ]
 
         _price_data = data.market_snapshots.filter(
-            pl.col('commodity_id').is_in(_key_commodities)
-        ).filter(
-            pl.col('avg_price') > 0
-        )
+            pl.col("commodity_id").is_in(_key_commodities)
+        ).filter(pl.col("avg_price") > 0)
 
         if len(_price_data) == 0:
             _result = mo.md("No price data available for key commodities")
         else:
-            _avg_prices = _price_data.group_by(['turn', 'commodity_id']).agg([
-                pl.col('avg_price').mean().alias('price')
-            ]).sort('turn')
+            _avg_prices = (
+                _price_data.group_by(["turn", "commodity_id"])
+                .agg([pl.col("avg_price").mean().alias("price")])
+                .sort("turn")
+            )
 
             _fig = px.line(
                 _avg_prices.to_pandas(),
-                x='turn',
-                y='price',
-                color='commodity_id',
-                title='Price Trends for Tool Supply Chain Commodities',
-                labels={'price': 'Average Price', 'turn': 'Turn', 'commodity_id': 'Commodity'}
+                x="turn",
+                y="price",
+                color="commodity_id",
+                title="Price Trends for Tool Supply Chain Commodities",
+                labels={
+                    "price": "Average Price",
+                    "turn": "Turn",
+                    "commodity_id": "Commodity",
+                },
             )
 
             _result = _fig

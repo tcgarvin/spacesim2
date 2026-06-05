@@ -14,6 +14,7 @@ def _():
     from plotly.subplots import make_subplots
     from spacesim2.analysis.loading.loader import SimulationData
     from pathlib import Path
+
     return Path, SimulationData, go, make_subplots, mo, os, pl, px
 
 
@@ -69,7 +70,14 @@ def _(mo, os, Path):
     {run_selector}
     """)
 
-    return (run_selector, auto_run_path, get_run_path_with_fallback, NoRunsFoundError, status_msg, run_path_str)
+    return (
+        run_selector,
+        auto_run_path,
+        get_run_path_with_fallback,
+        NoRunsFoundError,
+        status_msg,
+        run_path_str,
+    )
 
 
 @app.cell
@@ -105,11 +113,17 @@ def _(data, pl, px, mo):
         mo.md("No data loaded")
     elif len(data.market_transactions) > 0:
         # Aggregate transactions by commodity
-        volume_by_commodity = data.market_transactions.group_by('commodity_id').agg([
-            pl.col('quantity').sum().alias('total_volume'),
-            pl.col('quantity').count().alias('transaction_count'),
-            pl.col('price').mean().alias('avg_price'),
-        ]).sort('total_volume', descending=True)
+        volume_by_commodity = (
+            data.market_transactions.group_by("commodity_id")
+            .agg(
+                [
+                    pl.col("quantity").sum().alias("total_volume"),
+                    pl.col("quantity").count().alias("transaction_count"),
+                    pl.col("price").mean().alias("avg_price"),
+                ]
+            )
+            .sort("total_volume", descending=True)
+        )
 
         # Display the table
         mo.md(f"""
@@ -133,30 +147,47 @@ def _(data, mo, pl):
         "No data"
     elif len(data.market_transactions) > 0:
         # Define shelter-related commodities
-        shelter_commodities = ['wood', 'common_metal', 'common_metal_ore']
-        clothing_commodities = ['clothing']
-        traded_commodities = data.market_transactions.select('commodity_id').unique().to_series().to_list()
+        shelter_commodities = ["wood", "common_metal", "common_metal_ore"]
+        clothing_commodities = ["clothing"]
+        traded_commodities = (
+            data.market_transactions.select("commodity_id")
+            .unique()
+            .to_series()
+            .to_list()
+        )
 
         shelter_traded = [c for c in shelter_commodities if c in traded_commodities]
-        shelter_missing = [c for c in shelter_commodities if c not in traded_commodities]
+        shelter_missing = [
+            c for c in shelter_commodities if c not in traded_commodities
+        ]
 
         clothing_traded = [c for c in clothing_commodities if c in traded_commodities]
-        clothing_missing = [c for c in clothing_commodities if c not in traded_commodities]
+        clothing_missing = [
+            c for c in clothing_commodities if c not in traded_commodities
+        ]
 
         mo.md(f"""
         ### Critical Finding: Missing Commodity Markets
 
         **Shelter Materials:**
-        - Traded: {shelter_traded if shelter_traded else 'NONE'}
-        - **Missing from market:** {shelter_missing if shelter_missing else 'All present'}
+        - Traded: {shelter_traded if shelter_traded else "NONE"}
+        - **Missing from market:** {shelter_missing if shelter_missing else "All present"}
 
         **Clothing:**
-        - Traded: {clothing_traded if clothing_traded else 'NONE'}
-        - **Missing from market:** {clothing_missing if clothing_missing else 'All present'}
+        - Traded: {clothing_traded if clothing_traded else "NONE"}
+        - **Missing from market:** {clothing_missing if clothing_missing else "All present"}
 
         **All Commodities Traded:** {sorted(traded_commodities)}
         """)
-    return (shelter_commodities, clothing_commodities, traded_commodities, shelter_traded, shelter_missing, clothing_traded, clothing_missing)
+    return (
+        shelter_commodities,
+        clothing_commodities,
+        traded_commodities,
+        shelter_traded,
+        shelter_missing,
+        clothing_traded,
+        clothing_missing,
+    )
 
 
 @app.cell
@@ -176,42 +207,73 @@ def _(data, go, make_subplots, mo, pl):
         "No data"
     elif len(data.actor_drives) > 0:
         # Calculate average drive metrics by turn and drive
-        drive_stats = data.actor_drives.group_by(['turn', 'drive_name']).agg([
-            pl.col('health').mean().alias('avg_health'),
-            pl.col('debt').mean().alias('avg_debt'),
-            pl.col('buffer').mean().alias('avg_buffer'),
-        ]).sort(['drive_name', 'turn'])
+        drive_stats = (
+            data.actor_drives.group_by(["turn", "drive_name"])
+            .agg(
+                [
+                    pl.col("health").mean().alias("avg_health"),
+                    pl.col("debt").mean().alias("avg_debt"),
+                    pl.col("buffer").mean().alias("avg_buffer"),
+                ]
+            )
+            .sort(["drive_name", "turn"])
+        )
 
         # Create subplot figure
         fig = make_subplots(
-            rows=3, cols=1,
-            subplot_titles=('Average Health by Drive', 'Average Debt by Drive', 'Average Buffer by Drive'),
-            vertical_spacing=0.1
+            rows=3,
+            cols=1,
+            subplot_titles=(
+                "Average Health by Drive",
+                "Average Debt by Drive",
+                "Average Buffer by Drive",
+            ),
+            vertical_spacing=0.1,
         )
 
-        colors = {'food': 'green', 'shelter': 'orange', 'clothing': 'red'}
+        colors = {"food": "green", "shelter": "orange", "clothing": "red"}
 
-        for drive_name in drive_stats['drive_name'].unique().to_list():
-            drive_data = drive_stats.filter(pl.col('drive_name') == drive_name).to_pandas()
-            color = colors.get(drive_name, 'blue')
+        for drive_name in drive_stats["drive_name"].unique().to_list():
+            drive_data = drive_stats.filter(
+                pl.col("drive_name") == drive_name
+            ).to_pandas()
+            color = colors.get(drive_name, "blue")
 
             fig.add_trace(
-                go.Scatter(x=drive_data['turn'], y=drive_data['avg_health'],
-                          name=f'{drive_name}', line=dict(color=color),
-                          legendgroup=drive_name, showlegend=True),
-                row=1, col=1
+                go.Scatter(
+                    x=drive_data["turn"],
+                    y=drive_data["avg_health"],
+                    name=f"{drive_name}",
+                    line=dict(color=color),
+                    legendgroup=drive_name,
+                    showlegend=True,
+                ),
+                row=1,
+                col=1,
             )
             fig.add_trace(
-                go.Scatter(x=drive_data['turn'], y=drive_data['avg_debt'],
-                          name=f'{drive_name}', line=dict(color=color),
-                          legendgroup=drive_name, showlegend=False),
-                row=2, col=1
+                go.Scatter(
+                    x=drive_data["turn"],
+                    y=drive_data["avg_debt"],
+                    name=f"{drive_name}",
+                    line=dict(color=color),
+                    legendgroup=drive_name,
+                    showlegend=False,
+                ),
+                row=2,
+                col=1,
             )
             fig.add_trace(
-                go.Scatter(x=drive_data['turn'], y=drive_data['avg_buffer'],
-                          name=f'{drive_name}', line=dict(color=color),
-                          legendgroup=drive_name, showlegend=False),
-                row=3, col=1
+                go.Scatter(
+                    x=drive_data["turn"],
+                    y=drive_data["avg_buffer"],
+                    name=f"{drive_name}",
+                    line=dict(color=color),
+                    legendgroup=drive_name,
+                    showlegend=False,
+                ),
+                row=3,
+                col=1,
             )
 
         fig.update_layout(height=800, title_text="Drive Metrics Over Time")
@@ -230,18 +292,30 @@ def _(data, mo, pl):
         "No data"
     elif len(data.actor_drives) > 0:
         # Get final turn stats for each drive
-        max_turn = data.actor_drives['turn'].max()
-        final_stats = data.actor_drives.filter(pl.col('turn') == max_turn).group_by('drive_name').agg([
-            pl.col('health').mean().alias('final_avg_health'),
-            pl.col('debt').mean().alias('final_avg_debt'),
-            pl.col('buffer').mean().alias('final_avg_buffer'),
-        ])
+        max_turn = data.actor_drives["turn"].max()
+        final_stats = (
+            data.actor_drives.filter(pl.col("turn") == max_turn)
+            .group_by("drive_name")
+            .agg(
+                [
+                    pl.col("health").mean().alias("final_avg_health"),
+                    pl.col("debt").mean().alias("final_avg_debt"),
+                    pl.col("buffer").mean().alias("final_avg_buffer"),
+                ]
+            )
+        )
 
         # Get initial stats
-        initial_stats = data.actor_drives.filter(pl.col('turn') == 1).group_by('drive_name').agg([
-            pl.col('health').mean().alias('initial_avg_health'),
-            pl.col('debt').mean().alias('initial_avg_debt'),
-        ])
+        initial_stats = (
+            data.actor_drives.filter(pl.col("turn") == 1)
+            .group_by("drive_name")
+            .agg(
+                [
+                    pl.col("health").mean().alias("initial_avg_health"),
+                    pl.col("debt").mean().alias("initial_avg_debt"),
+                ]
+            )
+        )
 
         mo.md(f"""
         ### Drive Health Summary (Turn {max_turn})
@@ -250,7 +324,7 @@ def _(data, mo, pl):
         |-------|---------------|--------------|------------|--------|
         """)
 
-        final_stats.join(initial_stats, on='drive_name', how='left').to_pandas()
+        final_stats.join(initial_stats, on="drive_name", how="left").to_pandas()
     return (max_turn, final_stats, initial_stats)
 
 
@@ -271,8 +345,8 @@ def _(mo):
     import yaml
     from pathlib import Path as P
 
-    processes_path = P('/home/timg/code/spacesim2/data/processes.yaml')
-    commodities_path = P('/home/timg/code/spacesim2/data/commodities.yaml')
+    processes_path = P("/home/timg/code/spacesim2/data/processes.yaml")
+    commodities_path = P("/home/timg/code/spacesim2/data/commodities.yaml")
 
     with open(processes_path) as f:
         processes = yaml.safe_load(f)
@@ -280,38 +354,55 @@ def _(mo):
     with open(commodities_path) as f:
         commodities = yaml.safe_load(f)
 
-    commodity_ids = [c['id'] for c in commodities]
+    commodity_ids = [c["id"] for c in commodities]
 
     # Identify shelter-related processes
     shelter_processes = []
     for proc in processes:
-        outputs = list(proc.get('outputs', {}).keys())
-        if any(o in ['wood', 'common_metal', 'common_metal_ore'] for o in outputs):
+        outputs = list(proc.get("outputs", {}).keys())
+        if any(o in ["wood", "common_metal", "common_metal_ore"] for o in outputs):
             shelter_processes.append(proc)
 
     # Check if clothing exists
-    clothing_exists = 'clothing' in commodity_ids
-    clothing_processes = [p for p in processes if 'clothing' in p.get('outputs', {})]
+    clothing_exists = "clothing" in commodity_ids
+    clothing_processes = [p for p in processes if "clothing" in p.get("outputs", {})]
 
-    mo.md(f"""
+    mo.md(
+        f"""
     ### Process Configuration Analysis
 
     **Shelter Material Production Processes:**
 
     | Process | Inputs | Outputs | Labor |
     |---------|--------|---------|-------|
-    """ + "\n".join([
-        f"| {p['id']} | {p.get('inputs', 'None')} | {p['outputs']} | {p.get('labor', 1)} |"
-        for p in shelter_processes
-    ]) + f"""
+    """
+        + "\n".join(
+            [
+                f"| {p['id']} | {p.get('inputs', 'None')} | {p['outputs']} | {p.get('labor', 1)} |"
+                for p in shelter_processes
+            ]
+        )
+        + f"""
 
     **Clothing Configuration:**
     - Clothing commodity exists in data/commodities.yaml: **{clothing_exists}**
-    - Clothing production processes: **{[p['id'] for p in clothing_processes] if clothing_processes else 'NONE'}**
+    - Clothing production processes: **{[p["id"] for p in clothing_processes] if clothing_processes else "NONE"}**
 
     **All Defined Commodities:** {commodity_ids}
-    """)
-    return (processes_path, commodities_path, processes, commodities, commodity_ids, shelter_processes, clothing_exists, clothing_processes, yaml, P)
+    """
+    )
+    return (
+        processes_path,
+        commodities_path,
+        processes,
+        commodities,
+        commodity_ids,
+        shelter_processes,
+        clothing_exists,
+        clothing_processes,
+        yaml,
+        P,
+    )
 
 
 @app.cell
@@ -327,14 +418,26 @@ def _(mo):
 @app.cell
 def _(mo):
     # Analyze market maker code
-    mm1_commodities = ['food', 'nova_fuel', 'nova_fuel_ore']  # From market_maker_1.py line 37-39
-    mm2_commodities = ['food', 'nova_fuel', 'nova_fuel_ore']  # From market_maker_2.py line 127-129
+    mm1_commodities = [
+        "food",
+        "nova_fuel",
+        "nova_fuel_ore",
+    ]  # From market_maker_1.py line 37-39
+    mm2_commodities = [
+        "food",
+        "nova_fuel",
+        "nova_fuel_ore",
+    ]  # From market_maker_2.py line 127-129
 
-    shelter_commodities_needed = ['wood', 'common_metal', 'common_metal_ore']
-    clothing_commodities_needed = ['clothing']
+    shelter_commodities_needed = ["wood", "common_metal", "common_metal_ore"]
+    clothing_commodities_needed = ["clothing"]
 
-    mm_missing_shelter = [c for c in shelter_commodities_needed if c not in mm1_commodities]
-    mm_missing_clothing = [c for c in clothing_commodities_needed if c not in mm1_commodities]
+    mm_missing_shelter = [
+        c for c in shelter_commodities_needed if c not in mm1_commodities
+    ]
+    mm_missing_clothing = [
+        c for c in clothing_commodities_needed if c not in mm1_commodities
+    ]
 
     mo.md(f"""
     **Market Maker Supported Commodities:**
@@ -351,7 +454,14 @@ def _(mo):
     - No price discovery mechanism
     - No liquidity for trade
     """)
-    return (mm1_commodities, mm2_commodities, shelter_commodities_needed, clothing_commodities_needed, mm_missing_shelter, mm_missing_clothing)
+    return (
+        mm1_commodities,
+        mm2_commodities,
+        shelter_commodities_needed,
+        clothing_commodities_needed,
+        mm_missing_shelter,
+        mm_missing_clothing,
+    )
 
 
 @app.cell
@@ -367,8 +477,12 @@ def _(mo):
 @app.cell
 def _(mo):
     # Analysis from reading the brain files
-    colonist_trades = ['food', 'nova_fuel', 'nova_fuel_ore']  # From colonist.py lines 99-101
-    industrialist_trades = ['food']  # Plus recipe inputs/outputs
+    colonist_trades = [
+        "food",
+        "nova_fuel",
+        "nova_fuel_ore",
+    ]  # From colonist.py lines 99-101
+    industrialist_trades = ["food"]  # Plus recipe inputs/outputs
 
     mo.md(f"""
     **ColonistBrain trades:** {colonist_trades}
@@ -537,15 +651,21 @@ def _(data, mo, pl):
         "No data"
     elif len(data.market_snapshots) > 0:
         # Check which commodities appear in market snapshots
-        commodities_with_snapshots = data.market_snapshots.select('commodity_id').unique().to_series().to_list()
+        commodities_with_snapshots = (
+            data.market_snapshots.select("commodity_id").unique().to_series().to_list()
+        )
 
         # Check for shelter materials
-        shelter_in_snapshots = [c for c in ['wood', 'common_metal', 'common_metal_ore'] if c in commodities_with_snapshots]
+        shelter_in_snapshots = [
+            c
+            for c in ["wood", "common_metal", "common_metal_ore"]
+            if c in commodities_with_snapshots
+        ]
 
         # Get price history for any existing shelter materials
         if shelter_in_snapshots:
             shelter_prices = data.market_snapshots.filter(
-                pl.col('commodity_id').is_in(shelter_in_snapshots)
+                pl.col("commodity_id").is_in(shelter_in_snapshots)
             )
             mo.md(f"""
             **Shelter materials in market snapshots:** {shelter_in_snapshots}

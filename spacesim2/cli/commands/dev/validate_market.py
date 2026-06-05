@@ -28,7 +28,10 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
     )
 
     parser.add_argument(
-        "--turns", type=int, default=20, help="Number of turns to simulate (default: 20)"
+        "--turns",
+        type=int,
+        default=20,
+        help="Number of turns to simulate (default: 20)",
     )
     parser.add_argument(
         "--actors", type=int, default=8, help="Number of regular actors (default: 8)"
@@ -233,8 +236,8 @@ def _test_normal_distribution() -> None:
 
     print("\nSymmetry check:")
     print(f"Price at {p:.2f} percentile: {high_price:.2f}")
-    print(f"Price at {1-p:.2f} percentile: {low_price:.2f}")
-    print(f"Average of both: {(high_price + low_price)/2:.2f}")
+    print(f"Price at {1 - p:.2f} percentile: {low_price:.2f}")
+    print(f"Average of both: {(high_price + low_price) / 2:.2f}")
     print(f"Should be close to average price: {average_price}")
 
 

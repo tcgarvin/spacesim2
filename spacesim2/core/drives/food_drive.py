@@ -12,7 +12,6 @@ DRIVE_NAME = "food"
 
 
 class FoodDriveMetrics(DriveMetrics):
-
     def get_name(self):
         return DRIVE_NAME
 
@@ -24,7 +23,9 @@ class FoodDriveMetrics(DriveMetrics):
 class FoodDrive(ActorDrive):
     def __init__(self, commodity_registry: CommodityRegistry):
         super().__init__(commodity_registry=commodity_registry)
-        self.metrics = FoodDriveMetrics(health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY)
+        self.metrics = FoodDriveMetrics(
+            health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY
+        )
         self.food_commodity = commodity_registry.get_commodity("food")
         self.quality_commodity = commodity_registry.get_commodity("processed_food")
 
@@ -56,5 +57,3 @@ class FoodDrive(ActorDrive):
         )
 
         return self.metrics
-
-

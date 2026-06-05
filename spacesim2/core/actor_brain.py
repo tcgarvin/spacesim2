@@ -8,11 +8,11 @@ if TYPE_CHECKING:
 
 class ActorBrain:
     """Base class for actor decision making strategies."""
-    
-    def decide_economic_action(self, actor:'Actor') -> Optional[EconomicCommand]:
+
+    def decide_economic_action(self, actor: "Actor") -> Optional[EconomicCommand]:
         """Decide which economic action to take this turn."""
         raise NotImplementedError("Subclasses must implement this method")
-    
-    def decide_market_actions(self, actor:'Actor') -> List[MarketCommand]:
+
+    def decide_market_actions(self, actor: "Actor") -> List[MarketCommand]:
         """Decide what market actions to take this turn."""
         raise NotImplementedError("Subclasses must implement this method")

@@ -1,6 +1,11 @@
 import random
 
-from spacesim2.core.drives.actor_drive import ActorDrive, DriveMetrics, clamp01, log_norm_ratio
+from spacesim2.core.drives.actor_drive import (
+    ActorDrive,
+    DriveMetrics,
+    clamp01,
+    log_norm_ratio,
+)
 from spacesim2.core.commodity import CommodityRegistry
 
 # Stochastic health events — less frequent than clothing, comfort-tier need
@@ -38,12 +43,18 @@ class HealthDrive(ActorDrive):
         super().__init__(commodity_registry=commodity_registry)
         self.medicine = commodity_registry.get_commodity(MEDICINE_NAME)
         self.quality_medicine = commodity_registry.get_commodity(ADVANCED_MEDICINE_NAME)
-        self.metrics = HealthDriveMetrics(health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY)
+        self.metrics = HealthDriveMetrics(
+            health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY
+        )
 
     def tick(self, actor) -> DriveMetrics:
         p_event = BASE_EVENT_PROB
 
-        medicine_qty = actor.inventory.get_available_quantity(self.medicine) if self.medicine else 0
+        medicine_qty = (
+            actor.inventory.get_available_quantity(self.medicine)
+            if self.medicine
+            else 0
+        )
         quality_qty = (
             actor.inventory.get_available_quantity(self.quality_medicine)
             if self.quality_medicine
@@ -69,7 +80,9 @@ class HealthDrive(ActorDrive):
 
             # Recalculate post-consumption
             medicine_qty = (
-                actor.inventory.get_available_quantity(self.medicine) if self.medicine else 0
+                actor.inventory.get_available_quantity(self.medicine)
+                if self.medicine
+                else 0
             )
             quality_qty = (
                 actor.inventory.get_available_quantity(self.quality_medicine)
@@ -92,7 +105,9 @@ class HealthDrive(ActorDrive):
         # Buffer from remaining inventory (both types)
         exp_events_per_day = max(p_event, 1e-9)
         expected_coverage_days = total_qty / exp_events_per_day
-        buffer = log_norm_ratio(expected_coverage_days, BUFFER_TARGET_DAYS, BUFFER_MAX_DAYS)
+        buffer = log_norm_ratio(
+            expected_coverage_days, BUFFER_TARGET_DAYS, BUFFER_MAX_DAYS
+        )
 
         self._update_metrics(health=health, debt=debt, buffer=buffer, urgency=URGENCY)
         return self.metrics

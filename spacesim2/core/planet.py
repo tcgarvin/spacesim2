@@ -30,12 +30,12 @@ class Planet:
         """Add an actor to this planet."""
         self.actors.append(actor)
         actor.planet = self
-        
+
     def add_ship(self, ship: "Ship") -> None:
         """Add a ship to this planet."""
         self.ships.append(ship)
         ship.planet = self
-    
+
     def get_position(self) -> Tuple[float, float]:
         """Get the position of the planet as a tuple."""
         return (self.x, self.y)

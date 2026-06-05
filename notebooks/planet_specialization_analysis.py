@@ -14,6 +14,7 @@ def _():
     import plotly.graph_objects as go
     from spacesim2.analysis.loading.loader import SimulationData
     from pathlib import Path
+
     return Path, SimulationData, go, json, mo, os, pl, px
 
 
@@ -69,7 +70,9 @@ def _(mo, os, Path):
 def _(Path, SimulationData, json, mo, run_selector):
     # Load simulation data and planet attributes
     if not run_selector.value:
-        _status_output = mo.md("No run path specified. Run a simulation with --planet-attributes first.")
+        _status_output = mo.md(
+            "No run path specified. Run a simulation with --planet-attributes first."
+        )
         data = None
         planet_attrs = {}
     else:
@@ -114,15 +117,17 @@ def _(mo, planet_attrs, pl):
         attrs_df = pl.DataFrame(_rows)
 
         # Format for display
-        _display_df = attrs_df.select([
-            pl.col("planet"),
-            pl.col("biomass").round(2),
-            pl.col("fiber").round(2),
-            pl.col("wood").round(2),
-            pl.col("common_metal_ore").round(2),
-            pl.col("nova_fuel_ore").round(2),
-            pl.col("simple_building_materials").round(2),
-        ])
+        _display_df = attrs_df.select(
+            [
+                pl.col("planet"),
+                pl.col("biomass").round(2),
+                pl.col("fiber").round(2),
+                pl.col("wood").round(2),
+                pl.col("common_metal_ore").round(2),
+                pl.col("nova_fuel_ore").round(2),
+                pl.col("simple_building_materials").round(2),
+            ]
+        )
 
         _output = mo.md(f"""
         ## Planet Resource Attributes
@@ -160,15 +165,21 @@ def _(data, mo, pl):
     else:
         # Filter to local sellers (not Trader, not MarketMaker)
         _local_sells = data.market_transactions.filter(
-            ~pl.col("seller_name").str.contains("Trader") &
-            ~pl.col("seller_name").str.contains("MarketMaker")
+            ~pl.col("seller_name").str.contains("Trader")
+            & ~pl.col("seller_name").str.contains("MarketMaker")
         )
 
         # Group by planet and commodity
-        production_by_planet = _local_sells.group_by(["planet_name", "commodity_id"]).agg([
-            pl.col("quantity").sum().alias("total_produced"),
-            pl.col("price").mean().alias("avg_sell_price"),
-        ]).sort(["planet_name", "total_produced"], descending=[False, True])
+        production_by_planet = (
+            _local_sells.group_by(["planet_name", "commodity_id"])
+            .agg(
+                [
+                    pl.col("quantity").sum().alias("total_produced"),
+                    pl.col("price").mean().alias("avg_sell_price"),
+                ]
+            )
+            .sort(["planet_name", "total_produced"], descending=[False, True])
+        )
 
         _output = mo.md(f"""
         **Production Summary:**
@@ -212,19 +223,23 @@ def _(attrs_df, go, mo, pl, production_by_planet):
 
             # Join with attributes
             _joined = _prod.join(
-                attrs_df.select(["planet", _attr_name]).rename({"planet": "planet_name"}),
+                attrs_df.select(["planet", _attr_name]).rename(
+                    {"planet": "planet_name"}
+                ),
                 on="planet_name",
-                how="left"
+                how="left",
             )
 
             if len(_joined) < 3:
                 continue
 
             # Calculate correlation
-            _values = _joined.select([
-                pl.col("total_produced").cast(pl.Float64),
-                pl.col(_attr_name).cast(pl.Float64)
-            ]).drop_nulls()
+            _values = _joined.select(
+                [
+                    pl.col("total_produced").cast(pl.Float64),
+                    pl.col(_attr_name).cast(pl.Float64),
+                ]
+            ).drop_nulls()
 
             if len(_values) >= 3:
                 _prod_vals = _values["total_produced"].to_list()
@@ -235,7 +250,10 @@ def _(attrs_df, go, mo, pl, production_by_planet):
                 _mean_prod = sum(_prod_vals) / _n
                 _mean_attr = sum(_attr_vals) / _n
 
-                _num = sum((p - _mean_prod) * (a - _mean_attr) for p, a in zip(_prod_vals, _attr_vals))
+                _num = sum(
+                    (p - _mean_prod) * (a - _mean_attr)
+                    for p, a in zip(_prod_vals, _attr_vals)
+                )
                 _denom_prod = sum((p - _mean_prod) ** 2 for p in _prod_vals) ** 0.5
                 _denom_attr = sum((a - _mean_attr) ** 2 for a in _attr_vals) ** 0.5
 
@@ -244,39 +262,56 @@ def _(attrs_df, go, mo, pl, production_by_planet):
                 else:
                     _corr = 0.0
 
-                _corr_data.append({
-                    "commodity": _commodity,
-                    "resource_attribute": _attr_name,
-                    "correlation": round(_corr, 3),
-                    "n_planets": _n,
-                    "interpretation": "Strong positive" if _corr > 0.5 else ("Moderate" if _corr > 0.2 else ("Weak/None" if _corr > -0.2 else "Negative"))
-                })
+                _corr_data.append(
+                    {
+                        "commodity": _commodity,
+                        "resource_attribute": _attr_name,
+                        "correlation": round(_corr, 3),
+                        "n_planets": _n,
+                        "interpretation": "Strong positive"
+                        if _corr > 0.5
+                        else (
+                            "Moderate"
+                            if _corr > 0.2
+                            else ("Weak/None" if _corr > -0.2 else "Negative")
+                        ),
+                    }
+                )
 
         correlation_results = pl.DataFrame(_corr_data)
 
         # Create visualization
         _fig = go.Figure()
 
-        _fig.add_trace(go.Bar(
-            x=correlation_results["commodity"].to_list(),
-            y=correlation_results["correlation"].to_list(),
-            marker_color=[
-                "green" if c > 0.5 else ("yellow" if c > 0.2 else ("orange" if c > -0.2 else "red"))
-                for c in correlation_results["correlation"].to_list()
-            ],
-            text=[f"{c:.2f}" for c in correlation_results["correlation"].to_list()],
-            textposition="outside"
-        ))
+        _fig.add_trace(
+            go.Bar(
+                x=correlation_results["commodity"].to_list(),
+                y=correlation_results["correlation"].to_list(),
+                marker_color=[
+                    "green"
+                    if c > 0.5
+                    else ("yellow" if c > 0.2 else ("orange" if c > -0.2 else "red"))
+                    for c in correlation_results["correlation"].to_list()
+                ],
+                text=[f"{c:.2f}" for c in correlation_results["correlation"].to_list()],
+                textposition="outside",
+            )
+        )
 
         _fig.update_layout(
             title="Correlation: Production vs Resource Attributes",
             xaxis_title="Commodity",
             yaxis_title="Correlation Coefficient",
             yaxis_range=[-1, 1],
-            showlegend=False
+            showlegend=False,
         )
 
-        _fig.add_hline(y=0.5, line_dash="dash", line_color="green", annotation_text="Strong positive threshold")
+        _fig.add_hline(
+            y=0.5,
+            line_dash="dash",
+            line_color="green",
+            annotation_text="Strong positive threshold",
+        )
         _fig.add_hline(y=0, line_dash="solid", line_color="gray")
 
         _ = mo.md(f"""
@@ -338,51 +373,63 @@ def _(data, mo, pl):
         # Get trader buy transactions
         _trader_buys = data.market_transactions.filter(
             pl.col("buyer_name").str.contains("Trader")
-        ).select([
-            pl.col("buyer_name").alias("trader"),
-            pl.col("planet_name").alias("buy_planet"),
-            pl.col("commodity_id"),
-            pl.col("quantity"),
-            pl.col("price").alias("buy_price"),
-            pl.col("turn")
-        ])
+        ).select(
+            [
+                pl.col("buyer_name").alias("trader"),
+                pl.col("planet_name").alias("buy_planet"),
+                pl.col("commodity_id"),
+                pl.col("quantity"),
+                pl.col("price").alias("buy_price"),
+                pl.col("turn"),
+            ]
+        )
 
         # Get trader sell transactions
         _trader_sells = data.market_transactions.filter(
             pl.col("seller_name").str.contains("Trader")
-        ).select([
-            pl.col("seller_name").alias("trader"),
-            pl.col("planet_name").alias("sell_planet"),
-            pl.col("commodity_id"),
-            pl.col("quantity"),
-            pl.col("price").alias("sell_price"),
-            pl.col("turn")
-        ])
+        ).select(
+            [
+                pl.col("seller_name").alias("trader"),
+                pl.col("planet_name").alias("sell_planet"),
+                pl.col("commodity_id"),
+                pl.col("quantity"),
+                pl.col("price").alias("sell_price"),
+                pl.col("turn"),
+            ]
+        )
 
         # Summarize by trader: where they buy and where they sell
-        _buy_summary = _trader_buys.group_by(["trader", "buy_planet", "commodity_id"]).agg([
-            pl.col("quantity").sum().alias("qty_bought"),
-            pl.col("buy_price").mean().alias("avg_buy_price")
-        ])
+        _buy_summary = _trader_buys.group_by(
+            ["trader", "buy_planet", "commodity_id"]
+        ).agg(
+            [
+                pl.col("quantity").sum().alias("qty_bought"),
+                pl.col("buy_price").mean().alias("avg_buy_price"),
+            ]
+        )
 
-        _sell_summary = _trader_sells.group_by(["trader", "sell_planet", "commodity_id"]).agg([
-            pl.col("quantity").sum().alias("qty_sold"),
-            pl.col("sell_price").mean().alias("avg_sell_price")
-        ])
+        _sell_summary = _trader_sells.group_by(
+            ["trader", "sell_planet", "commodity_id"]
+        ).agg(
+            [
+                pl.col("quantity").sum().alias("qty_sold"),
+                pl.col("sell_price").mean().alias("avg_sell_price"),
+            ]
+        )
 
         # Find trade routes: where does each trader buy vs sell
         trader_flows = {
             "buy_summary": _buy_summary,
             "sell_summary": _sell_summary,
             "buy_count": len(_trader_buys),
-            "sell_count": len(_trader_sells)
+            "sell_count": len(_trader_sells),
         }
 
         _output = mo.md(f"""
         **Trader Activity:**
         - Trader buy transactions: {len(_trader_buys):,}
         - Trader sell transactions: {len(_trader_sells):,}
-        - Active traders: {_trader_buys['trader'].n_unique() if len(_trader_buys) > 0 else 0}
+        - Active traders: {_trader_buys["trader"].n_unique() if len(_trader_buys) > 0 else 0}
         """)
 
     _output
@@ -402,11 +449,17 @@ def _(go, mo, pl, trader_flows):
         # For each trader, find their primary buy planet and primary sell planet
         _routes = []
 
-        _traders = _buy_summary["trader"].unique().to_list() if len(_buy_summary) > 0 else []
+        _traders = (
+            _buy_summary["trader"].unique().to_list() if len(_buy_summary) > 0 else []
+        )
         for _t in _traders:
             # Get top buy planet for this trader
-            _t_buys = _buy_summary.filter(pl.col("trader") == _t).sort("qty_bought", descending=True)
-            _t_sells = _sell_summary.filter(pl.col("trader") == _t).sort("qty_sold", descending=True)
+            _t_buys = _buy_summary.filter(pl.col("trader") == _t).sort(
+                "qty_bought", descending=True
+            )
+            _t_sells = _sell_summary.filter(pl.col("trader") == _t).sort(
+                "qty_sold", descending=True
+            )
 
             if len(_t_buys) > 0 and len(_t_sells) > 0:
                 _buy_planet = _t_buys["buy_planet"][0]
@@ -414,50 +467,65 @@ def _(go, mo, pl, trader_flows):
                 _qty = min(_t_buys["qty_bought"][0], _t_sells["qty_sold"][0])
 
                 if _buy_planet != _sell_planet:
-                    _routes.append({
-                        "trader": _t,
-                        "from_planet": _buy_planet,
-                        "to_planet": _sell_planet,
-                        "quantity": _qty
-                    })
+                    _routes.append(
+                        {
+                            "trader": _t,
+                            "from_planet": _buy_planet,
+                            "to_planet": _sell_planet,
+                            "quantity": _qty,
+                        }
+                    )
 
         if _routes:
             _route_df = pl.DataFrame(_routes)
 
             # Aggregate flows between planet pairs
-            _flow_agg = _route_df.group_by(["from_planet", "to_planet"]).agg([
-                pl.col("quantity").sum().alias("total_flow"),
-                pl.col("trader").n_unique().alias("num_traders")
-            ]).sort("total_flow", descending=True)
+            _flow_agg = (
+                _route_df.group_by(["from_planet", "to_planet"])
+                .agg(
+                    [
+                        pl.col("quantity").sum().alias("total_flow"),
+                        pl.col("trader").n_unique().alias("num_traders"),
+                    ]
+                )
+                .sort("total_flow", descending=True)
+            )
 
             # Create Sankey diagram
-            _planets = list(set(_flow_agg["from_planet"].to_list() + _flow_agg["to_planet"].to_list()))
+            _planets = list(
+                set(
+                    _flow_agg["from_planet"].to_list()
+                    + _flow_agg["to_planet"].to_list()
+                )
+            )
             _planet_idx = {p: i for i, p in enumerate(_planets)}
 
             _sources = [_planet_idx[p] for p in _flow_agg["from_planet"].to_list()]
             _targets = [_planet_idx[p] for p in _flow_agg["to_planet"].to_list()]
             _values = _flow_agg["total_flow"].to_list()
 
-            _fig = go.Figure(go.Sankey(
-                node=dict(
-                    pad=15,
-                    thickness=20,
-                    line=dict(color="black", width=0.5),
-                    label=_planets,
-                    color="blue"
-                ),
-                link=dict(
-                    source=_sources,
-                    target=_targets,
-                    value=_values,
-                    label=[f"{v} units" for v in _values]
+            _fig = go.Figure(
+                go.Sankey(
+                    node=dict(
+                        pad=15,
+                        thickness=20,
+                        line=dict(color="black", width=0.5),
+                        label=_planets,
+                        color="blue",
+                    ),
+                    link=dict(
+                        source=_sources,
+                        target=_targets,
+                        value=_values,
+                        label=[f"{v} units" for v in _values],
+                    ),
                 )
-            ))
+            )
 
             _fig.update_layout(
                 title="Trade Flows: Where Traders Buy -> Where They Sell",
                 font_size=12,
-                height=500
+                height=500,
             )
 
             _ = mo.md("""
@@ -489,8 +557,12 @@ def _(mo, pl, trader_flows):
         _traders = _buy_summary["trader"].unique().to_list()
 
         for _t in _traders:
-            _t_buys = _buy_summary.filter(pl.col("trader") == _t).sort("qty_bought", descending=True)
-            _t_sells = _sell_summary.filter(pl.col("trader") == _t).sort("qty_sold", descending=True)
+            _t_buys = _buy_summary.filter(pl.col("trader") == _t).sort(
+                "qty_bought", descending=True
+            )
+            _t_sells = _sell_summary.filter(pl.col("trader") == _t).sort(
+                "qty_sold", descending=True
+            )
 
             if len(_t_buys) > 0 and len(_t_sells) > 0:
                 _buy_planet = _t_buys["buy_planet"][0]
@@ -500,18 +572,24 @@ def _(mo, pl, trader_flows):
                 _sell_qty = _t_sells["qty_sold"][0]
                 _sell_price = round(_t_sells["avg_sell_price"][0], 1)
 
-                _profit_margin = ((_sell_price - _buy_price) / _buy_price * 100) if _buy_price > 0 else 0
+                _profit_margin = (
+                    ((_sell_price - _buy_price) / _buy_price * 100)
+                    if _buy_price > 0
+                    else 0
+                )
 
-                _routes.append({
-                    "Trader": _t,
-                    "Buy From": _buy_planet,
-                    "Qty Bought": _buy_qty,
-                    "Avg Buy Price": _buy_price,
-                    "Sell At": _sell_planet,
-                    "Qty Sold": _sell_qty,
-                    "Avg Sell Price": _sell_price,
-                    "Est. Margin %": round(_profit_margin, 1)
-                })
+                _routes.append(
+                    {
+                        "Trader": _t,
+                        "Buy From": _buy_planet,
+                        "Qty Bought": _buy_qty,
+                        "Avg Buy Price": _buy_price,
+                        "Sell At": _sell_planet,
+                        "Qty Sold": _sell_qty,
+                        "Avg Sell Price": _sell_price,
+                        "Est. Margin %": round(_profit_margin, 1),
+                    }
+                )
 
         if _routes:
             _route_df = pl.DataFrame(_routes).sort("Qty Bought", descending=True)
@@ -556,11 +634,17 @@ def _(data, mo, pl):
         price_by_planet = None
     else:
         # Get average prices across the simulation
-        price_by_planet = data.market_snapshots.group_by(["planet_name", "commodity_id"]).agg([
-            pl.col("avg_price").mean().alias("mean_price"),
-            pl.col("avg_price").std().alias("price_std"),
-            pl.col("volume").sum().alias("total_volume")
-        ]).filter(pl.col("mean_price").is_not_null())
+        price_by_planet = (
+            data.market_snapshots.group_by(["planet_name", "commodity_id"])
+            .agg(
+                [
+                    pl.col("avg_price").mean().alias("mean_price"),
+                    pl.col("avg_price").std().alias("price_std"),
+                    pl.col("volume").sum().alias("total_volume"),
+                ]
+            )
+            .filter(pl.col("mean_price").is_not_null())
+        )
 
         _output = mo.md(f"""
         **Price Data Summary:**
@@ -598,18 +682,22 @@ def _(attrs_df, go, mo, pl, price_by_planet):
                 continue
 
             _joined = _prices.join(
-                attrs_df.select(["planet", _attr_name]).rename({"planet": "planet_name"}),
+                attrs_df.select(["planet", _attr_name]).rename(
+                    {"planet": "planet_name"}
+                ),
                 on="planet_name",
-                how="left"
+                how="left",
             )
 
             if len(_joined) < 3:
                 continue
 
-            _values = _joined.select([
-                pl.col("mean_price").cast(pl.Float64),
-                pl.col(_attr_name).cast(pl.Float64)
-            ]).drop_nulls()
+            _values = _joined.select(
+                [
+                    pl.col("mean_price").cast(pl.Float64),
+                    pl.col(_attr_name).cast(pl.Float64),
+                ]
+            ).drop_nulls()
 
             if len(_values) >= 3:
                 _price_vals = _values["mean_price"].to_list()
@@ -619,7 +707,10 @@ def _(attrs_df, go, mo, pl, price_by_planet):
                 _mean_price = sum(_price_vals) / _n
                 _mean_attr = sum(_attr_vals) / _n
 
-                _num = sum((p - _mean_price) * (a - _mean_attr) for p, a in zip(_price_vals, _attr_vals))
+                _num = sum(
+                    (p - _mean_price) * (a - _mean_attr)
+                    for p, a in zip(_price_vals, _attr_vals)
+                )
                 _denom_price = sum((p - _mean_price) ** 2 for p in _price_vals) ** 0.5
                 _denom_attr = sum((a - _mean_attr) ** 2 for a in _attr_vals) ** 0.5
 
@@ -628,39 +719,52 @@ def _(attrs_df, go, mo, pl, price_by_planet):
                 else:
                     _corr = 0.0
 
-                _price_corr_data.append({
-                    "commodity": _commodity,
-                    "resource_attribute": _attr_name,
-                    "correlation": round(_corr, 3),
-                    "n_planets": _n,
-                    "interpretation": "Expected (negative)" if _corr < -0.3 else ("Weak negative" if _corr < 0 else "Unexpected (positive)")
-                })
+                _price_corr_data.append(
+                    {
+                        "commodity": _commodity,
+                        "resource_attribute": _attr_name,
+                        "correlation": round(_corr, 3),
+                        "n_planets": _n,
+                        "interpretation": "Expected (negative)"
+                        if _corr < -0.3
+                        else (
+                            "Weak negative" if _corr < 0 else "Unexpected (positive)"
+                        ),
+                    }
+                )
 
         if _price_corr_data:
             _price_corr_df = pl.DataFrame(_price_corr_data)
 
             _fig = go.Figure()
 
-            _fig.add_trace(go.Bar(
-                x=_price_corr_df["commodity"].to_list(),
-                y=_price_corr_df["correlation"].to_list(),
-                marker_color=[
-                    "green" if c < -0.3 else ("yellow" if c < 0 else "red")
-                    for c in _price_corr_df["correlation"].to_list()
-                ],
-                text=[f"{c:.2f}" for c in _price_corr_df["correlation"].to_list()],
-                textposition="outside"
-            ))
+            _fig.add_trace(
+                go.Bar(
+                    x=_price_corr_df["commodity"].to_list(),
+                    y=_price_corr_df["correlation"].to_list(),
+                    marker_color=[
+                        "green" if c < -0.3 else ("yellow" if c < 0 else "red")
+                        for c in _price_corr_df["correlation"].to_list()
+                    ],
+                    text=[f"{c:.2f}" for c in _price_corr_df["correlation"].to_list()],
+                    textposition="outside",
+                )
+            )
 
             _fig.update_layout(
                 title="Correlation: Prices vs Resource Attributes",
                 xaxis_title="Commodity",
                 yaxis_title="Correlation Coefficient",
                 yaxis_range=[-1, 1],
-                showlegend=False
+                showlegend=False,
             )
 
-            _fig.add_hline(y=-0.3, line_dash="dash", line_color="green", annotation_text="Expected negative threshold")
+            _fig.add_hline(
+                y=-0.3,
+                line_dash="dash",
+                line_color="green",
+                annotation_text="Expected negative threshold",
+            )
             _fig.add_hline(y=0, line_dash="solid", line_color="gray")
 
             _ = mo.md(f"""
@@ -711,15 +815,21 @@ def _(attrs_df, mo, pl, price_by_planet):
                     _attr_name = _commodity
 
                 _attr_row = attrs_df.filter(pl.col("planet") == _planet)
-                _attr_val = _attr_row[_attr_name][0] if len(_attr_row) > 0 and _attr_name in _attr_row.columns else None
+                _attr_val = (
+                    _attr_row[_attr_name][0]
+                    if len(_attr_row) > 0 and _attr_name in _attr_row.columns
+                    else None
+                )
 
-                _comparison_rows.append({
-                    "Planet": _planet,
-                    "Commodity": _commodity,
-                    "Avg Price": round(_row["mean_price"], 1),
-                    "Resource Attr": round(_attr_val, 2) if _attr_val else "N/A",
-                    "Total Volume": _row["total_volume"]
-                })
+                _comparison_rows.append(
+                    {
+                        "Planet": _planet,
+                        "Commodity": _commodity,
+                        "Avg Price": round(_row["mean_price"], 1),
+                        "Resource Attr": round(_attr_val, 2) if _attr_val else "N/A",
+                        "Total Volume": _row["total_volume"],
+                    }
+                )
 
         if _comparison_rows:
             _comp_df = pl.DataFrame(_comparison_rows).sort(["Commodity", "Avg Price"])
@@ -779,6 +889,7 @@ def _():
             return _derived[commodity_name] == attribute_name
 
         return False
+
     return (_check_commodity_attr_match,)
 
 
@@ -808,7 +919,14 @@ def _(_check_commodity_attr_match, attrs_df, mo, pl, production_by_planet):
             _planet_attrs = attrs_df.filter(pl.col("planet") == _planet)
 
             # Find highest attribute
-            _attr_cols = ["biomass", "fiber", "wood", "common_metal_ore", "nova_fuel_ore", "simple_building_materials"]
+            _attr_cols = [
+                "biomass",
+                "fiber",
+                "wood",
+                "common_metal_ore",
+                "nova_fuel_ore",
+                "simple_building_materials",
+            ]
             _max_attr = None
             _max_attr_val = 0
 
@@ -819,14 +937,18 @@ def _(_check_commodity_attr_match, attrs_df, mo, pl, production_by_planet):
                         _max_attr_val = _val
                         _max_attr = _attr
 
-            _specializations.append({
-                "Planet": _planet,
-                "Top Production": _top_commodity,
-                "Qty Produced": _top_qty,
-                "Strongest Resource": _max_attr,
-                "Resource Value": round(_max_attr_val, 2),
-                "Match?": "YES" if _check_commodity_attr_match(_top_commodity, _max_attr) else "no"
-            })
+            _specializations.append(
+                {
+                    "Planet": _planet,
+                    "Top Production": _top_commodity,
+                    "Qty Produced": _top_qty,
+                    "Strongest Resource": _max_attr,
+                    "Resource Value": round(_max_attr_val, 2),
+                    "Match?": "YES"
+                    if _check_commodity_attr_match(_top_commodity, _max_attr)
+                    else "no",
+                }
+            )
 
         _spec_df = pl.DataFrame(_specializations).sort("Qty Produced", descending=True)
 
@@ -838,7 +960,7 @@ def _(_check_commodity_attr_match, attrs_df, mo, pl, production_by_planet):
 
         For each planet: what they produce most vs their strongest resource attribute.
 
-        **Match Rate: {_match_count}/{_total} planets ({_match_count/_total*100:.0f}%)**
+        **Match Rate: {_match_count}/{_total} planets ({_match_count / _total * 100:.0f}%)**
 
         A "YES" in Match? indicates the planet's top production aligns with their resource strength.
 
@@ -866,7 +988,7 @@ def _(correlation_results, mo, pl, trader_flows):
 
         ### 1. Production-Resource Correlation
         - **{_num_strong}/{_total_commodities} commodities** show strong correlation (>0.5) with planet attributes
-        - This indicates the planet attribute system **{"IS" if _num_strong > _total_commodities/2 else "IS NOT fully"}** driving production specialization
+        - This indicates the planet attribute system **{"IS" if _num_strong > _total_commodities / 2 else "IS NOT fully"}** driving production specialization
 
         ### 2. Trade Routes
         - Traders made **{trader_flows["sell_count"] if _has_trade_routes else 0:,} sales** across the simulation

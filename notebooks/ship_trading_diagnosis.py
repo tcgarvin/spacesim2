@@ -16,6 +16,7 @@ def _():
     import marimo as mo
     import polars as pl
     from pathlib import Path
+
     return Path, mo, os, pl
 
 
@@ -100,7 +101,7 @@ def _(actor_turns, mo, pl):
 
         **Ships in Actor Log:** {len(ship_actors)}
 
-        {ship_actors if len(ship_actors) > 0 else '⚠️ **No ships are being logged in actor_turns!**'}
+        {ship_actors if len(ship_actors) > 0 else "⚠️ **No ships are being logged in actor_turns!**"}
 
         **Diagnosis:** Ships are trading but not being logged. Need to add ships to `data_logger.add_actor_to_log()`.
         """
@@ -150,7 +151,7 @@ def _(mo, pl, txns):
 
         **Total Ship Transactions:** {len(ship_txns)}
 
-        {'✓ Ships are actively trading!' if len(ship_txns) > 0 else '❌ No ship trading activity found!'}
+        {"✓ Ships are actively trading!" if len(ship_txns) > 0 else "❌ No ship trading activity found!"}
         """
         )
     else:
@@ -170,15 +171,21 @@ def _(mo):
 def _(mo, pl, ship_txns):
     if ship_txns is not None and len(ship_txns) > 0:
         # Analyze each ship's trading
-        for ship_name in ship_txns.filter(
-            pl.col("buyer_name").str.contains("(?i)ship|trader")
-            | pl.col("seller_name").str.contains("(?i)ship|trader")
-        ).select(
-            pl.when(pl.col("buyer_name").str.contains("(?i)ship|trader"))
-            .then(pl.col("buyer_name"))
-            .otherwise(pl.col("seller_name"))
-            .alias("ship_name")
-        ).unique().to_series().to_list():
+        for ship_name in (
+            ship_txns.filter(
+                pl.col("buyer_name").str.contains("(?i)ship|trader")
+                | pl.col("seller_name").str.contains("(?i)ship|trader")
+            )
+            .select(
+                pl.when(pl.col("buyer_name").str.contains("(?i)ship|trader"))
+                .then(pl.col("buyer_name"))
+                .otherwise(pl.col("seller_name"))
+                .alias("ship_name")
+            )
+            .unique()
+            .to_series()
+            .to_list()
+        ):
             # Get buys and sells for this ship
             buys = ship_txns.filter(pl.col("buyer_name") == ship_name)
             sells = ship_txns.filter(pl.col("seller_name") == ship_name)
@@ -201,7 +208,7 @@ def _(mo, pl, ship_txns):
 
             **Sales:** {len(sells)} transactions, \${sell_total} total revenue
 
-            **Net Profit:** \${net_profit} {'✓ PROFITABLE' if net_profit > 0 else '❌ LOSING MONEY'}
+            **Net Profit:** \${net_profit} {"✓ PROFITABLE" if net_profit > 0 else "❌ LOSING MONEY"}
 
             **Profit Margin:** {(net_profit / buy_total * 100) if buy_total > 0 else 0:.1f}%
             """

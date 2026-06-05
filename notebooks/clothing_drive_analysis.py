@@ -15,7 +15,19 @@ def _():
     from spacesim2.analysis.loading.loader import SimulationData
     from spacesim2.analysis.loading import get_run_path_with_fallback, NoRunsFoundError
     from pathlib import Path
-    return Path, SimulationData, NoRunsFoundError, get_run_path_with_fallback, go, make_subplots, mo, os, pl, px
+
+    return (
+        Path,
+        SimulationData,
+        NoRunsFoundError,
+        get_run_path_with_fallback,
+        go,
+        make_subplots,
+        mo,
+        os,
+        pl,
+        px,
+    )
 
 
 @app.cell
@@ -80,14 +92,24 @@ def _(data, mo, pl):
         overview_output = mo.md("## Simulation Overview\n\nNo data loaded")
     else:
         num_turns = data.actor_turns["turn"].max() if len(data.actor_turns) > 0 else 0
-        num_actors = data.actor_turns["actor_id"].n_unique() if len(data.actor_turns) > 0 else 0
+        num_actors = (
+            data.actor_turns["actor_id"].n_unique() if len(data.actor_turns) > 0 else 0
+        )
         num_transactions = len(data.market_transactions)
 
         # Check which drives exist
-        drive_names = data.actor_drives.select("drive_name").unique().to_series().to_list() if len(data.actor_drives) > 0 else []
+        drive_names = (
+            data.actor_drives.select("drive_name").unique().to_series().to_list()
+            if len(data.actor_drives) > 0
+            else []
+        )
 
         # Check which commodities exist
-        _all_commodities = data.market_snapshots.select("commodity_id").unique().to_series().to_list() if len(data.market_snapshots) > 0 else []
+        _all_commodities = (
+            data.market_snapshots.select("commodity_id").unique().to_series().to_list()
+            if len(data.market_snapshots) > 0
+            else []
+        )
 
         overview_output = mo.md(f"""
         ## Simulation Overview
@@ -97,12 +119,12 @@ def _(data, mo, pl):
         | Turns | {num_turns} |
         | Actors | {num_actors} |
         | Total Transactions | {num_transactions} |
-        | Drives Tracked | {', '.join(drive_names)} |
+        | Drives Tracked | {", ".join(drive_names)} |
         | Commodities in Market | {len(_all_commodities)} |
 
         **Key Clothing-Related Commodities:**
-        - `fiber`: {'Present' if 'fiber' in _all_commodities else 'MISSING'}
-        - `clothing`: {'Present' if 'clothing' in _all_commodities else 'MISSING'}
+        - `fiber`: {"Present" if "fiber" in _all_commodities else "MISSING"}
+        - `clothing`: {"Present" if "clothing" in _all_commodities else "MISSING"}
         """)
     overview_output
     return
@@ -131,27 +153,39 @@ def _(data, mo, pl, px):
         clothing_by_turn = None
         _output = mo.md("No drive data available")
     else:
-        clothing_drive_data = data.actor_drives.filter(pl.col("drive_name") == "clothing")
+        clothing_drive_data = data.actor_drives.filter(
+            pl.col("drive_name") == "clothing"
+        )
 
         if clothing_drive_data.height == 0:
             clothing_by_turn = None
-            _output = mo.md("**Warning**: No clothing drive data found. The clothing drive may not be implemented or active.")
+            _output = mo.md(
+                "**Warning**: No clothing drive data found. The clothing drive may not be implemented or active."
+            )
         else:
             # Aggregate metrics by turn
-            clothing_by_turn = clothing_drive_data.group_by("turn").agg(
-                pl.col("health").mean().alias("avg_health"),
-                pl.col("debt").mean().alias("avg_debt"),
-                pl.col("buffer").mean().alias("avg_buffer"),
-                pl.col("health").std().alias("health_std"),
-                pl.col("debt").std().alias("debt_std"),
-            ).sort("turn")
+            clothing_by_turn = (
+                clothing_drive_data.group_by("turn")
+                .agg(
+                    pl.col("health").mean().alias("avg_health"),
+                    pl.col("debt").mean().alias("avg_debt"),
+                    pl.col("buffer").mean().alias("avg_buffer"),
+                    pl.col("health").std().alias("health_std"),
+                    pl.col("debt").std().alias("debt_std"),
+                )
+                .sort("turn")
+            )
 
             _fig = px.line(
                 clothing_by_turn.to_pandas(),
                 x="turn",
                 y=["avg_health", "avg_debt", "avg_buffer"],
                 title="Clothing Drive Metrics Over Time (Population Average)",
-                labels={"value": "Metric Value (0-1)", "turn": "Turn", "variable": "Metric"},
+                labels={
+                    "value": "Metric Value (0-1)",
+                    "turn": "Turn",
+                    "variable": "Metric",
+                },
             )
             _fig.update_layout(legend_title_text="Metric")
             _output = _fig
@@ -179,9 +213,9 @@ def _(clothing_drive_data, mo, pl):
         | Condition | Count | Percentage |
         |-----------|-------|------------|
         | Total actor-turn records | {total} | 100% |
-        | Without clothing (health < 0.5) | {unhealthy} | {100*unhealthy/total:.1f}% |
-        | High debt (debt > 0.5) | {high_debt} | {100*high_debt/total:.1f}% |
-        | Low buffer (buffer < 0.3) | {low_buffer} | {100*low_buffer/total:.1f}% |
+        | Without clothing (health < 0.5) | {unhealthy} | {100 * unhealthy / total:.1f}% |
+        | High debt (debt > 0.5) | {high_debt} | {100 * high_debt / total:.1f}% |
+        | Low buffer (buffer < 0.3) | {low_buffer} | {100 * low_buffer / total:.1f}% |
 
         **Statistics:**
 
@@ -219,7 +253,9 @@ def _(data, mo, pl, px):
         )
 
         if clothing_market.height == 0:
-            price_output = mo.md("**Warning**: No market data for fiber or clothing. These commodities may not be traded yet.")
+            price_output = mo.md(
+                "**Warning**: No market data for fiber or clothing. These commodities may not be traded yet."
+            )
         else:
             _fig = px.line(
                 clothing_market.to_pandas(),
@@ -227,7 +263,11 @@ def _(data, mo, pl, px):
                 y="avg_price",
                 color="commodity_id",
                 title="Fiber and Clothing Prices Over Time",
-                labels={"avg_price": "Average Price ($)", "turn": "Turn", "commodity_id": "Commodity"},
+                labels={
+                    "avg_price": "Average Price ($)",
+                    "turn": "Turn",
+                    "commodity_id": "Commodity",
+                },
             )
             price_output = _fig
     price_output
@@ -257,9 +297,11 @@ def _(data, mo, pl, px):
             """)
         else:
             # Volume by turn
-            _volume_by_turn = clothing_txns.group_by(["turn", "commodity_id"]).agg(
-                pl.col("quantity").sum().alias("volume")
-            ).sort("turn")
+            _volume_by_turn = (
+                clothing_txns.group_by(["turn", "commodity_id"])
+                .agg(pl.col("quantity").sum().alias("volume"))
+                .sort("turn")
+            )
 
             _fig = px.line(
                 _volume_by_turn.to_pandas(),
@@ -267,7 +309,11 @@ def _(data, mo, pl, px):
                 y="volume",
                 color="commodity_id",
                 title="Fiber and Clothing Transaction Volume Over Time",
-                labels={"volume": "Quantity Traded", "turn": "Turn", "commodity_id": "Commodity"},
+                labels={
+                    "volume": "Quantity Traded",
+                    "turn": "Turn",
+                    "commodity_id": "Commodity",
+                },
             )
             volume_output = _fig
     volume_output
@@ -317,13 +363,22 @@ def _(data, mo, pl, px):
         mm_output = mo.md("No transaction data available")
     else:
         # Get all commodities that have been traded
-        all_traded = data.market_transactions.select("commodity_id").unique().to_series().to_list()
+        all_traded = (
+            data.market_transactions.select("commodity_id")
+            .unique()
+            .to_series()
+            .to_list()
+        )
 
         # Volume by commodity
-        _volume_by_commodity = data.market_transactions.group_by("commodity_id").agg(
-            pl.col("quantity").sum().alias("total_volume"),
-            pl.col("quantity").count().alias("num_transactions"),
-        ).sort("total_volume", descending=True)
+        _volume_by_commodity = (
+            data.market_transactions.group_by("commodity_id")
+            .agg(
+                pl.col("quantity").sum().alias("total_volume"),
+                pl.col("quantity").count().alias("num_transactions"),
+            )
+            .sort("total_volume", descending=True)
+        )
 
         _fig = px.bar(
             _volume_by_commodity.to_pandas(),
@@ -336,18 +391,20 @@ def _(data, mo, pl, px):
         )
         _fig.update_layout(showlegend=False)
 
-        mm_output = mo.vstack([
-            mo.md(f"""
+        mm_output = mo.vstack(
+            [
+                mo.md(f"""
             ### All Traded Commodities
 
-            **Commodities with market activity:** {', '.join(sorted(all_traded))}
+            **Commodities with market activity:** {", ".join(sorted(all_traded))}
 
             Key clothing-related commodities:
-            - fiber: {'Traded' if 'fiber' in all_traded else 'NOT TRADED'}
-            - clothing: {'Traded' if 'clothing' in all_traded else 'NOT TRADED'}
+            - fiber: {"Traded" if "fiber" in all_traded else "NOT TRADED"}
+            - clothing: {"Traded" if "clothing" in all_traded else "NOT TRADED"}
             """),
-            _fig
-        ])
+                _fig,
+            ]
+        )
     mm_output
     return
 
@@ -359,13 +416,17 @@ def _(data, mo, pl):
         snapshot_output = mo.md("No market snapshot data")
     else:
         # All commodities in market snapshots
-        snapshot_commodities = data.market_snapshots.select("commodity_id").unique().to_series().to_list()
+        snapshot_commodities = (
+            data.market_snapshots.select("commodity_id").unique().to_series().to_list()
+        )
 
         # Get latest prices for all commodities
         latest_turn = data.market_snapshots["turn"].max()
-        latest_prices = data.market_snapshots.filter(
-            pl.col("turn") == latest_turn
-        ).select(["commodity_id", "avg_price"]).sort("commodity_id")
+        latest_prices = (
+            data.market_snapshots.filter(pl.col("turn") == latest_turn)
+            .select(["commodity_id", "avg_price"])
+            .sort("commodity_id")
+        )
 
         snapshot_output = mo.md(f"""
         ### Market Snapshot Coverage (Turn {latest_turn})
@@ -407,18 +468,25 @@ def _(data, go, make_subplots, mo, pl):
         comparison_output = mo.md("No drive data available")
     else:
         # Get available drives
-        available_drives = data.actor_drives.select("drive_name").unique().to_series().to_list()
+        available_drives = (
+            data.actor_drives.select("drive_name").unique().to_series().to_list()
+        )
 
         # Aggregate by turn and drive
-        drive_comparison = data.actor_drives.group_by(["turn", "drive_name"]).agg(
-            pl.col("health").mean().alias("avg_health"),
-            pl.col("debt").mean().alias("avg_debt"),
-            pl.col("buffer").mean().alias("avg_buffer"),
-        ).sort(["turn", "drive_name"])
+        drive_comparison = (
+            data.actor_drives.group_by(["turn", "drive_name"])
+            .agg(
+                pl.col("health").mean().alias("avg_health"),
+                pl.col("debt").mean().alias("avg_debt"),
+                pl.col("buffer").mean().alias("avg_buffer"),
+            )
+            .sort(["turn", "drive_name"])
+        )
 
         # Create subplots for each metric
         _fig = make_subplots(
-            rows=3, cols=1,
+            rows=3,
+            cols=1,
             subplot_titles=("Average Health", "Average Debt", "Average Buffer"),
             shared_xaxes=True,
             vertical_spacing=0.08,
@@ -427,23 +495,40 @@ def _(data, go, make_subplots, mo, pl):
         colors = {"food": "#2ecc71", "clothing": "#3498db", "shelter": "#e74c3c"}
 
         for drive_name in available_drives:
-            drive_data = drive_comparison.filter(pl.col("drive_name") == drive_name).to_pandas()
+            drive_data = drive_comparison.filter(
+                pl.col("drive_name") == drive_name
+            ).to_pandas()
             color = colors.get(drive_name, "#95a5a6")
 
             _fig.add_trace(
-                go.Scatter(x=drive_data["turn"], y=drive_data["avg_health"],
-                          name=f"{drive_name} health", line=dict(color=color)),
-                row=1, col=1
+                go.Scatter(
+                    x=drive_data["turn"],
+                    y=drive_data["avg_health"],
+                    name=f"{drive_name} health",
+                    line=dict(color=color),
+                ),
+                row=1,
+                col=1,
             )
             _fig.add_trace(
-                go.Scatter(x=drive_data["turn"], y=drive_data["avg_debt"],
-                          name=f"{drive_name} debt", line=dict(color=color, dash="dash")),
-                row=2, col=1
+                go.Scatter(
+                    x=drive_data["turn"],
+                    y=drive_data["avg_debt"],
+                    name=f"{drive_name} debt",
+                    line=dict(color=color, dash="dash"),
+                ),
+                row=2,
+                col=1,
             )
             _fig.add_trace(
-                go.Scatter(x=drive_data["turn"], y=drive_data["avg_buffer"],
-                          name=f"{drive_name} buffer", line=dict(color=color, dash="dot")),
-                row=3, col=1
+                go.Scatter(
+                    x=drive_data["turn"],
+                    y=drive_data["avg_buffer"],
+                    name=f"{drive_name} buffer",
+                    line=dict(color=color, dash="dot"),
+                ),
+                row=3,
+                col=1,
             )
 
         _fig.update_layout(
@@ -465,14 +550,18 @@ def _(data, mo, pl):
     if data is None or len(data.actor_drives) == 0:
         drive_summary_output = mo.md("No drive data available")
     else:
-        drive_summary = data.actor_drives.group_by("drive_name").agg(
-            pl.col("health").mean().alias("avg_health"),
-            pl.col("health").std().alias("health_std"),
-            pl.col("debt").mean().alias("avg_debt"),
-            pl.col("debt").std().alias("debt_std"),
-            pl.col("buffer").mean().alias("avg_buffer"),
-            pl.col("buffer").std().alias("buffer_std"),
-        ).sort("drive_name")
+        drive_summary = (
+            data.actor_drives.group_by("drive_name")
+            .agg(
+                pl.col("health").mean().alias("avg_health"),
+                pl.col("health").std().alias("health_std"),
+                pl.col("debt").mean().alias("avg_debt"),
+                pl.col("debt").std().alias("debt_std"),
+                pl.col("buffer").mean().alias("avg_buffer"),
+                pl.col("buffer").std().alias("buffer_std"),
+            )
+            .sort("drive_name")
+        )
 
         drive_summary_output = mo.md(f"""
         ### Drive Summary Statistics
@@ -512,7 +601,14 @@ def _(data, mo):
         # For now, we can infer from market activity
 
         # Check if fiber and clothing are being produced (appearing in transactions)
-        _all_commodities = data.market_transactions.select("commodity_id").unique().to_series().to_list() if len(data.market_transactions) > 0 else []
+        _all_commodities = (
+            data.market_transactions.select("commodity_id")
+            .unique()
+            .to_series()
+            .to_list()
+            if len(data.market_transactions) > 0
+            else []
+        )
 
         clothing_chain = {
             "fiber": "fiber" in _all_commodities,
@@ -526,8 +622,8 @@ def _(data, mo):
 
         | Commodity | Market Activity |
         |-----------|-----------------|
-        | fiber | {'Active' if clothing_chain['fiber'] else 'None detected'} |
-        | clothing | {'Active' if clothing_chain['clothing'] else 'None detected'} |
+        | fiber | {"Active" if clothing_chain["fiber"] else "None detected"} |
+        | clothing | {"Active" if clothing_chain["clothing"] else "None detected"} |
 
         **Note:** If no market activity is detected, actors may be:
         - Consuming all produced goods internally (not trading)

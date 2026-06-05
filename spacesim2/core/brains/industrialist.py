@@ -2,7 +2,15 @@ import random
 from typing import Optional, List, TYPE_CHECKING
 
 from spacesim2.core.actor_brain import ActorBrain
-from spacesim2.core.commands import EconomicCommand, MarketCommand, ProcessCommand, GovernmentWorkCommand, CancelOrderCommand, PlaceBuyOrderCommand, PlaceSellOrderCommand
+from spacesim2.core.commands import (
+    EconomicCommand,
+    MarketCommand,
+    ProcessCommand,
+    GovernmentWorkCommand,
+    CancelOrderCommand,
+    PlaceBuyOrderCommand,
+    PlaceSellOrderCommand,
+)
 
 if TYPE_CHECKING:
     from spacesim2.core.process import ProcessDefinition
@@ -11,12 +19,12 @@ if TYPE_CHECKING:
 
 class IndustrialistBrain(ActorBrain):
     """Decision-making logic for industrialist actors who specialize in production."""
-    
+
     def __init__(self):
         self.chosen_recipe_id: Optional[str] = None
         self.turns_since_recipe_evaluation: int = 0
-        
-    def decide_economic_action(self, actor: 'Actor') -> Optional[EconomicCommand]:
+
+    def decide_economic_action(self, actor: "Actor") -> Optional[EconomicCommand]:
         """Decide which economic action to take this turn."""
         # First check if we need to re-evaluate our recipe (1% chance per turn)
         self.turns_since_recipe_evaluation += 1
@@ -67,8 +75,12 @@ class IndustrialistBrain(ActorBrain):
                 # Check for missing facilities and try to build them
                 for facility in process.facilities_required:
                     if not actor.inventory.has_quantity(facility, 1):
-                        build_process_id = self._get_build_process_for_facility(facility)
-                        if build_process_id and actor.can_execute_process(build_process_id):
+                        build_process_id = self._get_build_process_for_facility(
+                            facility
+                        )
+                        if build_process_id and actor.can_execute_process(
+                            build_process_id
+                        ):
                             return ProcessCommand(build_process_id)
 
                 # Check for missing tools and try to make them
@@ -83,33 +95,35 @@ class IndustrialistBrain(ActorBrain):
 
         # If we can't execute our recipe, fall back to government work
         return GovernmentWorkCommand()
-    
-    def decide_market_actions(self, actor: 'Actor') -> List[MarketCommand]:
+
+    def decide_market_actions(self, actor: "Actor") -> List[MarketCommand]:
         """Market actions focused on buying personal needs and recipe inputs, selling outputs."""
         if not actor.planet:
             return []
-        
+
         market = actor.planet.market
         commands = []
-        
+
         # Get existing orders and cancel them
         existing_orders = market.get_actor_orders(actor)
         for order in existing_orders["buy"] + existing_orders["sell"]:
             commands.append(CancelOrderCommand(order.order_id))
-        
+
         # 1. Buy food for personal consumption (market-first approach)
         food_commodity = actor.sim.commodity_registry.get_commodity("food")
         if food_commodity:
-            food_commands = self._get_food_purchase_commands(actor, market, food_commodity)
+            food_commands = self._get_food_purchase_commands(
+                actor, market, food_commodity
+            )
             commands.extend(food_commands)
-        
+
         # 2. Handle recipe-related trading
         if self.chosen_recipe_id:
             recipe_commands = self._get_recipe_trading_commands(actor, market)
             commands.extend(recipe_commands)
-        
+
         return commands
-    
+
     def _should_reevaluate_recipe(self) -> bool:
         """1% chance per turn to re-evaluate recipe choice."""
         return random.random() < 0.01
@@ -126,8 +140,8 @@ class IndustrialistBrain(ActorBrain):
             "advanced_factory": "build_advanced_factory",
         }
         return facility_to_process.get(facility.id)
-    
-    def _select_new_recipe(self, actor: 'Actor') -> Optional[str]:
+
+    def _select_new_recipe(self, actor: "Actor") -> Optional[str]:
         """Select a new recipe based on market viability and expected profit.
 
         Weights recipes by expected profit margin, preferring more profitable ones.
@@ -163,7 +177,9 @@ class IndustrialistBrain(ActorBrain):
         # Fallback (shouldn't reach here)
         return recipe_scores[-1][0]
 
-    def _calculate_recipe_score(self, actor: 'Actor', market, process: 'ProcessDefinition') -> float:
+    def _calculate_recipe_score(
+        self, actor: "Actor", market, process: "ProcessDefinition"
+    ) -> float:
         """Calculate a profitability score for a recipe.
 
         Returns expected profit margin as a score. Higher = more profitable.
@@ -190,15 +206,23 @@ class IndustrialistBrain(ActorBrain):
                 if ask is None:
                     # No sellers for required tools - recipe not viable unless
                     # actor can make tools themselves
-                    metalworking = actor.sim.commodity_registry.get_commodity("metalworking_facility")
+                    metalworking = actor.sim.commodity_registry.get_commodity(
+                        "metalworking_facility"
+                    )
                     if metalworking and actor.inventory.has_quantity(metalworking, 1):
                         # Actor can make tools - estimate cost from tool process
-                        tool_process = actor.sim.process_registry.get_process("make_simple_tools")
+                        tool_process = actor.sim.process_registry.get_process(
+                            "make_simple_tools"
+                        )
                         if tool_process:
                             tool_input_cost = 0.0
                             for commodity, qty in tool_process.inputs.items():
                                 _, inp_ask = market.get_bid_ask_spread(commodity)
-                                inp_price = inp_ask if inp_ask is not None else market.get_avg_price(commodity)
+                                inp_price = (
+                                    inp_ask
+                                    if inp_ask is not None
+                                    else market.get_avg_price(commodity)
+                                )
                                 if inp_price <= 0:
                                     return 0.0
                                 tool_input_cost += inp_price * qty
@@ -227,7 +251,11 @@ class IndustrialistBrain(ActorBrain):
                 facility_build_cost = 0.0
                 for inp_commodity, inp_qty in build_process.inputs.items():
                     _, inp_ask = market.get_bid_ask_spread(inp_commodity)
-                    inp_price = inp_ask if inp_ask is not None else market.get_avg_price(inp_commodity)
+                    inp_price = (
+                        inp_ask
+                        if inp_ask is not None
+                        else market.get_avg_price(inp_commodity)
+                    )
                     if inp_price <= 0:
                         return 0.0  # Can't get inputs for facility
                     facility_build_cost += inp_price * inp_qty
@@ -274,8 +302,10 @@ class IndustrialistBrain(ActorBrain):
         # Score is expected profit (output - input)
         # For gathering (no inputs), this is just expected output value
         return total_output_value - total_input_cost
-    
-    def _is_recipe_viable(self, actor: 'Actor', market, process: 'ProcessDefinition') -> bool:
+
+    def _is_recipe_viable(
+        self, actor: "Actor", market, process: "ProcessDefinition"
+    ) -> bool:
         """Check if a recipe is economically viable given current market conditions.
 
         For processes with resource_attribute, adjusts expected output based on
@@ -326,38 +356,45 @@ class IndustrialistBrain(ActorBrain):
         # Recipe is viable if profit margin is at least 20% above input costs
         min_required_value = total_input_cost * 1.2
         return total_output_value >= min_required_value
-    
-    def _get_food_purchase_commands(self, actor: 'Actor', market, food_commodity) -> List[MarketCommand]:
+
+    def _get_food_purchase_commands(
+        self, actor: "Actor", market, food_commodity
+    ) -> List[MarketCommand]:
         """Generate commands to buy food for personal consumption."""
         commands = []
-        
+
         food_quantity = actor.inventory.get_quantity(food_commodity)
         food_target = 6  # Target inventory level
-        
+
         if food_quantity < food_target:
             quantity_to_buy = food_target - food_quantity
-            
+
             # Get available sell orders for food
             market_sell_orders = sorted(
-                [o for o in market.sell_orders.get(food_commodity, []) if o.actor != actor],
-                key=lambda o: (o.price, o.timestamp)
+                [
+                    o
+                    for o in market.sell_orders.get(food_commodity, [])
+                    if o.actor != actor
+                ],
+                key=lambda o: (o.price, o.timestamp),
             )
-            
+
             if market_sell_orders:
                 best_sell_order = market_sell_orders[0]
                 max_affordable = min(
-                    quantity_to_buy,
-                    actor.money // best_sell_order.price
+                    quantity_to_buy, actor.money // best_sell_order.price
                 )
-                
+
                 if max_affordable > 0:
-                    commands.append(PlaceBuyOrderCommand(
-                        food_commodity, max_affordable, best_sell_order.price
-                    ))
-        
+                    commands.append(
+                        PlaceBuyOrderCommand(
+                            food_commodity, max_affordable, best_sell_order.price
+                        )
+                    )
+
         return commands
 
-    def _calculate_tool_willingness_to_pay(self, actor: 'Actor', market) -> int:
+    def _calculate_tool_willingness_to_pay(self, actor: "Actor", market) -> int:
         """Calculate max price industrialist would pay for a tool.
 
         For industrialists, willingness to pay is based on:
@@ -386,7 +423,9 @@ class IndustrialistBrain(ActorBrain):
 
         return input_cost + opportunity_cost
 
-    def _get_recipe_trading_commands(self, actor: 'Actor', market) -> List[MarketCommand]:
+    def _get_recipe_trading_commands(
+        self, actor: "Actor", market
+    ) -> List[MarketCommand]:
         """Generate trading commands for recipe inputs and outputs."""
         commands = []
 
@@ -406,7 +445,7 @@ class IndustrialistBrain(ActorBrain):
 
                 market_sell_orders = sorted(
                     [o for o in market.sell_orders.get(tool, []) if o.actor != actor],
-                    key=lambda o: (o.price, o.timestamp)
+                    key=lambda o: (o.price, o.timestamp),
                 )
 
                 if market_sell_orders:
@@ -414,25 +453,27 @@ class IndustrialistBrain(ActorBrain):
                     # Only buy if price is at or below willingness to pay
                     if best_sell_order.price <= tool_willingness_to_pay:
                         max_affordable = min(
-                            quantity_to_buy,
-                            actor.money // best_sell_order.price
+                            quantity_to_buy, actor.money // best_sell_order.price
                         )
 
                         if max_affordable > 0:
-                            commands.append(PlaceBuyOrderCommand(
-                                tool, max_affordable, best_sell_order.price
-                            ))
+                            commands.append(
+                                PlaceBuyOrderCommand(
+                                    tool, max_affordable, best_sell_order.price
+                                )
+                            )
                 elif tool_willingness_to_pay > 0:
                     # No sell orders - place bid at willingness to pay
                     max_affordable = min(
-                        quantity_to_buy,
-                        actor.money // tool_willingness_to_pay
+                        quantity_to_buy, actor.money // tool_willingness_to_pay
                     )
 
                     if max_affordable > 0:
-                        commands.append(PlaceBuyOrderCommand(
-                            tool, max_affordable, tool_willingness_to_pay
-                        ))
+                        commands.append(
+                            PlaceBuyOrderCommand(
+                                tool, max_affordable, tool_willingness_to_pay
+                            )
+                        )
 
         # Buy inputs for recipe
         for commodity, needed_quantity in process.inputs.items():
@@ -441,35 +482,46 @@ class IndustrialistBrain(ActorBrain):
                 quantity_to_buy = needed_quantity - current_quantity
 
                 market_sell_orders = sorted(
-                    [o for o in market.sell_orders.get(commodity, []) if o.actor != actor],
-                    key=lambda o: (o.price, o.timestamp)
+                    [
+                        o
+                        for o in market.sell_orders.get(commodity, [])
+                        if o.actor != actor
+                    ],
+                    key=lambda o: (o.price, o.timestamp),
                 )
 
                 if market_sell_orders:
                     best_sell_order = market_sell_orders[0]
                     max_affordable = min(
-                        quantity_to_buy,
-                        actor.money // best_sell_order.price
+                        quantity_to_buy, actor.money // best_sell_order.price
                     )
 
                     if max_affordable > 0:
-                        commands.append(PlaceBuyOrderCommand(
-                            commodity, max_affordable, best_sell_order.price
-                        ))
-        
+                        commands.append(
+                            PlaceBuyOrderCommand(
+                                commodity, max_affordable, best_sell_order.price
+                            )
+                        )
+
         # Sell outputs from recipe
         for commodity, _ in process.outputs.items():
             available_quantity = actor.inventory.get_available_quantity(commodity)
             if available_quantity > 0:
                 market_buy_orders = sorted(
-                    [o for o in market.buy_orders.get(commodity, []) if o.actor != actor],
-                    key=lambda o: (-o.price, o.timestamp)
+                    [
+                        o
+                        for o in market.buy_orders.get(commodity, [])
+                        if o.actor != actor
+                    ],
+                    key=lambda o: (-o.price, o.timestamp),
                 )
-                
+
                 if market_buy_orders:
                     best_buy_order = market_buy_orders[0]
-                    commands.append(PlaceSellOrderCommand(
-                        commodity, available_quantity, best_buy_order.price
-                    ))
-        
+                    commands.append(
+                        PlaceSellOrderCommand(
+                            commodity, available_quantity, best_buy_order.price
+                        )
+                    )
+
         return commands
