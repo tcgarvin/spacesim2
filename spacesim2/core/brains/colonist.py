@@ -60,11 +60,25 @@ class ColonistBrain(ActorBrain):
                 if fiber_quantity < 4 and actor.can_execute_process("gather_fiber"):
                     return ProcessCommand("gather_fiber")
 
-        # Check shelter needs (wood or metal)
+        # Keep a wood buffer (raw input for tools and building materials)
         if wood_commodity:
             wood_quantity = actor.inventory.get_quantity(wood_commodity)
             if wood_quantity < 2 and actor.can_execute_process("harvest_wood"):
                 return ProcessCommand("harvest_wood")
+
+        # Check shelter material needs (simple_building_materials feeds ShelterDrive)
+        building_materials = registry.get_commodity("simple_building_materials")
+        if building_materials:
+            bm_quantity = actor.inventory.get_quantity(building_materials)
+            if bm_quantity < 3:
+                # Bootstrap recipe: 2 wood + simple_tools -> 1 building material
+                if actor.can_execute_process("make_building_materials_wood"):
+                    return ProcessCommand("make_building_materials_wood")
+                # Can't make yet (likely short on wood); gather more wood
+                if wood_commodity:
+                    wood_quantity = actor.inventory.get_quantity(wood_commodity)
+                    if wood_quantity < 2 and actor.can_execute_process("harvest_wood"):
+                        return ProcessCommand("harvest_wood")
 
         # Check tool needs - prioritize having tools for productive work
         tools_commodity = registry.get_commodity("simple_tools")
@@ -213,9 +227,11 @@ class ColonistBrain(ActorBrain):
         min_keep_levels = {
             "food": 6,
             "clothing": 3,
-            "wood": 2,  # shelter material
-            "common_metal": 2,  # shelter material
+            "wood": 2,  # raw input for tools/building materials
+            "common_metal": 2,  # alternate building-material input
             "simple_tools": 2,  # tools for production
+            "simple_building_materials": 3,  # shelter material (ShelterDrive)
+            "medicine": 2,  # health material (HealthDrive)
         }
 
         # Trade all transportable commodities

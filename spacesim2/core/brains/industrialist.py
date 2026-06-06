@@ -111,13 +111,24 @@ class IndustrialistBrain(ActorBrain):
         for order in existing_orders["buy"] + existing_orders["sell"]:
             commands.append(CancelOrderCommand(order.order_id))
 
-        # 1. Buy food for personal consumption (market-first approach)
-        food_commodity = actor.sim.commodity_registry.get_commodity("food")
-        if food_commodity:
-            food_commands = self._get_food_purchase_commands(
-                actor, market, food_commodity
-            )
-            commands.extend(food_commands)
+        # 1. Buy commodities for personal consumption (market-first approach).
+        #    Industrialists specialize in production and rely on the market for
+        #    their own drives: food (FoodDrive), simple_building_materials
+        #    (ShelterDrive), and medicine (HealthDrive).
+        registry = actor.sim.commodity_registry
+        personal_needs = {
+            "food": 6,
+            "simple_building_materials": 3,
+            "medicine": 2,
+        }
+        for commodity_id, target in personal_needs.items():
+            commodity = registry.get_commodity(commodity_id)
+            if commodity:
+                commands.extend(
+                    self._get_personal_purchase_commands(
+                        actor, market, commodity, target
+                    )
+                )
 
         # 2. Handle recipe-related trading
         if self.chosen_recipe_id:
@@ -361,25 +372,23 @@ class IndustrialistBrain(ActorBrain):
         min_required_value = total_input_cost * 1.2
         return total_output_value >= min_required_value
 
-    def _get_food_purchase_commands(
-        self, actor: "Actor", market: "Market", food_commodity: "CommodityDefinition"
+    def _get_personal_purchase_commands(
+        self,
+        actor: "Actor",
+        market: "Market",
+        commodity: "CommodityDefinition",
+        target: int,
     ) -> List[MarketCommand]:
-        """Generate commands to buy food for personal consumption."""
+        """Generate commands to buy a personal-consumption commodity up to a target."""
         commands: List[MarketCommand] = []
 
-        food_quantity = actor.inventory.get_quantity(food_commodity)
-        food_target = 6  # Target inventory level
+        quantity = actor.inventory.get_quantity(commodity)
+        if quantity < target:
+            quantity_to_buy = target - quantity
 
-        if food_quantity < food_target:
-            quantity_to_buy = food_target - food_quantity
-
-            # Get available sell orders for food
+            # Get available sell orders for this commodity
             market_sell_orders = sorted(
-                [
-                    o
-                    for o in market.sell_orders.get(food_commodity, [])
-                    if o.actor != actor
-                ],
+                [o for o in market.sell_orders.get(commodity, []) if o.actor != actor],
                 key=lambda o: (o.price, o.timestamp),
             )
 
@@ -392,7 +401,7 @@ class IndustrialistBrain(ActorBrain):
                 if max_affordable > 0:
                     commands.append(
                         PlaceBuyOrderCommand(
-                            food_commodity, max_affordable, best_sell_order.price
+                            commodity, max_affordable, best_sell_order.price
                         )
                     )
 
