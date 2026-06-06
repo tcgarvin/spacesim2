@@ -29,6 +29,8 @@ uv run spacesim2 dev graph             # Commodity/process dependency graph (out
 uv run spacesim2 dev graph --out foo   # Custom output path (creates foo.svg and foo.mmd)
 uv run spacesim2 dev graph -f png      # Alternative formats: svg (default), png, pdf
 uv run spacesim2 dev analyze FILE.py   # Run a Tier-1 analysis script against latest run
+uv run spacesim2 dev check             # Umbrella: format+lint+types+pytest+short sim run
+uv run spacesim2 dev check --fast      # Skip the slower types and sim stages
 ```
 
 ## The Dev Loop (for agents)
@@ -42,11 +44,18 @@ uv run spacesim2 run --turns 200 --no-export --quiet --summary    # 2. macro beh
 # 3. read JSON between ===SUMMARY_BEGIN=== / ===SUMMARY_END=== (verdict + KPIs)
 ```
 
+For a single pass/fail gate before committing, `uv run spacesim2 dev check` runs
+the whole sequence (format → lint → types → pytest → short `--summary` sim) and
+prints one block; it is non-mutating (format checks only). Use the step-by-step
+loop above when you need the actual KPI JSON to reason about behavior.
+
 - `--summary` prints a compact KPI JSON + `PASS/WARN/FAIL` verdict (also written
   to `summary.json` when exporting). This is the token-efficient "is it broken?"
   readout — prefer it over opening a notebook.
 - The sim is **stochastic, not bit-reproducible**; population means are stable to
-  ~±0.05. Assert with tolerances, never exact values. `--seed N` reduces variance.
+  ~±0.05. Assert with tolerances, never exact values. (There is no run-level seed
+  knob — most randomness flows through `uuid4`/set iteration, so seeding the
+  module RNG gave false determinism and was removed.)
 - For open-ended questions, write a **Tier-1** script (`dev analyze`); for human
   dashboards, a **Tier-2** marimo notebook. Keep durable checks as assertions in
   `tests/test_simulation_smoke.py`.

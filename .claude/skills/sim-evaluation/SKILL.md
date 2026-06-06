@@ -19,8 +19,9 @@ uv run spacesim2 run --turns 200 --no-export --quiet --summary   # 2. behavior
 
 The simulation is stochastic and **not bit-reproducible** (and that's fine).
 Population means over ~hundreds of actors are stable to ~±0.05, which is
-plenty to detect real changes. `--seed N` nudges variance down for tighter
-comparisons but is not exact — never assert exact values; use tolerances.
+plenty to detect real changes. There is no run-level seed knob — most
+randomness flows through `uuid4`/set iteration, so seeding the module RNG only
+gave false determinism. Never assert exact values; use tolerances.
 
 ## Tier 0 — built-in KPI summary (cheapest)
 

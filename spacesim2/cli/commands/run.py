@@ -4,7 +4,6 @@ import argparse
 import io
 import json
 import os
-import random
 import subprocess
 import sys
 from datetime import datetime
@@ -51,14 +50,6 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
     )
     parser.add_argument(
         "--ships", type=int, default=1, help="Number of ships per planet"
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=None,
-        help="Seed the global RNG to reduce run-to-run variance when comparing "
-        "changes. Note: not bit-exact (market order IDs/set iteration are "
-        "unseeded); rely on aggregate KPIs, not exact reproduction.",
     )
     parser.add_argument(
         "--no-planet-attributes",
@@ -155,13 +146,6 @@ def execute(args: argparse.Namespace) -> int:
             "Install with: uv sync --extra analysis"
         )
         should_export = False
-
-    # Seed the global RNG to reduce variance. Most simulation randomness uses
-    # the module-level `random`, so this nudges runs closer together, but it is
-    # not bit-exact (market order IDs use uuid4 and some iteration is over sets).
-    if args.seed is not None:
-        random.seed(args.seed)
-        print(f"Seeded RNG: {args.seed}")
 
     # Create simulation
     print("Initializing simulation...")

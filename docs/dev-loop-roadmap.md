@@ -23,18 +23,17 @@ is near-free and the agent never has to remember to run it.
 entries from specific past runs. Generalize to a wildcard and drop the dead
 ones. Consider the `fewer-permission-prompts` skill.
 
-### 3. Decouple pygame from the headless path (cuts context tokens)
-`spacesim2 run` imports `HeadlessUI`, whose package `__init__` pulls pygame,
-printing `pygame 2.6.1 ... Hello from the pygame community` on every run. Make
-the UI import lazy so headless/summary output is clean (no banner to skim, and
-faster startup).
+### 3. Decouple pygame from the headless path (cuts context tokens) — DONE
+The banner came from `cli/main.py` eagerly importing the `ui` command module,
+which imported `pygame_ui` at module load. Fixed by making the `ui` command's
+pygame import lazy (inside `execute()`), so the banner only appears when the UI
+is actually launched, not on `run`/`dev`/`--help`.
 
-### 4. A `dev check` umbrella command (cuts design tokens)
-One entry point that runs the canonical sequence — format → lint → types →
-pytest → short `--summary` run — and prints a single pass/fail block. Today
-these are scattered; an umbrella means the agent recalls one command.
-- Note: the repo does not currently pass `mypy` clean (≈139 pre-existing
-  errors). Either gate `mypy` to changed files or fix the baseline first.
+### 4. A `dev check` umbrella command (cuts design tokens) — DONE
+`spacesim2 dev check` runs the canonical sequence — format → lint → types →
+pytest → short in-process `--summary` sim run — and prints a single pass/fail
+block (`--fast` skips types+sim). Non-mutating: the format stage checks only.
+(The mypy baseline is now clean, so the full `mypy .` stage runs unconditionally.)
 
 ## Medium value
 
@@ -50,7 +49,6 @@ to avoid alarm fatigue.
 A `dev compare RUN_A RUN_B` (or `--baseline summary.json`) that prints only the
 KPIs that moved beyond the noise band (~±0.05). Lets an agent see *what a change
 did* without re-reading two full summaries or eyeballing absolute numbers.
-Pairs naturally with `--seed` for tighter signal.
 
 ### 7. Trade-volume and market-liveness KPIs
 The live summary omits trade volume (market history is trimmed in-sim). Surface

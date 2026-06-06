@@ -5,7 +5,7 @@ import sys
 from typing import Optional
 
 from spacesim2.cli.commands import run, ui
-from spacesim2.cli.commands.dev import analyze, graph, validate_market
+from spacesim2.cli.commands.dev import analyze, check, graph, validate_market
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -38,6 +38,7 @@ def create_parser() -> argparse.ArgumentParser:
     validate_market.add_parser(dev_subparsers)
     graph.add_parser(dev_subparsers)
     analyze.add_parser(dev_subparsers)
+    check.add_parser(dev_subparsers)
 
     return parser
 

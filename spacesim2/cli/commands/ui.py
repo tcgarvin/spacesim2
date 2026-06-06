@@ -4,7 +4,6 @@ import argparse
 
 from spacesim2.cli.common import create_and_setup_simulation
 from spacesim2.cli.output import print_error
-from spacesim2.ui.pygame_ui import PYGAME_AVAILABLE, PygameUI
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser:  # type: ignore
@@ -67,6 +66,10 @@ def execute(args: argparse.Namespace) -> int:
     Returns:
         Exit code (0 for success, non-zero for error)
     """
+    # Imported lazily so the pygame dependency (and its startup banner) only
+    # loads when the UI is actually launched, not on every CLI invocation.
+    from spacesim2.ui.pygame_ui import PYGAME_AVAILABLE, PygameUI
+
     if not PYGAME_AVAILABLE:
         print_error("pygame not available. Install with: uv pip install pygame")
         return 1
