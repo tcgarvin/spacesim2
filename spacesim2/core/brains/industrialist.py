@@ -1,5 +1,6 @@
+import math
 import random
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from spacesim2.core.actor_brain import ActorBrain
 from spacesim2.core.commands import (
@@ -18,6 +19,21 @@ if TYPE_CHECKING:
     from spacesim2.core.market import Market
     from spacesim2.core.process import ProcessDefinition
 
+# Tools wear out after ~100 uses; amortize their cost across that lifespan.
+TOOL_EXPECTED_LIFESPAN = 100
+# Notional value of a (non-transportable) facility when it is itself a recipe
+# output. Production recipes value facilities via amortized build cost instead.
+FACILITY_NOTIONAL_VALUE = 50.0
+# Bound on how deep make-or-buy imputation recurses through production chains.
+MAX_IMPUTE_DEPTH = 6
+# Per-actor facility amortization horizon is drawn from this range. It encodes
+# risk appetite: a higher horizon spreads the lump-sum build cost over more
+# expected uses (cheaper per unit -> more willing to build on spec); a lower
+# horizon is conservative. Randomizing per actor also de-correlates choices so
+# the population doesn't stampede into the same recipe during a cold start.
+FACILITY_HORIZON_MIN = 150
+FACILITY_HORIZON_MAX = 600
+
 
 class IndustrialistBrain(ActorBrain):
     """Decision-making logic for industrialist actors who specialize in production."""
@@ -25,6 +41,9 @@ class IndustrialistBrain(ActorBrain):
     def __init__(self) -> None:
         self.chosen_recipe_id: Optional[str] = None
         self.turns_since_recipe_evaluation: int = 0
+        self.facility_amortization_horizon: int = random.randint(
+            FACILITY_HORIZON_MIN, FACILITY_HORIZON_MAX
+        )
 
     def decide_economic_action(self, actor: "Actor") -> Optional[EconomicCommand]:
         """Decide which economic action to take this turn."""
@@ -155,8 +174,11 @@ class IndustrialistBrain(ActorBrain):
         market = actor.planet.market
         recipe_scores: list[tuple[str, float]] = []
 
+        # One memo shared across the whole pass: imputed unit costs depend only
+        # on (fixed) market state and this actor's facility ownership/horizon.
+        memo: Dict[str, float] = {}
         for process in actor.sim.process_registry.all_processes():
-            score = self._calculate_recipe_score(actor, market, process)
+            score = self._calculate_recipe_score(actor, market, process, memo)
             if score > 0:
                 recipe_scores.append((process.id, score))
 
@@ -179,91 +201,138 @@ class IndustrialistBrain(ActorBrain):
         # Fallback (shouldn't reach here)
         return recipe_scores[-1][0]
 
+    def _imputed_unit_cost(
+        self,
+        actor: "Actor",
+        market: "Market",
+        commodity: "CommodityDefinition",
+        depth: int,
+        visiting: frozenset[str],
+        memo: Dict[str, float],
+    ) -> float:
+        """Best estimate of the per-unit cost to acquire ``commodity``: buy it,
+        or, if the market can't price it, make it.
+
+        This is the keystone that lets the planner "see through" intermediates
+        that have never traded (e.g. glass, refined_chemicals): instead of
+        bailing out, we recursively impute their cost from the cheapest recipe
+        that produces them. Returns ``math.inf`` when the commodity can be
+        neither bought nor produced (no recipe, a production cycle, or the
+        recursion depth bound is hit), which callers treat as "not viable".
+        """
+        # 1. Buy it: a live ask is the truest cost; fall back to last-traded avg.
+        _, ask = market.get_bid_ask_spread(commodity)
+        if ask is not None:
+            return float(ask)
+        avg = market.get_avg_price(commodity)
+        if avg > 0:
+            return float(avg)
+
+        if commodity.id in memo:
+            return memo[commodity.id]
+        if depth >= MAX_IMPUTE_DEPTH or commodity.id in visiting:
+            return math.inf  # depth bound or production cycle -> can't value
+
+        # 2. Make it: cheapest producing recipe, costed recursively.
+        visiting = visiting | {commodity.id}
+        best = math.inf
+        for process in actor.sim.process_registry.all_processes():
+            out_qty = 0
+            for out_commodity, qty in process.outputs.items():
+                if out_commodity.id == commodity.id:
+                    out_qty = qty
+                    break
+            if out_qty <= 0:
+                continue
+            recipe_cost = self._impute_recipe_cost(
+                actor, market, process, depth, visiting, memo
+            )
+            if math.isinf(recipe_cost):
+                continue
+            best = min(best, recipe_cost / out_qty)
+
+        if not math.isinf(best):
+            memo[commodity.id] = best
+        return best
+
+    def _impute_recipe_cost(
+        self,
+        actor: "Actor",
+        market: "Market",
+        process: "ProcessDefinition",
+        depth: int,
+        visiting: frozenset[str],
+        memo: Dict[str, float],
+    ) -> float:
+        """Total imputed cost to execute ``process`` once: recursively-valued
+        inputs, plus amortized tool and facility costs. ``math.inf`` if any
+        component can't be valued.
+        """
+        total = 0.0
+
+        for commodity, quantity in process.inputs.items():
+            unit = self._imputed_unit_cost(
+                actor, market, commodity, depth + 1, visiting, memo
+            )
+            if math.isinf(unit):
+                return math.inf
+            total += unit * quantity
+
+        # Tools the actor lacks must be acquired; amortize over their lifespan.
+        for tool in process.tools_required:
+            if actor.inventory.has_quantity(tool, 1):
+                continue
+            unit = self._imputed_unit_cost(
+                actor, market, tool, depth + 1, visiting, memo
+            )
+            if math.isinf(unit):
+                return math.inf
+            total += unit / TOOL_EXPECTED_LIFESPAN
+
+        # Facilities the actor lacks are a lump-sum build cost amortized over
+        # this actor's (risk-appetite-dependent) expected usage horizon.
+        for facility in process.facilities_required:
+            if actor.inventory.has_quantity(facility, 1):
+                continue
+            build_process_id = self._get_build_process_for_facility(facility)
+            if not build_process_id:
+                return math.inf
+            build_process = actor.sim.process_registry.get_process(build_process_id)
+            if not build_process:
+                return math.inf
+            build_cost = self._impute_recipe_cost(
+                actor, market, build_process, depth + 1, visiting, memo
+            )
+            if math.isinf(build_cost):
+                return math.inf
+            total += build_cost / self.facility_amortization_horizon
+
+        return total
+
     def _calculate_recipe_score(
-        self, actor: "Actor", market: "Market", process: "ProcessDefinition"
+        self,
+        actor: "Actor",
+        market: "Market",
+        process: "ProcessDefinition",
+        memo: Optional[Dict[str, float]] = None,
     ) -> float:
         """Calculate a profitability score for a recipe.
 
         Returns expected profit margin as a score. Higher = more profitable.
-        Returns 0 if recipe is not viable.
+        Returns 0 if recipe is not viable. ``memo`` caches imputed unit costs
+        across a single recipe-selection pass (market state is fixed there).
         """
-        # Calculate input costs
-        total_input_cost = 0.0
-        for commodity, quantity in process.inputs.items():
-            bid, ask = market.get_bid_ask_spread(commodity)
-            if ask is not None:
-                price = ask
-            else:
-                price = market.get_avg_price(commodity)
-                if price <= 0:
-                    return 0.0
-            total_input_cost += price * quantity
+        if memo is None:
+            memo = {}
 
-        # Factor in tool costs (amortized over expected lifespan of 100 uses)
-        TOOL_EXPECTED_LIFESPAN = 100
-        for tool in process.tools_required:
-            if not actor.inventory.has_quantity(tool, 1):
-                # Need to acquire tool - check if actually available in market
-                bid, ask = market.get_bid_ask_spread(tool)
-                if ask is None:
-                    # No sellers for required tools - recipe not viable unless
-                    # actor can make tools themselves
-                    metalworking = actor.sim.commodity_registry.get_commodity(
-                        "metalworking_facility"
-                    )
-                    if metalworking and actor.inventory.has_quantity(metalworking, 1):
-                        # Actor can make tools - estimate cost from tool process
-                        tool_process = actor.sim.process_registry.get_process(
-                            "make_simple_tools"
-                        )
-                        if tool_process:
-                            tool_input_cost = 0.0
-                            for commodity, qty in tool_process.inputs.items():
-                                _, inp_ask = market.get_bid_ask_spread(commodity)
-                                inp_price = (
-                                    inp_ask
-                                    if inp_ask is not None
-                                    else market.get_avg_price(commodity)
-                                )
-                                if inp_price <= 0:
-                                    return 0.0
-                                tool_input_cost += inp_price * qty
-                            total_input_cost += tool_input_cost / TOOL_EXPECTED_LIFESPAN
-                        else:
-                            return 0.0
-                    else:
-                        return 0.0  # Can't buy tools and can't make them
-                else:
-                    total_input_cost += ask / TOOL_EXPECTED_LIFESPAN
-
-        # Check facility requirements - factor in cost of building if needed
-        FACILITY_EXPECTED_LIFESPAN = 500  # Facilities are durable
-        for facility in process.facilities_required:
-            if not actor.inventory.has_quantity(facility, 1):
-                # Check if we can build the facility
-                build_process_id = self._get_build_process_for_facility(facility)
-                if not build_process_id:
-                    return 0.0  # No way to get this facility
-
-                build_process = actor.sim.process_registry.get_process(build_process_id)
-                if not build_process:
-                    return 0.0
-
-                # Calculate cost to build the facility
-                facility_build_cost = 0.0
-                for inp_commodity, inp_qty in build_process.inputs.items():
-                    _, inp_ask = market.get_bid_ask_spread(inp_commodity)
-                    inp_price = (
-                        inp_ask
-                        if inp_ask is not None
-                        else market.get_avg_price(inp_commodity)
-                    )
-                    if inp_price <= 0:
-                        return 0.0  # Can't get inputs for facility
-                    facility_build_cost += inp_price * inp_qty
-
-                # Amortize facility cost over expected lifespan
-                total_input_cost += facility_build_cost / FACILITY_EXPECTED_LIFESPAN
+        # Inputs (and the tools/facilities a recipe needs) are valued via
+        # make-or-buy imputation, so a recipe is not dismissed merely because a
+        # deep intermediate has never traded.
+        total_input_cost = self._impute_recipe_cost(
+            actor, market, process, 0, frozenset(), memo
+        )
+        if math.isinf(total_input_cost):
+            return 0.0
 
         # Determine planet attribute modifier
         attribute_modifier = 1.0
@@ -273,20 +342,19 @@ class IndustrialistBrain(ActorBrain):
             )
             attribute_modifier = attr_value
 
-        # Calculate expected output value
+        # Calculate expected output value. Unlike inputs, outputs are NOT
+        # imputed: value can only be realized if a real buyer bids (the market
+        # maker bids on every transportable good), so an unsellable output is
+        # genuinely worthless to this actor.
         total_output_value = 0.0
         for commodity, quantity in process.outputs.items():
-            # Non-transportable outputs (facilities) are for personal use, not sale
-            # Give them notional value based on what recipes they enable
+            # Non-transportable outputs (facilities) are for personal use, not
+            # sale; give them a notional value for enabling other recipes.
             if not commodity.transportable:
-                # Facilities have intrinsic value for enabling other recipes
-                # Use a notional value based on input cost (building a facility is worthwhile
-                # if the inputs cost less than what the facility enables)
-                FACILITY_NOTIONAL_VALUE = 50.0
                 total_output_value += FACILITY_NOTIONAL_VALUE * quantity
                 continue
 
-            bid, ask = market.get_bid_ask_spread(commodity)
+            bid, _ = market.get_bid_ask_spread(commodity)
             if bid is not None:
                 price = bid
             else:
@@ -390,6 +458,57 @@ class IndustrialistBrain(ActorBrain):
 
         return input_cost + opportunity_cost
 
+    def _buy_command(
+        self,
+        actor: "Actor",
+        market: "Market",
+        commodity: "CommodityDefinition",
+        quantity_to_buy: int,
+    ) -> List[MarketCommand]:
+        """Acquire ``quantity_to_buy`` units of ``commodity``: lift the cheapest
+        resting ask, or, if none exists, rest a bid at the reference price so a
+        seller can find us.
+
+        Resting a bid without a pre-existing ask is what breaks the
+        producer/consumer standoff on never-traded intermediates: a medicine
+        maker must signal demand for refined_chemicals before any refiner will
+        produce them.
+        """
+        if quantity_to_buy <= 0:
+            return []
+        asks = sorted(
+            [o for o in market.sell_orders.get(commodity, []) if o.actor != actor],
+            key=lambda o: (o.price, o.timestamp),
+        )
+        price = asks[0].price if asks else market.get_avg_price(commodity)
+        if price <= 0:
+            return []
+        affordable = min(quantity_to_buy, actor.money // price)
+        if affordable <= 0:
+            return []
+        return [PlaceBuyOrderCommand(commodity, affordable, price)]
+
+    def _sell_command(
+        self, actor: "Actor", market: "Market", commodity: "CommodityDefinition"
+    ) -> List[MarketCommand]:
+        """Sell all available units of ``commodity``: hit the best resting bid,
+        or, if none exists, rest an ask at the reference price so a buyer can
+        find us. Skips non-transportable goods (facilities aren't tradable).
+        """
+        if not commodity.transportable:
+            return []
+        available = actor.inventory.get_available_quantity(commodity)
+        if available <= 0:
+            return []
+        bids = sorted(
+            [o for o in market.buy_orders.get(commodity, []) if o.actor != actor],
+            key=lambda o: (-o.price, o.timestamp),
+        )
+        price = bids[0].price if bids else market.get_avg_price(commodity)
+        if price <= 0:
+            return []
+        return [PlaceSellOrderCommand(commodity, available, price)]
+
     def _get_recipe_trading_commands(
         self, actor: "Actor", market: "Market"
     ) -> List[MarketCommand]:
@@ -448,50 +567,43 @@ class IndustrialistBrain(ActorBrain):
         # Buy inputs for recipe
         for commodity, needed_quantity in process.inputs.items():
             current_quantity = actor.inventory.get_quantity(commodity)
-            if current_quantity < needed_quantity:
-                quantity_to_buy = needed_quantity - current_quantity
-
-                market_sell_orders = sorted(
-                    [
-                        o
-                        for o in market.sell_orders.get(commodity, [])
-                        if o.actor != actor
-                    ],
-                    key=lambda o: (o.price, o.timestamp),
+            commands.extend(
+                self._buy_command(
+                    actor, market, commodity, needed_quantity - current_quantity
                 )
+            )
 
-                if market_sell_orders:
-                    best_sell_order = market_sell_orders[0]
-                    max_affordable = min(
-                        quantity_to_buy, actor.money // best_sell_order.price
+        # Buy materials to build any facility this recipe needs but we lack.
+        # Without this, an actor will choose a facility-gated recipe and try to
+        # build the facility, but never procure the bricks/glass to do so -
+        # the connective tissue that lets the facility tier cold-start.
+        for facility in process.facilities_required:
+            if actor.inventory.has_quantity(facility, 1):
+                continue
+            build_process_id = self._get_build_process_for_facility(facility)
+            if not build_process_id:
+                continue
+            build_process = actor.sim.process_registry.get_process(build_process_id)
+            if not build_process:
+                continue
+            # The build needs both commodity inputs (bricks, glass, ...) and
+            # tools (e.g. simple_tools). Require one of each missing tool too,
+            # or can_execute_process(build) never becomes true.
+            build_requirements: Dict["CommodityDefinition", int] = dict(
+                build_process.inputs
+            )
+            for tool in build_process.tools_required:
+                build_requirements.setdefault(tool, 1)
+            for commodity, needed_quantity in build_requirements.items():
+                current_quantity = actor.inventory.get_quantity(commodity)
+                commands.extend(
+                    self._buy_command(
+                        actor, market, commodity, needed_quantity - current_quantity
                     )
-
-                    if max_affordable > 0:
-                        commands.append(
-                            PlaceBuyOrderCommand(
-                                commodity, max_affordable, best_sell_order.price
-                            )
-                        )
+                )
 
         # Sell outputs from recipe
         for commodity, _ in process.outputs.items():
-            available_quantity = actor.inventory.get_available_quantity(commodity)
-            if available_quantity > 0:
-                market_buy_orders = sorted(
-                    [
-                        o
-                        for o in market.buy_orders.get(commodity, [])
-                        if o.actor != actor
-                    ],
-                    key=lambda o: (-o.price, o.timestamp),
-                )
-
-                if market_buy_orders:
-                    best_buy_order = market_buy_orders[0]
-                    commands.append(
-                        PlaceSellOrderCommand(
-                            commodity, available_quantity, best_buy_order.price
-                        )
-                    )
+            commands.extend(self._sell_command(actor, market, commodity))
 
         return commands
