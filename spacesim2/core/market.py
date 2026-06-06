@@ -458,8 +458,8 @@ class Market:
         commodity_type: "CommodityDefinition",
         quantity: int,
         price: int,
-        buy_order: Optional[Order] = None,
-        sell_order: Optional[Order] = None,
+        buy_order: Order,
+        sell_order: Order,
     ) -> None:
         """Execute a transaction between two actors.
 

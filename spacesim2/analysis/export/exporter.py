@@ -160,7 +160,7 @@ class SimulationExporter:
                         "turn": turn,
                         "planet_name": planet.name,
                         "commodity_id": commodity.id,
-                        "avg_price": float(market.get_avg_price(commodity.id)),
+                        "avg_price": float(market.get_avg_price(commodity)),
                         "volume": turn_volume,
                         "num_buy_orders": len(buy_orders),
                         "num_sell_orders": len(sell_orders),

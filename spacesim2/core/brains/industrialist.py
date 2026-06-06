@@ -435,6 +435,9 @@ class IndustrialistBrain(ActorBrain):
         """Generate trading commands for recipe inputs and outputs."""
         commands: List[MarketCommand] = []
 
+        if self.chosen_recipe_id is None:
+            return commands
+
         process = actor.sim.process_registry.get_process(self.chosen_recipe_id)
         if not process:
             return commands
