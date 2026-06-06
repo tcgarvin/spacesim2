@@ -83,14 +83,22 @@ class MarketMakerBrain(ActorBrain):
     # Tunables (kept simple)
     # ----------------------------
     LADDER_LEVELS: int = 5  # depth per side in MAKER
-    CASH_ALLOC_PER_COMMODITY: float = 0.15  # fraction of wallet in maker mode
+    # Fraction of the wallet the maker is willing to commit to the BUY side in
+    # aggregate. This pool is split *evenly across every market served* (see
+    # decide_market_actions), so the long tail of illiquid commodities each gets
+    # a real, bounded allocation instead of being starved by whichever markets
+    # happen to be iterated first.
+    BUY_CAPITAL_FRACTION: float = 0.70
     VOLATILITY_WIDENER: float = 0.5  # widen spread by (1 + VOL * sigma/mid)
     INVENTORY_SKEW_CAP: float = 0.50  # cap skew at ±10% of mid
     MAX_NOTIONAL_FRACTION: float = 0.60  # cap exposure vs. cash-only net worth
     MIN_ORDER_QUANTITY: int = 1
 
     # Discovery behavior
-    DISCOVERY_CASH_FRACTION: float = 0.05  # 5% of wallet per tick for probes
+    # Ceiling on the price we are willing to probe up to while seeding a market
+    # with no trade history. Keeps the maker from bidding illiquid goods to
+    # arbitrary highs; the first organic fill then tightens the bracket.
+    DISCOVERY_PRICE_CEILING: int = 15
     DISCOVERY_TIGHTNESS_EPSILON: int = 2  # switch to maker when U-L <= epsilon
     DISCOVERY_MIN_TRADES: int = 6  # or after N total fills (any side)
     REVERT_IF_QUIET_TICKS: int = 50  # revert to discovery if no fills for N ticks
@@ -138,6 +146,13 @@ class MarketMakerBrain(ActorBrain):
             c for c in actor.sim.commodity_registry.all_commodities() if c.transportable
         ]
 
+        # Split the buy-side capital pool evenly across every market so each one
+        # — liquid or not — gets a bounded share. Because the total requested
+        # never exceeds BUY_CAPITAL_FRACTION of the wallet, sequential order
+        # execution (which reserves cash per order) can't starve later markets.
+        num_markets = max(1, len(all_commodities))
+        per_market_budget = (actor.money * self.BUY_CAPITAL_FRACTION) / num_markets
+
         for commodity in all_commodities:
             state = self._ensure_state_for(commodity)
 
@@ -145,9 +160,15 @@ class MarketMakerBrain(ActorBrain):
             self._apply_fills_to_state(actor, commodity, state, new_fills_by_commodity)
 
             if state.phase == "DISCOVERY":
-                commands.extend(self._discovery_quotes(actor, commodity, state))
+                commands.extend(
+                    self._discovery_quotes(actor, commodity, state, per_market_budget)
+                )
             else:  # MAKER
-                commands.extend(self._maker_quotes(actor, market, commodity, state))
+                commands.extend(
+                    self._maker_quotes(
+                        actor, market, commodity, state, per_market_budget
+                    )
+                )
 
         return commands
 
@@ -317,7 +338,11 @@ class MarketMakerBrain(ActorBrain):
     # -------- Discovery mode --------------------------------------------------
 
     def _discovery_quotes(
-        self, actor: Actor, commodity: "CommodityDefinition", state: MarketMakerState
+        self,
+        actor: Actor,
+        commodity: "CommodityDefinition",
+        state: MarketMakerState,
+        per_market_budget: float,
     ) -> List["MarketCommand"]:
         """
         Post 1-unit geometric probes to establish a conservative price bracket.
@@ -325,13 +350,21 @@ class MarketMakerBrain(ActorBrain):
         - Ask starts at upper_bound (or lower_bound+1) and halves if unfilled (floored at lower_bound+1).
         """
         commands: List["MarketCommand"] = []
-        per_tick_probe_budget = max(
-            self.MIN_PRICE, int(actor.money * self.DISCOVERY_CASH_FRACTION)
-        )
+        # The probe budget is this market's share of the buy-capital pool. It must
+        # be able to afford a single unit up to DISCOVERY_PRICE_CEILING, otherwise
+        # the maker can never bid high enough to attract the first seller and the
+        # market stays permanently dead.
+        per_tick_probe_budget = max(self.MIN_PRICE, int(per_market_budget))
 
-        # Initialize the upper bound to "what we can pay for 1 unit right now"
+        # Cap how high we will probe so seeding an illiquid market can't bid it to
+        # arbitrary highs; the first real fill then tightens the bracket downward.
+        probe_ceiling = max(self.MIN_ASK_PRICE, self.DISCOVERY_PRICE_CEILING)
+
+        # Initialize the upper bound to the affordable share of our ceiling.
         if state.upper_bound is None:
-            state.upper_bound = max(self.MIN_ASK_PRICE, per_tick_probe_budget)
+            state.upper_bound = max(
+                self.MIN_ASK_PRICE, min(probe_ceiling, per_tick_probe_budget)
+            )
 
         lower_bound = state.lower_bound
         upper_bound = state.upper_bound
@@ -377,6 +410,7 @@ class MarketMakerBrain(ActorBrain):
         market: "Market",
         commodity: "CommodityDefinition",
         state: MarketMakerState,
+        per_market_budget: float,
     ) -> List["MarketCommand"]:
         """
         Quote a small ladder around a volatility‑adjusted, inventory‑skewed midpoint.
@@ -455,8 +489,8 @@ class MarketMakerBrain(ActorBrain):
                     )
                     remaining_inventory -= allocated_quantity
 
-        # --- BUY: allocate a per-commodity cash budget (front‑load near touch) ---
-        cash_budget = int(actor.money * self.CASH_ALLOC_PER_COMMODITY)
+        # --- BUY: allocate this market's share of the buy pool (front‑load) ---
+        cash_budget = int(per_market_budget)
         if cash_budget > 0 and max_notional_per_commodity > 0:
             remaining_funds = min(cash_budget, int(max_notional_per_commodity))
             weights = [levels - i for i in range(levels)]

@@ -24,6 +24,13 @@ from spacesim2.core.skill import SkillsRegistry
 if TYPE_CHECKING:
     from spacesim2.analysis.export.exporter import SimulationExporter
 
+# Market makers must provide two-sided liquidity across *every* transportable
+# commodity, including illiquid upper-tier goods that have no organic supply yet.
+# Their starting capital is therefore scaled to the number of markets they serve
+# rather than a flat amount, so per-market depth stays meaningful as the
+# commodity tree grows. See MarketMakerBrain for how this pool is allocated.
+MARKET_MAKER_CAPITAL_PER_MARKET = 100
+
 
 class Simulation:
     """Main simulation controller."""
@@ -381,6 +388,11 @@ class Simulation:
             planet.add_actor(actor)
 
         # Create market makers with balanced skills
+        num_markets = sum(
+            1 for c in self.commodity_registry.all_commodities() if c.transportable
+        )
+        market_maker_capital = MARKET_MAKER_CAPITAL_PER_MARKET * max(1, num_markets)
+
         for i in range(num_market_makers):
             # Market makers get average skill levels
             initial_skills = {
@@ -400,7 +412,7 @@ class Simulation:
                 drives=[],
                 actor_type=ActorType.MARKET_MAKER,
                 brain=MarketMakerBrain(),
-                initial_money=200,
+                initial_money=market_maker_capital,
                 initial_skills=initial_skills,
             )
             self.actors.append(actor)
