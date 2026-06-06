@@ -222,5 +222,5 @@ class Actor:
             ),
         }
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"Actor(name={self.name})"

@@ -1,5 +1,6 @@
 import random
 
+from spacesim2.core.actor import Actor
 from spacesim2.core.commodity import CommodityRegistry
 from spacesim2.core.drives.actor_drive import (
     ActorDrive,
@@ -23,10 +24,10 @@ ADVANCED_MEDICINE_NAME = "advanced_medicine"
 
 
 class HealthDriveMetrics(DriveMetrics):
-    def get_name(self):
+    def get_name(self) -> str:
         return DRIVE_NAME
 
-    def get_score(self):
+    def get_score(self) -> float:
         return 1 - self.debt
 
 
@@ -47,7 +48,7 @@ class HealthDrive(ActorDrive):
             health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY
         )
 
-    def tick(self, actor) -> DriveMetrics:
+    def tick(self, actor: Actor) -> DriveMetrics:
         p_event = BASE_EVENT_PROB
 
         medicine_qty = (
@@ -112,5 +113,5 @@ class HealthDrive(ActorDrive):
         self._update_metrics(health=health, debt=debt, buffer=buffer, urgency=URGENCY)
         return self.metrics
 
-    def get_current_score(self):
+    def get_current_score(self) -> float:
         return self.metrics.get_score()

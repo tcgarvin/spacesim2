@@ -1,3 +1,4 @@
+from spacesim2.core.actor import Actor
 from spacesim2.core.commodity import CommodityRegistry
 from spacesim2.core.drives.actor_drive import ActorDrive, DriveMetrics, log_norm_ratio
 
@@ -12,10 +13,10 @@ DRIVE_NAME = "food"
 
 
 class FoodDriveMetrics(DriveMetrics):
-    def get_name(self):
+    def get_name(self) -> str:
         return DRIVE_NAME
 
-    def get_score(self):
+    def get_score(self) -> float:
         # Score is based wholy on hunger as measured by the debt metric.
         return 1 - self.debt
 
@@ -29,7 +30,7 @@ class FoodDrive(ActorDrive):
         self.food_commodity = commodity_registry.get_commodity("food")
         self.quality_commodity = commodity_registry.get_commodity("processed_food")
 
-    def tick(self, actor) -> DriveMetrics:
+    def tick(self, actor: Actor) -> DriveMetrics:
         # Try quality food first, fall back to basic
         did_eat = False
         ate_quality = False

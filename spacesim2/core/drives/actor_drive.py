@@ -15,7 +15,7 @@ def clamp01(x: float) -> float:
     return 0.0 if x < 0.0 else 1.0 if x > 1.0 else x
 
 
-def log_norm_ratio(x: float, target: float, cap: float):
+def log_norm_ratio(x: float, target: float, cap: float) -> float:
     """
     Buffer→[0,1] with diminishing returns: ln(1 + min(x,cap)/target) / ln(1 + cap/target).
     This is used to calculate a buffer metric that reflects how close a value is to a target
@@ -88,10 +88,10 @@ class DriveMetrics:
     buffer: float
     urgency: float
 
-    def get_name(self):
+    def get_name(self) -> str:
         raise NotImplementedError()
 
-    def get_score(self):
+    def get_score(self) -> float:
         raise NotImplementedError()
 
 
@@ -114,7 +114,7 @@ class ActorDrive:
         debt: float,
         buffer: float,
         urgency: float,
-    ):
+    ) -> None:
         self.metrics.health = health
         self.metrics.debt = debt
         self.metrics.buffer = buffer
@@ -126,7 +126,7 @@ class ActorDrive:
         """
         raise NotImplementedError()
 
-    def get_current_score(self):
+    def get_current_score(self) -> float:
         """
         Uses metrics to return an overall score between 0 and 1
         """

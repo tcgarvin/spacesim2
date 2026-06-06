@@ -27,7 +27,7 @@ class Skill:
 class SkillsRegistry:
     """Registry for skills in the simulation."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize an empty skills registry."""
         self._skills: Dict[str, Skill] = {}
 

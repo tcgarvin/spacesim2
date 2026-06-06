@@ -114,7 +114,9 @@ class TraderBrain(ShipBrain):
         # Active trade plan (if any)
         self._current_plan: Optional[TradePlan] = None
 
-    def _calculate_average_purchase_price(self, commodity) -> Optional[float]:
+    def _calculate_average_purchase_price(
+        self, commodity: CommodityDefinition
+    ) -> Optional[float]:
         """Calculate average purchase price from recent transaction history."""
         if not self.ship.planet:
             return None

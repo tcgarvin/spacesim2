@@ -1,5 +1,6 @@
 import random
 
+from spacesim2.core.actor import Actor
 from spacesim2.core.commodity import CommodityRegistry
 from spacesim2.core.drives.actor_drive import (
     ActorDrive,
@@ -26,10 +27,10 @@ PREFAB_HOUSING_NAME = "prefab_housing"
 
 
 class ShelterDriveMetrics(DriveMetrics):
-    def get_name(self):
+    def get_name(self) -> str:
         return DRIVE_NAME
 
-    def get_score(self):
+    def get_score(self) -> float:
         # Score based on debt (shelter damage/degradation)
         return 1 - self.debt
 
@@ -53,7 +54,7 @@ class ShelterDrive(ActorDrive):
             health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY
         )
 
-    def tick(self, actor) -> DriveMetrics:
+    def tick(self, actor: Actor) -> DriveMetrics:
         """Process shelter maintenance for this turn."""
         p_event = BASE_EVENT_PROB
 
@@ -115,6 +116,6 @@ class ShelterDrive(ActorDrive):
         self._update_metrics(health=health, debt=debt, buffer=buffer, urgency=URGENCY)
         return self.metrics
 
-    def get_current_score(self):
+    def get_current_score(self) -> float:
         """Return the current score from metrics."""
         return self.metrics.get_score()

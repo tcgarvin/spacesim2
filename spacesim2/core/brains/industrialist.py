@@ -14,13 +14,15 @@ from spacesim2.core.commands import (
 
 if TYPE_CHECKING:
     from spacesim2.core.actor import Actor
+    from spacesim2.core.commodity import CommodityDefinition
+    from spacesim2.core.market import Market
     from spacesim2.core.process import ProcessDefinition
 
 
 class IndustrialistBrain(ActorBrain):
     """Decision-making logic for industrialist actors who specialize in production."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.chosen_recipe_id: Optional[str] = None
         self.turns_since_recipe_evaluation: int = 0
 
@@ -128,7 +130,7 @@ class IndustrialistBrain(ActorBrain):
         """1% chance per turn to re-evaluate recipe choice."""
         return random.random() < 0.01
 
-    def _get_build_process_for_facility(self, facility) -> Optional[str]:
+    def _get_build_process_for_facility(self, facility: str) -> Optional[str]:
         """Map facility commodities to their build processes."""
         facility_to_process = {
             "smelting_facility": "build_smelting_facility",
@@ -178,7 +180,7 @@ class IndustrialistBrain(ActorBrain):
         return recipe_scores[-1][0]
 
     def _calculate_recipe_score(
-        self, actor: "Actor", market, process: "ProcessDefinition"
+        self, actor: "Actor", market: "Market", process: "ProcessDefinition"
     ) -> float:
         """Calculate a profitability score for a recipe.
 
@@ -304,7 +306,7 @@ class IndustrialistBrain(ActorBrain):
         return total_output_value - total_input_cost
 
     def _is_recipe_viable(
-        self, actor: "Actor", market, process: "ProcessDefinition"
+        self, actor: "Actor", market: "Market", process: "ProcessDefinition"
     ) -> bool:
         """Check if a recipe is economically viable given current market conditions.
 
@@ -358,7 +360,7 @@ class IndustrialistBrain(ActorBrain):
         return total_output_value >= min_required_value
 
     def _get_food_purchase_commands(
-        self, actor: "Actor", market, food_commodity
+        self, actor: "Actor", market: "Market", food_commodity: "CommodityDefinition"
     ) -> List[MarketCommand]:
         """Generate commands to buy food for personal consumption."""
         commands: List[MarketCommand] = []
@@ -394,7 +396,9 @@ class IndustrialistBrain(ActorBrain):
 
         return commands
 
-    def _calculate_tool_willingness_to_pay(self, actor: "Actor", market) -> int:
+    def _calculate_tool_willingness_to_pay(
+        self, actor: "Actor", market: "Market"
+    ) -> int:
         """Calculate max price industrialist would pay for a tool.
 
         For industrialists, willingness to pay is based on:
@@ -424,7 +428,7 @@ class IndustrialistBrain(ActorBrain):
         return input_cost + opportunity_cost
 
     def _get_recipe_trading_commands(
-        self, actor: "Actor", market
+        self, actor: "Actor", market: "Market"
     ) -> List[MarketCommand]:
         """Generate trading commands for recipe inputs and outputs."""
         commands: List[MarketCommand] = []

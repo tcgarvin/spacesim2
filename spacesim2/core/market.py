@@ -23,7 +23,7 @@ class Order:
     order_id: str = ""  # Unique identifier for the order
     created_turn: int = 0  # Turn when order was created
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Generate a unique order ID if not provided."""
         if not self.order_id:
             self.order_id = str(uuid.uuid4())[:8]  # Short UUID

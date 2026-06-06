@@ -1,5 +1,6 @@
 import random
 
+from spacesim2.core.actor import Actor
 from spacesim2.core.commodity import CommodityRegistry
 from spacesim2.core.drives.actor_drive import (
     ActorDrive,
@@ -22,10 +23,10 @@ DRIVE_NAME = "clothing"
 
 
 class ClothingDriveMetrics(DriveMetrics):
-    def get_name(self):
+    def get_name(self) -> str:
         return DRIVE_NAME
 
-    def get_score(self):
+    def get_score(self) -> float:
         # Score is based solely on debt
         return 1 - self.debt
 
@@ -49,7 +50,7 @@ class ClothingDrive(ActorDrive):
             health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY
         )
 
-    def tick(self, actor) -> DriveMetrics:
+    def tick(self, actor: Actor) -> DriveMetrics:
         p_event = BASE_EVENT_PROB
 
         clothing_inventory = actor.inventory.get_available_quantity(self.clothing_good)

@@ -154,7 +154,7 @@ class MarketMakerBrain(ActorBrain):
     # -------- Transaction ingestion ------------------------------------------
 
     def _consume_new_transactions(
-        self, actor, market: "Market"
+        self, actor: Actor, market: "Market"
     ) -> Dict[str, Dict[str, List[int]]]:
         """
         Read the actor's full transaction history, slice out only the NEW items since

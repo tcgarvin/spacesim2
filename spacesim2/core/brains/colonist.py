@@ -13,6 +13,8 @@ from spacesim2.core.commands import (
 )
 
 if TYPE_CHECKING:
+    from spacesim2.core.commodity import CommodityDefinition
+    from spacesim2.core.market import Market
     from spacesim2.core.process import ProcessDefinition
 
 
@@ -98,7 +100,7 @@ class ColonistBrain(ActorBrain):
         return GovernmentWorkCommand()
 
     def _find_most_profitable_process(
-        self, actor: Actor, market
+        self, actor: Actor, market: "Market"
     ) -> Optional["ProcessDefinition"]:
         """Find the most profitable process based on current market prices and available resources."""
         # Actor always has sim reference
@@ -229,7 +231,11 @@ class ColonistBrain(ActorBrain):
         return commands
 
     def _get_trade_commands(
-        self, actor: Actor, market, commodity_type, min_keep=0
+        self,
+        actor: Actor,
+        market: "Market",
+        commodity_type: "CommodityDefinition",
+        min_keep: int = 0,
     ) -> List[MarketCommand]:
         """Helper method to generate trading commands for a specific commodity.
 

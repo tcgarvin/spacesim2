@@ -21,7 +21,7 @@ class CommodityDefinition:
 class CommodityRegistry:
     """Registry that loads and manages commodity definitions."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._commodities: Dict[str, CommodityDefinition] = {}
 
     def load_from_file(self, filepath: str | Path) -> None:
