@@ -79,6 +79,7 @@ def test_simulation_setup() -> None:
     planet1_actors = 0
     planet2_actors = 0
     for actor in sim.actors:
+        assert actor.planet is not None
         if actor.planet.name == sim.planets[0].name:
             planet1_actors += 1
         elif actor.planet.name == sim.planets[1].name:

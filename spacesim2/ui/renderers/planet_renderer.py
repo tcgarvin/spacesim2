@@ -135,5 +135,3 @@ class PlanetRenderer:
                 ring_radius,
                 1,
             )
-
-        return pos_x, pos_y  # Return the position for other renderers to use

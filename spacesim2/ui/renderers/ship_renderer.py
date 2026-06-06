@@ -119,6 +119,8 @@ class ShipRenderer:
             return
 
         for ship in ships_in_transit:
+            # planet/destination are guaranteed non-None by the filter above
+            assert ship.planet is not None and ship.destination is not None
             # Get the coordinates for origin and destination planets
             origin_pos = self.planet_positions.get(ship.planet)
             dest_pos = self.planet_positions.get(ship.destination)
@@ -143,5 +145,3 @@ class ShipRenderer:
                 else self.colors["ship"]["in_transit"]
             )
             self.draw_ship(ship_x, ship_y, ship_color)
-
-            return ship_x, ship_y  # Return position for text rendering

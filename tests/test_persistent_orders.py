@@ -255,7 +255,7 @@ def test_integrated_market_simulation(mock_sim) -> None:
     # Create a seller and buyer
     seller = get_actor("Seller", mock_sim, planet=planet)
     seller.inventory.add_commodity(food_commodity, 20)
-    seller.sim = type(
+    seller.sim = type(  # type: ignore[assignment]  # lightweight stand-in sim for this unit test
         "obj",
         (object,),
         {
@@ -264,7 +264,7 @@ def test_integrated_market_simulation(mock_sim) -> None:
     )
 
     buyer = get_actor("Buyer", mock_sim, planet=planet, initial_money=200)
-    buyer.sim = type(
+    buyer.sim = type(  # type: ignore[assignment]  # lightweight stand-in sim for this unit test
         "obj",
         (object,),
         {

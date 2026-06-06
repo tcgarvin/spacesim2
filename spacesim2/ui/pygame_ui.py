@@ -110,6 +110,9 @@ class PygameUI:
 
     def _initialize_components(self) -> None:
         """Initialize all UI components."""
+        # Set up by initialize() before this is called
+        assert self.screen is not None and self.text_renderer is not None
+
         # Left pane component
         self.actor_list_panel = ActorListPanel(
             self.screen,

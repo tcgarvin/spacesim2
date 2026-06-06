@@ -43,9 +43,8 @@ class PlanetViewPanel:
 
         # Initialize renderers
         self.planet_renderer = PlanetRenderer(screen, colors)
-        self.ship_renderer = (
-            None  # Will be initialized after planet positions are known
-        )
+        # Initialized once planet positions are known (see set_planets)
+        self.ship_renderer: Optional[ShipRenderer] = None
 
         # Current state
         self.planets: List[Planet] = []

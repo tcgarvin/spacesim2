@@ -233,6 +233,8 @@ class DetailPanel:
 
         # Current location
         if ship.status == ShipStatus.TRAVELING:
+            # A traveling ship always has both an origin and a destination
+            assert ship.planet is not None and ship.destination is not None
             location_text, location_rect = text_renderer.render_text(
                 f"Traveling: {ship.planet.name} → {ship.destination.name} ({int(ship.travel_progress * 100)}%)",
                 "normal",
@@ -282,7 +284,7 @@ class DetailPanel:
         )
         fuel_rect.topleft = (x, y)
         self.screen.blit(fuel_text, fuel_rect)
-        y += line_height * 1.5
+        y += int(line_height * 1.5)
 
         # Cargo section
         cargo_title, cargo_title_rect = text_renderer.render_text(
@@ -538,6 +540,7 @@ class DetailPanel:
             not self.selected_planet
             or not self.selected_planet.market
             or not self.selected_commodity
+            or not self.simulation
         ):
             return
 
@@ -551,7 +554,7 @@ class DetailPanel:
         )
         orders_title_rect.topleft = (x, y)
         self.screen.blit(orders_title, orders_title_rect)
-        y += line_height * 1.2
+        y += int(line_height * 1.2)
 
         # Get buy and sell orders
         buy_orders = sorted(

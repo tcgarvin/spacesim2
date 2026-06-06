@@ -10,7 +10,7 @@ class InputHandler:
     def __init__(self) -> None:
         """Initialize the input handler."""
         # Event callbacks
-        self.key_callbacks: Dict[int, Callable[[Event], None]] = {}
+        self.key_callbacks: Dict[int, Callable[[Event], Optional[bool]]] = {}
         self.mouse_click_callbacks: Dict[int, Callable[[Event], None]] = {}
         self.mouse_scroll_callbacks: Dict[int, Callable[[Event], None]] = {}
         self.mouse_motion_callback: Optional[Callable[[Event], None]] = None

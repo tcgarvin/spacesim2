@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Pre-commit hook for spacesim2.
 #
-# Enforces style on staged Python files with the project's uv-pinned ruff (so
-# the version always matches uv.lock):
-#   - ruff format  (formatting)
-#   - ruff check   (lint)
+# Enforces style and types with the project's uv-pinned tools (so versions
+# always match uv.lock):
+#   - ruff format  (formatting)   — staged Python files
+#   - ruff check   (lint)         — staged Python files
+#   - mypy         (types)        — whole project
 #
-# Types (`mypy`) are NOT enforced here yet — that backlog isn't cleared. Run it
-# manually: uv run mypy .  (see CLAUDE.md).
+# mypy runs over the whole project, not just staged files, because it needs
+# cross-module context to resolve types correctly.
 #
 # Bypass once with:  git commit --no-verify
 set -euo pipefail
@@ -36,6 +37,15 @@ if ! uv run ruff check "${files[@]}"; then
     echo "✗ ruff check: staged files have lint errors. Many are auto-fixable:"
     echo "    uv run ruff check --fix ${files[*]}"
     echo "  then 'git add' them and recommit (or 'git commit --no-verify' to skip)."
+  } >&2
+  exit 1
+fi
+
+if ! uv run mypy .; then
+  {
+    echo
+    echo "✗ mypy: type errors found. Fix them, then recommit"
+    echo "  (or 'git commit --no-verify' to skip)."
   } >&2
   exit 1
 fi

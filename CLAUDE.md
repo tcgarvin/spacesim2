@@ -66,8 +66,9 @@ replacement. Don't reintroduce a separate formatter.
 
 ### Pre-commit hook
 A checked-in hook in `hooks/pre-commit` enforces `ruff format` **and**
-`ruff check` on staged Python files. It's wired via `core.hooksPath`, so a
-**fresh clone must run it once**:
+`ruff check` on staged Python files, plus `mypy` (`uv run mypy .`) over the
+whole project. It's wired via `core.hooksPath`, so a **fresh clone must run it
+once**:
 
 ```bash
 git config core.hooksPath hooks
@@ -75,9 +76,9 @@ git config core.hooksPath hooks
 
 Bypass a single commit with `git commit --no-verify`.
 
-Types (`mypy`) are *not* blocking yet — that backlog (~146 errors in the
-package, mostly untyped analysis code) isn't cleared. Run `uv run mypy .`
-manually, and promote it into the hook once green.
+Types (`mypy`) are now blocking: the package is clean (`uv run mypy .` →
+*Success*). mypy runs over the whole project rather than only staged files
+because it needs cross-module context to resolve types. Keep it green.
 
 **Ruff lint config** (`[tool.ruff.lint]`): `E501` is ignored (the formatter
 owns line length); `notebooks/**` is exempt from lint via `per-file-ignores`

@@ -897,6 +897,11 @@ class ActorListPanel:
 
             # Location or travel status
             if display_entity.status == ShipStatus.TRAVELING:
+                # A traveling ship always has both an origin and a destination
+                assert (
+                    display_entity.planet is not None
+                    and display_entity.destination is not None
+                )
                 location_text, location_rect = text_renderer.render_text(
                     f"Traveling: {display_entity.planet.name} → {display_entity.destination.name} ({int(display_entity.travel_progress * 100)}%)",
                     "normal",

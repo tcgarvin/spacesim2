@@ -9,25 +9,26 @@ This test is deterministic: skill checks always succeed and tools never degrade.
 
 from unittest.mock import patch
 
+from spacesim2.core.actor import Actor
 from spacesim2.core.commands import ProcessCommand
 from spacesim2.core.simulation import Simulation
 
 
-def _run(process_id: str, actor, times: int = 1) -> None:
+def _run(process_id: str, actor: Actor, times: int = 1) -> None:
     """Execute a process the given number of times; assert each execution succeeds."""
     for i in range(times):
         result = ProcessCommand(process_id).execute(actor)
         assert result, f"Process '{process_id}' failed on attempt {i + 1}"
 
 
-def _qty(commodity_id: str, actor, sim) -> int:
+def _qty(commodity_id: str, actor: Actor, sim: Simulation) -> int:
     """Return inventory quantity for a commodity by ID."""
     commodity = sim.commodity_registry.get_commodity(commodity_id)
     assert commodity is not None, f"Commodity '{commodity_id}' not found in registry"
     return actor.inventory.get_quantity(commodity)
 
 
-def _has(commodity_id: str, actor, sim) -> bool:
+def _has(commodity_id: str, actor: Actor, sim: Simulation) -> bool:
     return _qty(commodity_id, actor, sim) >= 1
 
 
