@@ -4,7 +4,7 @@ Data logging interface for actors and the simulation.  Should in general be atta
 
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
 
 from spacesim2.core.actor import Actor
 from spacesim2.core.commands import Command
@@ -12,6 +12,11 @@ from spacesim2.core.drives.actor_drive import DriveMetrics
 
 if TYPE_CHECKING:
     from spacesim2.core.market import OrderEvent, Transaction
+    from spacesim2.core.ship import Ship
+
+# Ships are logged through the same duck-typed interface as actors (name,
+# inventory, money, drives), so logger methods accept either.
+LoggableActor = Union[Actor, "Ship"]
 
 
 @dataclass
@@ -29,24 +34,24 @@ class DataLogger:
             ActorTurnLog
         )
         self.current_turn: int = 0
-        self._actors_to_log: dict[str, Actor] = {}
+        self._actors_to_log: dict[str, LoggableActor] = {}
 
     def set_turn(self, turn: int) -> None:
         self.current_turn = turn
 
-    def _get_actor_sim_log_key(self, actor: Actor) -> str:
+    def _get_actor_sim_log_key(self, actor: LoggableActor) -> str:
         return f"actor-{actor.name}"
 
-    def is_actor_logged(self, actor: Actor) -> bool:
+    def is_actor_logged(self, actor: LoggableActor) -> bool:
         return actor.name in self._actors_to_log
 
-    def get_all_logged_actors(self) -> list[Actor]:
+    def get_all_logged_actors(self) -> list[LoggableActor]:
         return list(self._actors_to_log.values())
 
-    def add_actor_to_log(self, actor: Actor) -> None:
+    def add_actor_to_log(self, actor: LoggableActor) -> None:
         self._actors_to_log[actor.name] = actor
 
-    def log_actor_metrics(self, actor: Actor) -> None:
+    def log_actor_metrics(self, actor: LoggableActor) -> None:
         if not self.is_actor_logged(actor):
             return
 
@@ -55,7 +60,7 @@ class DataLogger:
         ]
         turn_log.metrics = [replace(d.metrics) for d in actor.drives]
 
-    def log_actor_note(self, actor: Actor, note: str) -> None:
+    def log_actor_note(self, actor: LoggableActor, note: str) -> None:
         if not self.is_actor_logged(actor):
             return
 
@@ -64,7 +69,7 @@ class DataLogger:
         ]
         turn_log.notes.append(note)
 
-    def log_actor_command(self, actor: Actor, action: Command) -> None:
+    def log_actor_command(self, actor: LoggableActor, action: Command) -> None:
         if not self.is_actor_logged(actor):
             return
 
@@ -73,7 +78,7 @@ class DataLogger:
         ]
         turn_log.commands.append(action)
 
-    def log_actor_inventory(self, actor: Actor) -> None:
+    def log_actor_inventory(self, actor: LoggableActor) -> None:
         if not self.is_actor_logged(actor):
             return
 
@@ -123,7 +128,9 @@ class DataLogger:
             },
         }
 
-    def _serialize_transaction(self, transaction: "Transaction", actor: Actor) -> dict:
+    def _serialize_transaction(
+        self, transaction: "Transaction", actor: LoggableActor
+    ) -> dict:
         """Convert a Transaction to a serializable dict."""
         role = "buyer" if transaction.buyer == actor else "seller"
         counterparty = (
@@ -142,7 +149,9 @@ class DataLogger:
             "turn": transaction.turn,
         }
 
-    def get_actor_turn_log(self, actor: Actor, turn: int | None = None) -> ActorTurnLog:
+    def get_actor_turn_log(
+        self, actor: LoggableActor, turn: int | None = None
+    ) -> ActorTurnLog:
         if turn is None:
             turn = self.current_turn
         turn_log_key = (turn, self._get_actor_sim_log_key(actor))

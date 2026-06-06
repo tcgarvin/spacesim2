@@ -32,7 +32,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
     Returns:
         The created parser
     """
-    parser = subparsers.add_parser(
+    parser: argparse.ArgumentParser = subparsers.add_parser(
         "run",
         help="Run headless simulation with data export",
         description="Run simulation in headless mode with Parquet export for analysis",
@@ -241,7 +241,7 @@ def execute(args: argparse.Namespace) -> int:
         print(f"  Data exported to: {output_path}")
         print(f"  Run ID: {run_id}")
 
-        if args.notebook:
+        if args.notebook and output_path is not None:
             _open_notebook(output_path, args.notebook_path)
         else:
             print("\nTo analyze this run:")

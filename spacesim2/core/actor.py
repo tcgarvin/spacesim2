@@ -1,6 +1,7 @@
 import enum
 from typing import TYPE_CHECKING, Dict, List, Optional
 
+from spacesim2.core.commands import PlaceBuyOrderCommand, PlaceSellOrderCommand
 from spacesim2.core.commodity import Inventory
 from spacesim2.core.planet import Planet
 
@@ -118,11 +119,12 @@ class Actor:
             # Log all market commands to data logger
             self.sim.data_logger.log_actor_command(self, command)
             # Only log buy/sell order commands for market action summary
-            if success and (
-                "Buy" in command.__class__.__name__
-                or "Sell" in command.__class__.__name__
+            if success and isinstance(
+                command, (PlaceBuyOrderCommand, PlaceSellOrderCommand)
             ):
-                action_type = "Buy" if "Buy" in command.__class__.__name__ else "Sell"
+                action_type = (
+                    "Buy" if isinstance(command, PlaceBuyOrderCommand) else "Sell"
+                )
                 commodity_name = command.commodity_type.id
                 market_actions.append(
                     f"{action_type} {command.quantity} {commodity_name} at {command.price}"

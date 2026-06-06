@@ -274,7 +274,10 @@ class TraderBrain(ShipBrain):
 
         Orders are placed at market prices to ensure execution.
         """
-        market = self.ship.planet.market
+        planet = self.ship.planet
+        if planet is None:
+            return
+        market = planet.market
         fuel_commodity = self.ship.simulation.commodity_registry.get_commodity(
             "nova_fuel"
         )
@@ -287,22 +290,25 @@ class TraderBrain(ShipBrain):
             market.cancel_order(order.order_id)
 
         # Step 1: Buy fuel if needed
-        current_fuel = self.ship.cargo.get_quantity(fuel_commodity)
-        fuel_needed = plan.fuel_needed_round_trip
+        if fuel_commodity is not None:
+            current_fuel = self.ship.cargo.get_quantity(fuel_commodity)
+            fuel_needed = plan.fuel_needed_round_trip
 
-        if current_fuel < fuel_needed:
-            fuel_to_buy = fuel_needed - current_fuel
-            _, fuel_ask = market.get_bid_ask_spread(fuel_commodity)
+            if current_fuel < fuel_needed:
+                fuel_to_buy = fuel_needed - current_fuel
+                _, fuel_ask = market.get_bid_ask_spread(fuel_commodity)
 
-            if fuel_ask is not None:
-                affordable_fuel = min(fuel_to_buy, self.ship.money // fuel_ask)
-                if affordable_fuel > 0:
-                    order_id = market.place_buy_order(
-                        self.ship, fuel_commodity, affordable_fuel, fuel_ask
-                    )
-                    if order_id:
-                        actions.append(f"Buying {affordable_fuel} fuel at {fuel_ask}")
-                        self.ship.active_orders[order_id] = "buy fuel"
+                if fuel_ask is not None:
+                    affordable_fuel = min(fuel_to_buy, self.ship.money // fuel_ask)
+                    if affordable_fuel > 0:
+                        order_id = market.place_buy_order(
+                            self.ship, fuel_commodity, affordable_fuel, fuel_ask
+                        )
+                        if order_id:
+                            actions.append(
+                                f"Buying {affordable_fuel} fuel at {fuel_ask}"
+                            )
+                            self.ship.active_orders[order_id] = "buy fuel"
 
         # Step 2: Buy commodity
         _, commodity_ask = market.get_bid_ask_spread(plan.commodity)
@@ -565,7 +571,7 @@ class Ship:
         self.money = initial_money
         self.reserved_money = 0  # Money reserved for market orders
         self.planet = planet
-        self.destination = None  # Target planet when traveling
+        self.destination: Optional[Planet] = None  # Target planet when traveling
         self.cargo = Inventory()  # Cargo hold for commodities
         self.inventory = self.cargo  # Alias for compatibility with market code
         self.cargo_capacity = cargo_capacity
@@ -659,6 +665,10 @@ class Ship:
             self.last_action = (
                 f"Cannot start journey - ship status: {self.status.value}"
             )
+            return False
+
+        if self.planet is None:
+            self.last_action = "Cannot start journey - ship is not at a planet"
             return False
 
         if self.planet == destination:

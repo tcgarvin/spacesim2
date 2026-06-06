@@ -342,7 +342,7 @@ class IndustrialistBrain(ActorBrain):
             attribute_modifier = attr_value
 
         # Calculate output value based on actual market bid prices
-        total_output_value = 0
+        total_output_value = 0.0
         for commodity, quantity in process.outputs.items():
             # Use bid price (what buyers will pay) if available
             bid, ask = market.get_bid_ask_spread(commodity)

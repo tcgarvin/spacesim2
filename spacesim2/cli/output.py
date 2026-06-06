@@ -21,8 +21,11 @@ def get_console() -> "Console":
         if RICH_AVAILABLE:
             _console = Console()
         else:
-            _console = FallbackConsole()
-    return _console
+            # FallbackConsole is a deliberate duck-typed stand-in for Console
+            # when rich isn't installed; callers guard rich-only methods (e.g.
+            # .rule) behind RICH_AVAILABLE.
+            _console = FallbackConsole()  # type: ignore[assignment]
+    return _console  # type: ignore[return-value]
 
 
 class FallbackConsole:

@@ -20,7 +20,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
     Returns:
         The created parser
     """
-    parser = subparsers.add_parser(
+    parser: argparse.ArgumentParser = subparsers.add_parser(
         "graph",
         help="Generate commodity/process dependency graph",
         description="Convert YAML commodity/process definitions to Mermaid diagrams and render",

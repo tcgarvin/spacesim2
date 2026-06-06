@@ -2,19 +2,25 @@ import statistics
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
 from spacesim2.core.actor import Actor
 
 if TYPE_CHECKING:
-    from spacesim2.core.commodity import CommodityDefinition
+    from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
+    from spacesim2.core.ship import Ship
+
+# Anything that can place orders and trade in a market. Ships participate in
+# markets via the same duck-typed interface as actors (name, money, inventory,
+# active_orders, reserved_money).
+MarketParticipant = Union[Actor, "Ship"]
 
 
 @dataclass
 class Order:
     """Represents a buy or sell order in the market."""
 
-    actor: Actor
+    actor: MarketParticipant
     commodity_type: "CommodityDefinition"  # Must be a CommodityDefinition
     quantity: int
     price: int
@@ -44,8 +50,8 @@ class OrderEvent:
 class Transaction:
     """Represents a completed transaction in the market."""
 
-    buyer: Actor
-    seller: Actor
+    buyer: MarketParticipant
+    seller: MarketParticipant
     commodity_type: "CommodityDefinition"  # Must be a CommodityDefinition
     quantity: int
     price: int
@@ -67,7 +73,7 @@ class Market:
         self.orders_by_id: Dict[str, Order] = {}
 
         # Track orders by actor
-        self.actor_orders: Dict[Actor, Dict[str, List[str]]] = defaultdict(
+        self.actor_orders: Dict[MarketParticipant, Dict[str, List[str]]] = defaultdict(
             lambda: {"buy": [], "sell": []}
         )
 
@@ -96,7 +102,7 @@ class Market:
         )  # Daily trading volumes
 
         # Reference to commodity registry (will be set by simulation)
-        self.commodity_registry = None
+        self.commodity_registry: Optional["CommodityRegistry"] = None
 
     def _trim_transaction_history(self) -> None:
         """Trim the transaction history to the last 1000 transactions for global transactions and last 100 transactions for actor transactions."""
@@ -108,7 +114,9 @@ class Market:
             if len(actor_transactions) > 100:
                 actor_transactions[:] = actor_transactions[-100:]
 
-    def get_actor_transaction_history(self, actor: Actor) -> List[Transaction]:
+    def get_actor_transaction_history(
+        self, actor: MarketParticipant
+    ) -> List[Transaction]:
         """Get the transaction history for a specific actor."""
         return self.actor_transaction_history.get(actor.name, [])
 
@@ -124,7 +132,7 @@ class Market:
         self.order_events.append(event)
         self.order_events_by_actor[order.actor.name].append(event)
 
-    def get_actor_current_orders(self, actor: Actor) -> Dict[str, Dict]:
+    def get_actor_current_orders(self, actor: MarketParticipant) -> Dict[str, Dict]:
         """Market's authority: what orders are currently open for this actor."""
         result = {}
 
@@ -155,7 +163,10 @@ class Market:
         return result
 
     def get_actor_order_events(
-        self, actor: Actor, since_turn: int = 0, until_turn: Optional[int] = None
+        self,
+        actor: MarketParticipant,
+        since_turn: int = 0,
+        until_turn: Optional[int] = None,
     ) -> List[OrderEvent]:
         """Efficient time-range query for actor order events using chronological ordering."""
         actor_events = self.order_events_by_actor[actor.name]
@@ -174,7 +185,10 @@ class Market:
         return list(reversed(result))  # Return in chronological order
 
     def get_actor_transactions_range(
-        self, actor: Actor, since_turn: int = 0, until_turn: Optional[int] = None
+        self,
+        actor: MarketParticipant,
+        since_turn: int = 0,
+        until_turn: Optional[int] = None,
     ) -> List[Transaction]:
         """Efficient time-range query for actor transactions using chronological ordering."""
         actor_transactions = self.actor_transaction_history[actor.name]
@@ -194,7 +208,7 @@ class Market:
 
     def place_buy_order(
         self,
-        actor: Actor,
+        actor: MarketParticipant,
         commodity_type: "CommodityDefinition",
         quantity: int,
         price: int,
@@ -250,7 +264,7 @@ class Market:
 
     def place_sell_order(
         self,
-        actor: Actor,
+        actor: MarketParticipant,
         commodity_type: "CommodityDefinition",
         quantity: int,
         price: int,
@@ -453,8 +467,8 @@ class Market:
 
     def _execute_transaction(
         self,
-        buyer: Actor,
-        seller: Actor,
+        buyer: MarketParticipant,
+        seller: MarketParticipant,
         commodity_type: "CommodityDefinition",
         quantity: int,
         price: int,
@@ -727,7 +741,7 @@ class Market:
 
         return True
 
-    def get_actor_orders(self, actor: Actor) -> Dict[str, List[Order]]:
+    def get_actor_orders(self, actor: MarketParticipant) -> Dict[str, List[Order]]:
         """Get all active orders for an actor.
 
         Args:

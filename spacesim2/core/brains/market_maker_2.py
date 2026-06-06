@@ -208,6 +208,8 @@ class MarketMakerBrain(ActorBrain):
         commodity_name = getattr(commodity, "name", str(commodity))
         price_lists = fills_by_commodity.get(commodity_name, None)
 
+        if actor.planet is None:
+            return
         market = actor.planet.market
         sigma: Optional[float] = None
         if market.has_history(commodity):

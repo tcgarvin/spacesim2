@@ -16,7 +16,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
     Returns:
         The created parser
     """
-    parser = subparsers.add_parser(
+    parser: argparse.ArgumentParser = subparsers.add_parser(
         "ui",
         help="Launch interactive Pygame UI",
         description="Run simulation with interactive graphical interface",

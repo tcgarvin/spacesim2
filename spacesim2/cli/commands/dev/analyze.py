@@ -22,7 +22,7 @@ from spacesim2.cli.output import print_error, print_success
 
 def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser:  # type: ignore
     """Add the 'analyze' dev subcommand parser."""
-    parser = subparsers.add_parser(
+    parser: argparse.ArgumentParser = subparsers.add_parser(
         "analyze",
         help="Run a Tier-1 analysis script against a run (prints its output)",
         description=(

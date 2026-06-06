@@ -55,7 +55,8 @@ def main(argv: Optional[list] = None) -> int:
     args = parser.parse_args(argv)
 
     # Dispatch to appropriate command handler
-    return args.func(args)
+    exit_code: int = args.func(args)
+    return exit_code
 
 
 if __name__ == "__main__":
