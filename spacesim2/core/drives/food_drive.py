@@ -27,7 +27,10 @@ class FoodDrive(ActorDrive):
         self.metrics = FoodDriveMetrics(
             health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY
         )
-        self.food_commodity = commodity_registry.get_commodity("food")
+        food_commodity = commodity_registry.get_commodity("food")
+        if food_commodity is None:
+            raise ValueError("FoodDrive requires a registered 'food' commodity")
+        self.food_commodity = food_commodity
         self.quality_commodity = commodity_registry.get_commodity("processed_food")
 
     def tick(self, actor: Actor) -> DriveMetrics:

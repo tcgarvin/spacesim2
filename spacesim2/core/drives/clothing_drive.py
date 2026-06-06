@@ -44,7 +44,12 @@ class ClothingDrive(ActorDrive):
 
     def __init__(self, commodity_registry: CommodityRegistry):
         super().__init__(commodity_registry=commodity_registry)
-        self.clothing_good = commodity_registry.get_commodity(CLOTHING_NAME)
+        clothing_good = commodity_registry.get_commodity(CLOTHING_NAME)
+        if clothing_good is None:
+            raise ValueError(
+                f"ClothingDrive requires a registered '{CLOTHING_NAME}' commodity"
+            )
+        self.clothing_good = clothing_good
         self.quality_good = commodity_registry.get_commodity(QUALITY_CLOTHING_NAME)
         self.metrics = ClothingDriveMetrics(
             health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY

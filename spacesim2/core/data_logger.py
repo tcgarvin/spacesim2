@@ -25,7 +25,9 @@ class ActorTurnLog:
 
 class DataLogger:
     def __init__(self) -> None:
-        self._actor_sim_log: dict[str, ActorTurnLog] = defaultdict(ActorTurnLog)
+        self._actor_sim_log: dict[tuple[int, str], ActorTurnLog] = defaultdict(
+            ActorTurnLog
+        )
         self.current_turn: int = 0
         self._actors_to_log: dict[str, Actor] = {}
 
@@ -140,7 +142,7 @@ class DataLogger:
             "turn": transaction.turn,
         }
 
-    def get_actor_turn_log(self, actor: Actor, turn: int = None) -> ActorTurnLog:
+    def get_actor_turn_log(self, actor: Actor, turn: int | None = None) -> ActorTurnLog:
         if turn is None:
             turn = self.current_turn
         turn_log_key = (turn, self._get_actor_sim_log_key(actor))

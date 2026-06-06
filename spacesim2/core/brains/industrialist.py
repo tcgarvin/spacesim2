@@ -130,7 +130,9 @@ class IndustrialistBrain(ActorBrain):
         """1% chance per turn to re-evaluate recipe choice."""
         return random.random() < 0.01
 
-    def _get_build_process_for_facility(self, facility: str) -> Optional[str]:
+    def _get_build_process_for_facility(
+        self, facility: "CommodityDefinition"
+    ) -> Optional[str]:
         """Map facility commodities to their build processes."""
         facility_to_process = {
             "smelting_facility": "build_smelting_facility",

@@ -46,9 +46,12 @@ class ShelterDrive(ActorDrive):
 
     def __init__(self, commodity_registry: CommodityRegistry):
         super().__init__(commodity_registry=commodity_registry)
-        self.building_materials = commodity_registry.get_commodity(
-            BUILDING_MATERIALS_NAME
-        )
+        building_materials = commodity_registry.get_commodity(BUILDING_MATERIALS_NAME)
+        if building_materials is None:
+            raise ValueError(
+                f"ShelterDrive requires a registered '{BUILDING_MATERIALS_NAME}' commodity"
+            )
+        self.building_materials = building_materials
         self.quality_materials = commodity_registry.get_commodity(PREFAB_HOUSING_NAME)
         self.metrics = ShelterDriveMetrics(
             health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY
