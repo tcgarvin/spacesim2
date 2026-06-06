@@ -166,6 +166,9 @@ class SimulationExporter:
                         "num_sell_orders": len(sell_orders),
                         "best_bid": best_bid,
                         "best_ask": best_ask,
+                        "scarcity_pressure": float(
+                            market.scarcity_pressure_for(commodity)
+                        ),
                     }
                 )
 

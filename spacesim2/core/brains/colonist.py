@@ -208,148 +208,104 @@ class ColonistBrain(ActorBrain):
 
         return input_cost + opportunity_cost
 
+    # Inventory levels to retain when selling surplus, for goods that are not
+    # backed by a drive (drive goods derive their keep level from target_units).
+    NON_DRIVE_KEEP_LEVELS = {
+        "simple_tools": 2,  # tools for production
+        "wood": 2,  # raw input for tools/building materials
+        "common_metal": 2,  # alternate building-material input
+    }
+
     def decide_market_actions(self, actor: "Actor") -> List[MarketCommand]:
-        """Regular actors buy what they need and sell excess, matching existing orders when possible."""
+        """Buy drive needs (with willingness-to-pay) and sell surplus production."""
         if not actor.planet:
             return []
 
         market = actor.planet.market
         commands: List[MarketCommand] = []
 
-        # Get existing actor's orders
+        # Cancel all existing orders before re-posting.
         existing_orders = market.get_actor_orders(actor)
-
-        # Cancel all existing orders
         for order in existing_orders["buy"] + existing_orders["sell"]:
             commands.append(CancelOrderCommand(order.order_id))
 
-        # Define minimum inventory levels for needs-related commodities
-        min_keep_levels = {
-            "food": 6,
-            "clothing": 3,
-            "wood": 2,  # raw input for tools/building materials
-            "common_metal": 2,  # alternate building-material input
-            "simple_tools": 2,  # tools for production
-            "simple_building_materials": 3,  # shelter material (ShelterDrive)
-            "medicine": 2,  # health material (HealthDrive)
-        }
+        # Buy drive materials (food/clothing/shelter/health) at willingness-to-pay.
+        commands.extend(self._drive_buy_commands(actor, market))
 
-        # Trade all transportable commodities
+        # Acquire tools, which are an enabler for production rather than a drive.
+        commands.extend(self._tool_buy_commands(actor, market))
+
+        # Sell surplus inventory above what we want to keep.
+        commands.extend(self._sell_excess_commands(actor, market))
+
+        return commands
+
+    def _tool_buy_commands(self, actor: Actor, market: "Market") -> List[MarketCommand]:
+        """Buy simple_tools up to a buffer, bounded by willingness to pay."""
+        tools = actor.sim.commodity_registry.get_commodity("simple_tools")
+        if not tools:
+            return []
+
+        keep = self.NON_DRIVE_KEEP_LEVELS["simple_tools"]
+        have = actor.inventory.get_quantity(tools)
+        if have >= keep:
+            return []
+        need = keep - have
+
+        willingness = self._calculate_tool_willingness_to_pay(actor)
+        if willingness <= 0:
+            return []
+
+        market_sell_orders = sorted(
+            [o for o in market.sell_orders.get(tools, []) if o.actor != actor],
+            key=lambda o: (o.price, o.timestamp),
+        )
+
+        if market_sell_orders:
+            ask = market_sell_orders[0].price
+            if ask > willingness:
+                return []  # Too expensive — make them instead (economic action).
+            qty = min(need, actor.money // ask)
+            if qty > 0:
+                return [PlaceBuyOrderCommand(tools, qty, ask)]
+            return []
+
+        # No sellers: post a standing bid at willingness to pay to express demand.
+        qty = min(need, actor.money // willingness)
+        if qty > 0:
+            return [PlaceBuyOrderCommand(tools, qty, willingness)]
+        return []
+
+    def _sell_excess_commands(
+        self, actor: Actor, market: "Market"
+    ) -> List[MarketCommand]:
+        """Sell inventory above keep levels, as a price taker on standing bids."""
+        commands: List[MarketCommand] = []
         for commodity in actor.sim.commodity_registry.all_commodities():
             if not commodity.transportable:
                 continue
-            min_keep = min_keep_levels.get(commodity.id, 0)
-            trade_commands = self._get_trade_commands(
-                actor, market, commodity, min_keep=min_keep
-            )
-            commands.extend(trade_commands)
+            keep = self._keep_level(actor, commodity)
+            available = actor.inventory.get_available_quantity(commodity)
+            if available <= keep:
+                continue
+            quantity_to_sell = available - keep
 
-        return commands
-
-    def _get_trade_commands(
-        self,
-        actor: Actor,
-        market: "Market",
-        commodity_type: "CommodityDefinition",
-        min_keep: int = 0,
-    ) -> List[MarketCommand]:
-        """Helper method to generate trading commands for a specific commodity.
-
-        Args:
-            market: The market to trade in
-            commodity_type: The type of commodity to trade
-            min_keep: Minimum amount to keep in inventory
-
-        Returns:
-            List of MarketCommand objects for trading actions
-        """
-        commands: List[MarketCommand] = []
-
-        # Track inventory
-        quantity = actor.inventory.get_quantity(commodity_type)
-        available_inventory = actor.inventory.get_available_quantity(commodity_type)
-
-        # Handle buying if we're below our minimum
-        if quantity < min_keep:
-            # Calculate how much we need
-            quantity_to_buy = min_keep - quantity
-
-            # Get existing sell orders in the market (excluding our own)
-            market_sell_orders = sorted(
-                [
-                    o
-                    for o in market.sell_orders.get(commodity_type, [])
-                    if o.actor != actor
-                ],
-                key=lambda o: (o.price, o.timestamp),  # Sort by price (lowest first)
-            )
-
-            # For tools, calculate willingness to pay based on opportunity cost
-            max_price = None
-            if commodity_type.id == "simple_tools":
-                max_price = self._calculate_tool_willingness_to_pay(actor)
-
-            if market_sell_orders:
-                # Start with the lowest price sell order
-                best_sell_order = market_sell_orders[0]
-                buy_price = best_sell_order.price
-
-                # For tools, only buy if price is at or below willingness to pay
-                if max_price is not None and buy_price > max_price:
-                    pass  # Don't buy - too expensive
-                else:
-                    # Check if we can afford it
-                    max_affordable_quantity = min(
-                        quantity_to_buy, actor.money // buy_price
-                    )
-
-                    if max_affordable_quantity > 0:
-                        # Place a matching buy order at exactly the seller's price
-                        commands.append(
-                            PlaceBuyOrderCommand(
-                                commodity_type, max_affordable_quantity, buy_price
-                            )
-                        )
-
-            elif max_price is not None and max_price > 0:
-                # No sell orders exist, but for tools we can place a bid at our
-                # willingness to pay. This expresses demand and can cross with
-                # market maker orders in the matching phase.
-                max_affordable_quantity = min(quantity_to_buy, actor.money // max_price)
-
-                if max_affordable_quantity > 0:
-                    commands.append(
-                        PlaceBuyOrderCommand(
-                            commodity_type, max_affordable_quantity, max_price
-                        )
-                    )
-
-        # Handle selling if we have excess
-        if available_inventory > min_keep:
-            # Calculate how much we can sell
-            quantity_to_sell = available_inventory - min_keep
-
-            # Get existing buy orders in the market (excluding our own)
             market_buy_orders = sorted(
-                [
-                    o
-                    for o in market.buy_orders.get(commodity_type, [])
-                    if o.actor != actor
-                ],
-                key=lambda o: (-o.price, o.timestamp),  # Sort by price (highest first)
+                [o for o in market.buy_orders.get(commodity, []) if o.actor != actor],
+                key=lambda o: (-o.price, o.timestamp),
             )
-
-            # Check if there are any buy orders available
             if market_buy_orders:
-                # Start with the highest price buy order
                 best_buy_order = market_buy_orders[0]
-
-                # Accept any price - regular actors are price takers
-                # Place a matching sell order at exactly the buyer's price
                 commands.append(
                     PlaceSellOrderCommand(
-                        commodity_type, quantity_to_sell, best_buy_order.price
+                        commodity, quantity_to_sell, best_buy_order.price
                     )
                 )
-
         return commands
+
+    def _keep_level(self, actor: Actor, commodity: "CommodityDefinition") -> int:
+        """Inventory level to retain for a commodity before selling surplus."""
+        for drive in actor.drives:
+            if commodity in drive.materials():
+                return drive.target_units()
+        return self.NON_DRIVE_KEEP_LEVELS.get(commodity.id, 0)

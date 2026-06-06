@@ -511,8 +511,13 @@ class TraderBrain(ShipBrain):
         }
 
         if not cargo_to_sell:
-            # No cargo - don't travel (trade plan handles buying locally)
-            return None
+            # No cargo. If a profitable export can be sourced right here, stay
+            # and let decide_trade_actions buy it. Otherwise reposition empty
+            # toward the planet with the best sourcing opportunity so the ship
+            # doesn't strand on a planet that has nothing worth exporting.
+            if self._find_best_trade_plan() is not None:
+                return None
+            return self._find_reposition_target(fuel_available, fuel_commodity)
 
         # Find best destination for our cargo
         best_planet = None
@@ -552,6 +557,53 @@ class TraderBrain(ShipBrain):
                 best_planet = destination
 
         return best_planet
+
+    def _find_reposition_target(
+        self, fuel_available: int, fuel_commodity: "CommodityDefinition"
+    ) -> Optional[Planet]:
+        """Pick a planet to fly to empty when nothing here is worth exporting.
+
+        Surveys every other planet as a candidate origin and finds the best
+        profitable export plan available from it. Returns the reachable origin
+        backing the most profitable opportunity, or None if none is reachable
+        or profitable.
+        """
+        current_planet = self.ship.planet
+        if current_planet is None:
+            return None
+
+        commodities = self._get_tradeable_commodities()
+        best_origin: Optional[Planet] = None
+        best_profit = 0
+
+        for origin in self.ship.simulation.planets:
+            if origin == current_planet:
+                continue
+
+            # Must have enough fuel on board to reach this origin empty.
+            distance_to_origin = Ship.calculate_distance(current_planet, origin)
+            fuel_to_origin = Ship.calculate_fuel_needed(distance_to_origin)
+            if fuel_available < fuel_to_origin:
+                continue
+
+            for destination in self.ship.simulation.planets:
+                if destination == origin:
+                    continue
+                for commodity in commodities:
+                    plan = self._evaluate_trade_opportunity(
+                        origin=origin,
+                        destination=destination,
+                        commodity=commodity,
+                    )
+                    if (
+                        plan
+                        and plan.is_profitable()
+                        and plan.expected_profit > best_profit
+                    ):
+                        best_profit = plan.expected_profit
+                        best_origin = origin
+
+        return best_origin
 
 
 class Ship:
@@ -651,6 +703,51 @@ class Ship:
 
         self.last_action = "Cannot perform maintenance - insufficient supplies"
         return False
+
+    def _buy_maintenance_supplies(self) -> None:
+        """Buy maintenance goods from the local market when stranded.
+
+        A ship that rolls a maintenance need on departure is locked out of the
+        trading branch until it is repaired, so without this it can never
+        acquire the supplies to repair itself (a deadlock once its cargo fuel
+        runs low). Buys the cheapest available maintenance tier; the order fills
+        at end of turn and perform_maintenance succeeds next turn.
+        """
+        if self.planet is None:
+            return
+        market = self.planet.market
+        registry = self.simulation.commodity_registry
+
+        # Release any money reserved by stale orders so it can fund supplies.
+        existing = market.get_actor_orders(self)
+        for order in existing["buy"] + existing["sell"]:
+            market.cancel_order(order.order_id)
+
+        tiers = [
+            ("ship_components", 1),
+            ("ship_parts", 2),
+            ("ship_supplies", 3),
+            ("nova_fuel", 5),
+        ]
+        for commodity_id, qty_needed in tiers:
+            commodity = registry.get_commodity(commodity_id)
+            if commodity is None:
+                continue
+            shortfall = qty_needed - self.cargo.get_quantity(commodity)
+            if shortfall <= 0:
+                continue
+            _, ask = market.get_bid_ask_spread(commodity)
+            if ask is None or ask <= 0:
+                continue
+            affordable = min(shortfall, self.money // ask)
+            if affordable > 0:
+                order_id = market.place_buy_order(self, commodity, affordable, ask)
+                if order_id:
+                    self.active_orders[order_id] = f"buy {commodity_id} (maintenance)"
+                    self.last_action = (
+                        f"Buying {affordable} {commodity_id} to enable maintenance"
+                    )
+                    return
 
     def start_journey(self, destination: Planet) -> bool:
         """Begin a journey to another planet.
@@ -774,8 +871,10 @@ class Ship:
             # Update journey progress
             self.update_journey()
         elif self.status == ShipStatus.NEEDS_MAINTENANCE:
-            # Try to perform maintenance
-            self.perform_maintenance()
+            # Try to perform maintenance; if we lack supplies, buy them locally
+            # so we can repair next turn instead of stranding indefinitely.
+            if not self.perform_maintenance():
+                self._buy_maintenance_supplies()
         elif self.status == ShipStatus.DOCKED:
             # Take trade actions at current planet
             self.brain.decide_trade_actions()

@@ -1,7 +1,7 @@
 import random
 
 from spacesim2.core.actor import Actor
-from spacesim2.core.commodity import CommodityRegistry
+from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
 from spacesim2.core.drives.actor_drive import (
     ActorDrive,
     DriveMetrics,
@@ -40,6 +40,9 @@ class HealthDrive(ActorDrive):
     - Quality medicine provides faster debt recovery
     """
 
+    MISS_PENALTY = DEBT_MISS_PENALTY
+    TARGET_UNITS = 2
+
     def __init__(self, commodity_registry: CommodityRegistry):
         super().__init__(commodity_registry=commodity_registry)
         self.medicine = commodity_registry.get_commodity(MEDICINE_NAME)
@@ -47,6 +50,17 @@ class HealthDrive(ActorDrive):
         self.metrics = HealthDriveMetrics(
             health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY
         )
+
+    def materials(self) -> list[CommodityDefinition]:
+        mats: list[CommodityDefinition] = []
+        if self.medicine:
+            mats.append(self.medicine)
+        if self.quality_medicine:
+            mats.append(self.quality_medicine)
+        return mats
+
+    def target_units(self) -> int:
+        return self.TARGET_UNITS
 
     def tick(self, actor: Actor) -> DriveMetrics:
         p_event = BASE_EVENT_PROB

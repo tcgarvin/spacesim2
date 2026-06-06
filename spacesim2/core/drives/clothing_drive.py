@@ -1,7 +1,7 @@
 import random
 
 from spacesim2.core.actor import Actor
-from spacesim2.core.commodity import CommodityRegistry
+from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
 from spacesim2.core.drives.actor_drive import (
     ActorDrive,
     DriveMetrics,
@@ -42,6 +42,9 @@ class ClothingDrive(ActorDrive):
     - Buffer = expected days of coverage from all clothing types.
     """
 
+    MISS_PENALTY = DEBT_MISS_PENALTY
+    TARGET_UNITS = 3
+
     def __init__(self, commodity_registry: CommodityRegistry):
         super().__init__(commodity_registry=commodity_registry)
         clothing_good = commodity_registry.get_commodity(CLOTHING_NAME)
@@ -54,6 +57,15 @@ class ClothingDrive(ActorDrive):
         self.metrics = ClothingDriveMetrics(
             health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY
         )
+
+    def materials(self) -> list[CommodityDefinition]:
+        mats = [self.clothing_good]
+        if self.quality_good:
+            mats.append(self.quality_good)
+        return mats
+
+    def target_units(self) -> int:
+        return self.TARGET_UNITS
 
     def tick(self, actor: Actor) -> DriveMetrics:
         p_event = BASE_EVENT_PROB

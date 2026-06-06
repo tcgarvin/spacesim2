@@ -111,24 +111,11 @@ class IndustrialistBrain(ActorBrain):
         for order in existing_orders["buy"] + existing_orders["sell"]:
             commands.append(CancelOrderCommand(order.order_id))
 
-        # 1. Buy commodities for personal consumption (market-first approach).
+        # 1. Buy commodities for personal consumption at willingness-to-pay.
         #    Industrialists specialize in production and rely on the market for
-        #    their own drives: food (FoodDrive), simple_building_materials
-        #    (ShelterDrive), and medicine (HealthDrive).
-        registry = actor.sim.commodity_registry
-        personal_needs = {
-            "food": 6,
-            "simple_building_materials": 3,
-            "medicine": 2,
-        }
-        for commodity_id, target in personal_needs.items():
-            commodity = registry.get_commodity(commodity_id)
-            if commodity:
-                commands.extend(
-                    self._get_personal_purchase_commands(
-                        actor, market, commodity, target
-                    )
-                )
+        #    their own drives (food/clothing/shelter/health); this is the same
+        #    generic, drive-backed demand the colonists use.
+        commands.extend(self._drive_buy_commands(actor, market))
 
         # 2. Handle recipe-related trading
         if self.chosen_recipe_id:
@@ -371,41 +358,6 @@ class IndustrialistBrain(ActorBrain):
         # Recipe is viable if profit margin is at least 20% above input costs
         min_required_value = total_input_cost * 1.2
         return total_output_value >= min_required_value
-
-    def _get_personal_purchase_commands(
-        self,
-        actor: "Actor",
-        market: "Market",
-        commodity: "CommodityDefinition",
-        target: int,
-    ) -> List[MarketCommand]:
-        """Generate commands to buy a personal-consumption commodity up to a target."""
-        commands: List[MarketCommand] = []
-
-        quantity = actor.inventory.get_quantity(commodity)
-        if quantity < target:
-            quantity_to_buy = target - quantity
-
-            # Get available sell orders for this commodity
-            market_sell_orders = sorted(
-                [o for o in market.sell_orders.get(commodity, []) if o.actor != actor],
-                key=lambda o: (o.price, o.timestamp),
-            )
-
-            if market_sell_orders:
-                best_sell_order = market_sell_orders[0]
-                max_affordable = min(
-                    quantity_to_buy, actor.money // best_sell_order.price
-                )
-
-                if max_affordable > 0:
-                    commands.append(
-                        PlaceBuyOrderCommand(
-                            commodity, max_affordable, best_sell_order.price
-                        )
-                    )
-
-        return commands
 
     def _calculate_tool_willingness_to_pay(
         self, actor: "Actor", market: "Market"

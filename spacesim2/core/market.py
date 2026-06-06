@@ -15,6 +15,17 @@ if TYPE_CHECKING:
 # active_orders, reserved_money).
 MarketParticipant = Union[Actor, "Ship"]
 
+# Scarcity pressure: a per-(market, commodity) signal that grows when local buy
+# demand goes unfilled turn over turn (importers failing to serve this market)
+# and decays when demand is met. Buyers use it to escalate bids toward their
+# willingness-to-pay ceiling until supply arrives, which is what makes ships
+# divert cargo to starved planets. Recurrence: p' = p*DECAY + STEP*unmet, so the
+# fully-starved steady state is STEP/(1-DECAY) (clamped to MAX) and a served
+# commodity decays geometrically back to zero.
+SCARCITY_PRESSURE_STEP = 0.5
+SCARCITY_PRESSURE_DECAY = 0.9
+SCARCITY_PRESSURE_MAX = 3.0
+
 
 @dataclass
 class Order:
@@ -100,6 +111,9 @@ class Market:
         self.volume_history: Dict["CommodityDefinition", List[int]] = defaultdict(
             list
         )  # Daily trading volumes
+
+        # Per-commodity scarcity pressure (see SCARCITY_PRESSURE_* constants).
+        self.scarcity_pressure: Dict["CommodityDefinition", float] = defaultdict(float)
 
         # Reference to commodity registry (will be set by simulation)
         self.commodity_registry: Optional["CommodityRegistry"] = None
@@ -329,6 +343,11 @@ class Market:
 
         # Process orders
         for commodity_type in all_commodities:
+            # Capture buy demand standing before matching consumes it.
+            requested_buy_qty = sum(
+                o.quantity for o in self.buy_orders.get(commodity_type, [])
+            )
+
             before_count = len(self.transaction_history)
             self._match_orders_for_commodity(commodity_type)
             after_count = len(self.transaction_history)
@@ -343,6 +362,10 @@ class Market:
                 if tx.commodity_type == commodity_type:
                     daily_volume += tx.quantity
                     average_price_numerator += tx.total_amount
+
+            self._update_scarcity_pressure(
+                commodity_type, requested_buy_qty, daily_volume
+            )
 
             if daily_volume > 0:
                 self.volume_history[commodity_type].append(daily_volume)
@@ -464,6 +487,33 @@ class Market:
         # Update remaining orders
         self.buy_orders[commodity_type] = buy_orders
         self.sell_orders[commodity_type] = sell_orders
+
+    def _update_scarcity_pressure(
+        self,
+        commodity_type: "CommodityDefinition",
+        requested_buy_qty: int,
+        filled_volume: int,
+    ) -> None:
+        """Update the scarcity pressure for a commodity after matching.
+
+        Grows when buy demand goes unfilled (no supply arriving), decays toward
+        zero when demand is met or absent. See SCARCITY_PRESSURE_* constants.
+        """
+        pressure = self.scarcity_pressure[commodity_type]
+        if requested_buy_qty <= 0:
+            pressure *= SCARCITY_PRESSURE_DECAY
+        else:
+            unmet = 1.0 - min(filled_volume, requested_buy_qty) / requested_buy_qty
+            pressure = (
+                pressure * SCARCITY_PRESSURE_DECAY + SCARCITY_PRESSURE_STEP * unmet
+            )
+        self.scarcity_pressure[commodity_type] = max(
+            0.0, min(SCARCITY_PRESSURE_MAX, pressure)
+        )
+
+    def scarcity_pressure_for(self, commodity_type: "CommodityDefinition") -> float:
+        """Current scarcity pressure for a commodity (0 if never under-served)."""
+        return self.scarcity_pressure[commodity_type]
 
     def _execute_transaction(
         self,

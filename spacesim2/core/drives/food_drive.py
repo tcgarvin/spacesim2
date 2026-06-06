@@ -1,5 +1,5 @@
 from spacesim2.core.actor import Actor
-from spacesim2.core.commodity import CommodityRegistry
+from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
 from spacesim2.core.drives.actor_drive import ActorDrive, DriveMetrics, log_norm_ratio
 
 DAILY_CONSUMPTION = 1
@@ -22,6 +22,9 @@ class FoodDriveMetrics(DriveMetrics):
 
 
 class FoodDrive(ActorDrive):
+    MISS_PENALTY = DEBT_MISS_PENALTY
+    TARGET_UNITS = 6
+
     def __init__(self, commodity_registry: CommodityRegistry):
         super().__init__(commodity_registry=commodity_registry)
         self.metrics = FoodDriveMetrics(
@@ -32,6 +35,15 @@ class FoodDrive(ActorDrive):
             raise ValueError("FoodDrive requires a registered 'food' commodity")
         self.food_commodity = food_commodity
         self.quality_commodity = commodity_registry.get_commodity("processed_food")
+
+    def materials(self) -> list[CommodityDefinition]:
+        mats = [self.food_commodity]
+        if self.quality_commodity:
+            mats.append(self.quality_commodity)
+        return mats
+
+    def target_units(self) -> int:
+        return self.TARGET_UNITS
 
     def tick(self, actor: Actor) -> DriveMetrics:
         # Try quality food first, fall back to basic

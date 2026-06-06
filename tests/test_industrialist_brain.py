@@ -13,6 +13,31 @@ from spacesim2.core.commodity import CommodityDefinition, Inventory
 from spacesim2.core.process import ProcessDefinition
 
 
+class _StubDrive:
+    """Minimal drive implementing the interface ActorBrain pricing relies on."""
+
+    def __init__(self, name, materials, target, miss_penalty=0.2, buffer=0.0):
+        self._materials = materials
+        self._target = target
+        self._stake = miss_penalty
+        self._buffer = buffer
+        self.metrics = Mock()
+        self.metrics.get_name.return_value = name
+        self.metrics.buffer = buffer
+
+    def materials(self):
+        return list(self._materials)
+
+    def target_units(self):
+        return self._target
+
+    def deprivation_stake(self):
+        return self._stake
+
+    def marginal_welfare(self):
+        return self._stake * (1.0 - self._buffer)
+
+
 class TestIndustrialistBrain:
     @pytest.fixture
     def mock_actor(self):
@@ -25,6 +50,7 @@ class TestIndustrialistBrain:
         actor.planet.market = Mock()
         actor.sim = Mock()
         actor.inventory = Mock(spec=Inventory)
+        actor.drives = []
         return actor
 
     @pytest.fixture
@@ -200,10 +226,15 @@ class TestIndustrialistBrain:
         assert "sell456" in order_ids
 
     def test_food_purchase_behavior(self, brain, mock_actor, mock_food_commodity):
-        """Test that industrialist tries to buy food from market."""
+        """Test that industrialist buys food from market via drive-backed demand."""
         # Setup: Low food, market has food for sale
         mock_actor.inventory.get_quantity.return_value = 3  # Below target of 6
         mock_actor.money = 100
+
+        # Drive-backed food demand (target 6, stake 0.2, no coverage yet).
+        mock_actor.drives = [
+            _StubDrive("food", [mock_food_commodity], target=6, miss_penalty=0.2)
+        ]
 
         # Mock market sell order for food
         sell_order = Mock()
@@ -216,6 +247,10 @@ class TestIndustrialistBrain:
         mock_actor.sim.commodity_registry.get_commodity.return_value = (
             mock_food_commodity
         )
+        # Food trades around 10, so willingness (price * (1 - buffer) = 10) sits
+        # above the 5 ask; no recipe produces food locally (no make-it cap).
+        mock_actor.planet.market.get_avg_price.return_value = 10
+        mock_actor.sim.process_registry.all_processes.return_value = []
 
         commands = brain.decide_market_actions(mock_actor)
 

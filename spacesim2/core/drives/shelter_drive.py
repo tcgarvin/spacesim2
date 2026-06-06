@@ -1,7 +1,7 @@
 import random
 
 from spacesim2.core.actor import Actor
-from spacesim2.core.commodity import CommodityRegistry
+from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
 from spacesim2.core.drives.actor_drive import (
     ActorDrive,
     DriveMetrics,
@@ -44,6 +44,9 @@ class ShelterDrive(ActorDrive):
     - Quality materials provide faster debt recovery
     """
 
+    MISS_PENALTY = DEBT_MISS_PENALTY
+    TARGET_UNITS = 3
+
     def __init__(self, commodity_registry: CommodityRegistry):
         super().__init__(commodity_registry=commodity_registry)
         building_materials = commodity_registry.get_commodity(BUILDING_MATERIALS_NAME)
@@ -56,6 +59,15 @@ class ShelterDrive(ActorDrive):
         self.metrics = ShelterDriveMetrics(
             health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY
         )
+
+    def materials(self) -> list[CommodityDefinition]:
+        mats = [self.building_materials]
+        if self.quality_materials:
+            mats.append(self.quality_materials)
+        return mats
+
+    def target_units(self) -> int:
+        return self.TARGET_UNITS
 
     def tick(self, actor: Actor) -> DriveMetrics:
         """Process shelter maintenance for this turn."""

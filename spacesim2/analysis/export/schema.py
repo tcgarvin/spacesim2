@@ -60,5 +60,6 @@ MARKET_SNAPSHOTS_SCHEMA = pa.schema(
         ("num_sell_orders", pa.int32()),
         ("best_bid", pa.int64()),  # Highest buy order price
         ("best_ask", pa.int64()),  # Lowest sell order price
+        ("scarcity_pressure", pa.float64()),  # Unmet-import escalation signal
     ]
 )

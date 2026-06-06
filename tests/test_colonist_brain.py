@@ -26,6 +26,9 @@ class TestColonistBrainToolMarket:
         actor.planet.market = Mock()
         actor.sim = Mock()
         actor.inventory = Mock(spec=Inventory)
+        # No drives by default: these tests exercise tool-buying, which is not a
+        # drive-backed need. Drive-backed demand is covered separately.
+        actor.drives = []
         return actor
 
     @pytest.fixture
