@@ -1246,6 +1246,9 @@ analysis = [
     { name = "polars" },
     { name = "pyarrow" },
 ]
+assetgen = [
+    { name = "pillow" },
+]
 dev = [
     { name = "mypy" },
     { name = "pytest" },
@@ -1263,6 +1266,7 @@ requires-dist = [
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "pandas", specifier = ">=2.3.3" },
+    { name = "pillow", marker = "extra == 'assetgen'", specifier = ">=10.0.0" },
     { name = "plotly", marker = "extra == 'analysis'", specifier = ">=5.18.0" },
     { name = "polars", marker = "extra == 'analysis'", specifier = ">=0.20.0" },
     { name = "pyarrow", marker = "extra == 'analysis'", specifier = ">=14.0.0" },

@@ -34,6 +34,11 @@ analysis = [
     "plotly>=5.18.0", # Interactive visualizations
     "marimo>=0.1.0", # Modern reactive notebook
 ]
+# Offline asset-generation pipeline (tools/assetgen). Dev-only; the shipped
+# runtime loads committed PNGs and never imports these.
+assetgen = [
+    "pillow>=10.0.0", # post-processing raw provider output into sprites
+]
 
 [build-system]
 requires = ["setuptools>=61.0"]
@@ -43,6 +48,10 @@ build-backend = "setuptools.build_meta"
 where = ["."]
 include = ["spacesim2*"]
 exclude = ["tests*", "temp*", "data*"]
+
+[tool.setuptools.package-data]
+# Committed live-view sprites + their index ship in the wheel.
+"spacesim2.ui.live" = ["assets/**/*.png", "assets/**/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

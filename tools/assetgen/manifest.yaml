@@ -1,0 +1,65 @@
+# Asset generation manifest — single source of truth for committed game art.
+#
+# One entry per asset. `generate.py` reads it, calls the provider, post-processes
+# into staging/candidates/<id>.png. `promote.py` copies approved candidates into
+# spacesim2/ui/live/assets/<category>/ and records provenance.
+#
+# Fields:
+#   id         unique slug (also the output filename stem)
+#   category   planet | ship | good
+#   provider   nanobanana | pixellab
+#   kind       painterly | rotation | object
+#   size       output sprite edge in px (square)
+#   prompt     full generation prompt
+#   status     draft | approved
+#
+# Shared house style appended to every planet prompt (cohesion across worlds).
+planet_style: >-
+  Digital painting of one single spherical planet floating in the empty black
+  void of outer space, perfectly round and large, filling about 85 percent of
+  the square frame, centered. The planet has a glowing thin atmospheric rim on
+  its edge. Dramatic lighting from the upper-left so the lower-right falls into
+  shadow. The entire background is pure flat #000000 black, completely empty: no
+  stars, no map, no grid, no text, no labels. Sci-fi game asset, Master of Orion
+  2 style, painterly and highly detailed.
+
+assets:
+  - id: terran
+    category: planet
+    provider: nanobanana
+    kind: painterly
+    size: 256
+    status: approved
+    prompt: >-
+      A lush Earth-like terran world: deep blue oceans, green and ochre
+      continents, swirling white cloud systems, cyan atmospheric rim.
+
+  - id: desert
+    category: planet
+    provider: nanobanana
+    kind: painterly
+    size: 256
+    status: approved
+    prompt: >-
+      An arid desert world: rust-orange and tan dunes, dry canyon scars, thin
+      wispy dust clouds, faint pale-gold atmospheric rim, no surface water.
+
+  - id: ice
+    category: planet
+    provider: nanobanana
+    kind: painterly
+    size: 256
+    status: approved
+    prompt: >-
+      A frozen ice world: white and pale-blue glaciers, cracked frozen seas,
+      faint aurora tint, crisp cold cyan-white atmospheric rim.
+
+  - id: barren
+    category: planet
+    provider: nanobanana
+    kind: painterly
+    size: 256
+    status: approved
+    prompt: >-
+      A barren airless rock world: grey and brown cratered surface, no clouds,
+      no oceans, only a very faint thin atmospheric rim, harsh shadows.

@@ -8,11 +8,15 @@ loaded here too; for now everything is procedural.
 
 from __future__ import annotations
 
-from typing import Dict, Tuple
+import json
+from pathlib import Path
+from typing import Dict, List, Tuple
 
 import pygame
 
 Color = Tuple[int, int, int]
+
+_ASSET_ROOT = Path(__file__).resolve().parent / "assets"
 
 # Restrained, moody space palette (MOO-II-ish: dark void, cool chrome).
 BACKGROUND: Color = (6, 7, 16)
@@ -52,6 +56,35 @@ def wellbeing_color(wellbeing: float) -> Color:
     if w < 0.5:
         return _lerp_color(_RAMP_LOW, _RAMP_MID, w / 0.5)
     return _lerp_color(_RAMP_MID, _RAMP_HIGH, (w - 0.5) / 0.5)
+
+
+class PlanetSprites:
+    """Baked planet sprites promoted from the offline asset pipeline.
+
+    Loads every PNG listed in ``assets/planets/index.json`` once (after the
+    display is initialised so ``convert_alpha`` works) and hands one out per
+    planet by a stable hash, so a given world always keeps the same look. When no
+    assets are promoted yet the set is empty and callers fall back to the
+    procedural placeholder sphere.
+    """
+
+    def __init__(self) -> None:
+        self._sprites: List[pygame.Surface] = []
+        index_path = _ASSET_ROOT / "planets" / "index.json"
+        if not index_path.exists():
+            return
+        ids = json.loads(index_path.read_text()).get("ids", [])
+        for asset_id in ids:
+            png = _ASSET_ROOT / "planets" / f"{asset_id}.png"
+            if png.exists():
+                self._sprites.append(pygame.image.load(str(png)).convert_alpha())
+
+    def __bool__(self) -> bool:
+        return bool(self._sprites)
+
+    def for_name(self, name: str) -> pygame.Surface:
+        """Return the stable sprite for ``name``. Caller must check truthiness."""
+        return self._sprites[abs(hash(name)) % len(self._sprites)]
 
 
 class Fonts:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pygame
 
 from spacesim2.ui.live import assets
-from spacesim2.ui.live.assets import Fonts
+from spacesim2.ui.live.assets import Fonts, PlanetSprites
 from spacesim2.ui.live.camera import Camera
 from spacesim2.ui.live.procgen.placeholders import planet_sprite
 from spacesim2.ui.live.view_model import PlanetSnapshot
@@ -23,6 +23,7 @@ def draw_planet(
     planet: PlanetSnapshot,
     camera: Camera,
     fonts: Fonts,
+    sprites: PlanetSprites,
 ) -> None:
     screen_pos = camera.world_to_screen(planet.pos)
     radius = max(4, int(camera.scale(_PLANET_MAP_RADIUS)))
@@ -42,14 +43,20 @@ def draw_planet(
         )
     surface.blit(glow, (screen_pos[0] - glow_r, screen_pos[1] - glow_r))
 
-    # The body. Base colour is a muted version of the glow so worlds differ.
-    body = (
-        (glow_color[0] + 60) // 2,
-        (glow_color[1] + 60) // 2,
-        (glow_color[2] + 80) // 2,
-    )
-    sprite = planet_sprite(radius, body, _stable_seed(planet.name))
-    surface.blit(sprite, (screen_pos[0] - radius, screen_pos[1] - radius))
+    if sprites:
+        # Baked painterly sprite (committed from the asset pipeline), scaled to
+        # the current zoom. Stable per world so a planet keeps its look.
+        baked = sprites.for_name(planet.name)
+        body_sprite = pygame.transform.smoothscale(baked, (radius * 2, radius * 2))
+    else:
+        # Procedural fallback: a shaded sphere tinted by wellbeing.
+        body = (
+            (glow_color[0] + 60) // 2,
+            (glow_color[1] + 60) // 2,
+            (glow_color[2] + 80) // 2,
+        )
+        body_sprite = planet_sprite(radius, body, _stable_seed(planet.name))
+    surface.blit(body_sprite, (screen_pos[0] - radius, screen_pos[1] - radius))
 
     # Label below the world.
     label = fonts.render(planet.name, "small", assets.HUD_TEXT)

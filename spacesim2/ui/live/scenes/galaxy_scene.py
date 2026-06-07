@@ -9,7 +9,7 @@ from __future__ import annotations
 import pygame
 
 from spacesim2.ui.live import assets
-from spacesim2.ui.live.assets import Fonts
+from spacesim2.ui.live.assets import Fonts, PlanetSprites
 from spacesim2.ui.live.camera import Camera
 from spacesim2.ui.live.director import Director
 from spacesim2.ui.live.entities.planet_view import draw_planet
@@ -31,6 +31,7 @@ class GalaxyScene:
         self._camera = camera
         self._nebula = Nebula(size)
         self._fonts = Fonts()
+        self._planet_sprites = PlanetSprites()
 
     def resize(self, size: tuple[int, int]) -> None:
         self._nebula.resize(size)
@@ -45,7 +46,9 @@ class GalaxyScene:
             draw_ship(surface, rendered, self._camera)
 
         for planet in self._vm.planets():
-            draw_planet(surface, planet, self._camera, self._fonts)
+            draw_planet(
+                surface, planet, self._camera, self._fonts, self._planet_sprites
+            )
 
         self._draw_hud(surface)
 
