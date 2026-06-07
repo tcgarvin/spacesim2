@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
 from spacesim2.core.simulation import Simulation
+from spacesim2.ui.live.history import HistoryRecorder
 from spacesim2.ui.live.view_model import GalaxyViewModel, ShipSnapshot
 
 MIN_SPEED = 0.1
@@ -48,6 +49,8 @@ class Director:
     ) -> None:
         self._sim = simulation
         self._vm = view_model
+        # Records a turn-0 baseline on construction; updated after each run_turn.
+        self.history = HistoryRecorder(simulation)
         self.turns_per_second = max(MIN_SPEED, min(MAX_SPEED, turns_per_second))
         self.paused = paused
         self._accumulator = 0.0
@@ -83,6 +86,7 @@ class Director:
             self._accumulator -= seconds_per_turn
             self._snapshot_positions()
             self._sim.run_turn()
+            self.history.sample()
             steps += 1
 
     def _snapshot_positions(self) -> None:

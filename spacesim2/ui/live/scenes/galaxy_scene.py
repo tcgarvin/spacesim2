@@ -16,6 +16,7 @@ from spacesim2.ui.live.entities.planet_view import draw_planet
 from spacesim2.ui.live.entities.ship_view import draw_ship
 from spacesim2.ui.live.procgen.nebula import Nebula
 from spacesim2.ui.live.view_model import GalaxyViewModel
+from spacesim2.ui.live.widgets.charts_panel import ChartsPanel
 
 
 class GalaxyScene:
@@ -32,6 +33,7 @@ class GalaxyScene:
         self._nebula = Nebula(size)
         self._fonts = Fonts()
         self._planet_sprites = PlanetSprites()
+        self.charts = ChartsPanel(director.history)
 
     def resize(self, size: tuple[int, int]) -> None:
         self._nebula.resize(size)
@@ -50,6 +52,7 @@ class GalaxyScene:
                 surface, planet, self._camera, self._fonts, self._planet_sprites
             )
 
+        self.charts.draw(surface, self._fonts)
         self._draw_hud(surface)
 
     def _draw_hud(self, surface: pygame.Surface) -> None:
@@ -57,7 +60,8 @@ class GalaxyScene:
         line = (
             f"turn {self._vm.current_turn}    "
             f"{self._director.turns_per_second:.1f} turns/s ({state})    "
-            f"[space] pause  [+/-] speed  [wheel] zoom  [drag] pan  [esc] quit"
+            f"[space] pause  [+/-] speed  [tab] charts  [wheel] zoom  "
+            f"[drag] pan  [esc] quit"
         )
         text = self._fonts.render(line, "small", assets.HUD_TEXT)
         height = surface.get_height()

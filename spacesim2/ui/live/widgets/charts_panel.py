@@ -1,0 +1,142 @@
+"""Toggleable bottom strip of live time-series charts.
+
+Owns the small amount of view state the charts need — whether the strip is
+showing and which commodity is selected — and lays out a price+volume chart
+beside a citizen-wellbeing chart across the bottom third of the screen. Reads
+everything from a :class:`~spacesim2.ui.live.history.HistoryRecorder`; draws
+nothing about the simulation it isn't handed.
+
+The selected commodity is shown prominently with ``‹ name ›`` affordances so
+cycling is discoverable, not a hidden keybinding.
+"""
+
+from __future__ import annotations
+
+from typing import Optional
+
+import pygame
+
+from spacesim2.core.commodity import CommodityDefinition
+from spacesim2.ui.live.assets import Fonts
+from spacesim2.ui.live.history import HistoryRecorder
+from spacesim2.ui.live.widgets import chart
+
+MARGIN = 16
+HUD_RESERVE = 28  # leave the bottom status line clear
+STRIP_FRACTION = 0.34  # share of the window height the strip occupies
+HEADER_H = 30
+GUTTER = 24
+
+
+class ChartsPanel:
+    def __init__(self, recorder: HistoryRecorder) -> None:
+        self._recorder = recorder
+        self.visible = True
+        self._selected = 0
+
+    def toggle(self) -> None:
+        self.visible = not self.visible
+
+    def cycle_commodity(self, step: int) -> None:
+        count = len(self._recorder.commodities)
+        if count:
+            self._selected = (self._selected + step) % count
+
+    def _selected_commodity(self) -> Optional[CommodityDefinition]:
+        commodities = self._recorder.commodities
+        if not commodities:
+            return None
+        return commodities[self._selected % len(commodities)]
+
+    def _now(self) -> int:
+        axis = self._recorder.turn_axis()
+        return axis[-1] if axis else 0
+
+    def draw(self, surface: pygame.Surface, fonts: Fonts) -> None:
+        if not self.visible:
+            return
+        commodity = self._selected_commodity()
+        if commodity is None:
+            return
+
+        width, height = surface.get_size()
+        strip_h = int(height * STRIP_FRACTION)
+        strip = pygame.Rect(
+            MARGIN,
+            height - HUD_RESERVE - strip_h,
+            width - 2 * MARGIN,
+            strip_h,
+        )
+        chart.draw_panel_background(surface, strip)
+
+        # Split into a wide price/volume column and a narrower wellbeing column.
+        inner = strip.inflate(-2 * GUTTER, -GUTTER)
+        price_w = int(inner.width * 0.64)
+        price_col = pygame.Rect(inner.left, inner.top, price_w, inner.height)
+        well_col = pygame.Rect(
+            price_col.right + GUTTER,
+            inner.top,
+            inner.width - price_w - GUTTER,
+            inner.height,
+        )
+
+        now = self._now()
+        self._draw_selector(surface, fonts, price_col, commodity)
+        self._draw_section_title(surface, fonts, well_col, "Citizen wellbeing")
+
+        price_plot = pygame.Rect(
+            price_col.left,
+            price_col.top + HEADER_H,
+            price_col.width,
+            price_col.height - HEADER_H,
+        )
+        well_plot = pygame.Rect(
+            well_col.left,
+            well_col.top + HEADER_H,
+            well_col.width,
+            well_col.height - HEADER_H,
+        )
+
+        chart.draw_price_volume_plot(
+            surface,
+            price_plot,
+            self._recorder.turn_axis(),
+            self._recorder.prices(commodity.id),
+            self._recorder.volumes(commodity.id),
+            now,
+            fonts,
+        )
+        chart.draw_wellbeing_plot(
+            surface,
+            well_plot,
+            self._recorder.turn_axis(),
+            self._recorder.wellbeing(),
+            now,
+            fonts,
+        )
+
+    def _draw_selector(
+        self,
+        surface: pygame.Surface,
+        fonts: Fonts,
+        col: pygame.Rect,
+        commodity: CommodityDefinition,
+    ) -> None:
+        """Commodity name flanked by arrows, with the keybinding spelled out."""
+        name = fonts.render(f"‹  {commodity.name}  ›", "large", chart.PRICE_LINE)
+        surface.blit(name, (col.left, col.top))
+        idx = self._selected % max(1, len(self._recorder.commodities))
+        meta = fonts.render(
+            f"price & volume · last {chart.WINDOW_TURNS} turns    "
+            f"change commodity: [ or ] or arrow keys   "
+            f"({idx + 1}/{len(self._recorder.commodities)})",
+            "small",
+            chart.LABEL_DIM,
+        )
+        surface.blit(meta, (col.left, col.top + name.get_height()))
+
+    def _draw_section_title(
+        self, surface: pygame.Surface, fonts: Fonts, col: pygame.Rect, title: str
+    ) -> None:
+        label = fonts.render(title, "large", chart.LABEL)
+        surface.blit(label, (col.left, col.top))

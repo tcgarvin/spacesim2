@@ -48,6 +48,29 @@ def test_app_renders_non_blank_frames_over_several_turns() -> None:
         pygame.quit()
 
 
+def test_charts_panel_renders_and_cycles_commodities() -> None:
+    app = LiveGalaxyApp(_sim(), speed=4.0, size=(900, 600))
+    try:
+        app.initialize()
+        assert app._scene is not None
+        # Panel is visible by default; cycling commodities must not raise even
+        # before/while trades accumulate.
+        for _ in range(10):
+            app.update(0.05)
+            app._scene.charts.cycle_commodity(1)
+            app.render()
+        # Toggle off and confirm rendering still succeeds.
+        app._scene.charts.toggle()
+        assert app._scene.charts.visible is False
+        app.render()
+
+        assert app._screen is not None
+        frame = pygame.surfarray.array3d(app._screen)
+        assert frame.std() > 1.0
+    finally:
+        pygame.quit()
+
+
 def test_app_handles_quit_event() -> None:
     app = LiveGalaxyApp(_sim(), size=(320, 200))
     try:

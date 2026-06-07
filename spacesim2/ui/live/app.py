@@ -82,6 +82,15 @@ class LiveGalaxyApp:
                 self._director.change_speed(2.0)
             elif event.key == pygame.K_MINUS:
                 self._director.change_speed(0.5)
+            elif event.key == pygame.K_TAB:
+                assert self._scene is not None
+                self._scene.charts.toggle()
+            elif event.key in (pygame.K_RIGHTBRACKET, pygame.K_RIGHT):
+                assert self._scene is not None
+                self._scene.charts.cycle_commodity(1)
+            elif event.key in (pygame.K_LEFTBRACKET, pygame.K_LEFT):
+                assert self._scene is not None
+                self._scene.charts.cycle_commodity(-1)
         elif event.type == pygame.MOUSEWHEEL:
             factor = ZOOM_STEP if event.y > 0 else 1.0 / ZOOM_STEP
             self._camera.zoom_at(pygame.mouse.get_pos(), factor)
