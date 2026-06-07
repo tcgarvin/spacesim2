@@ -8,6 +8,7 @@ dependencies = [
     "altair>=6.0.0",
     "marimo>=0.18.4",
     "matplotlib>=3.10.1",
+    "numpy>=1.26.0",
     "pandas>=2.3.3",
     "pygame>=2.5.0; platform_system != 'Windows' or python_version < '3.12'",
     "pyyaml>=6.0.2",

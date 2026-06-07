@@ -1,0 +1,106 @@
+"""Turn pacing and anti-slideshow ship interpolation.
+
+The simulation advances in discrete turns, but we render at ~60fps. The director
+converts real elapsed time into turn advances (``turns_per_second``) and, between
+turns, interpolates each ship's *map position* so ships glide smoothly instead of
+teleporting.
+
+Interpolating position (rather than ``travel_progress``) is deliberate: when a
+ship arrives, the core resets progress to 0, so interpolating progress would slide
+the ship backwards. Positions go origin->along-route->dest monotonically, so a
+position lerp always reads as forward motion.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from typing import Dict, List, Tuple
+
+from spacesim2.core.simulation import Simulation
+from spacesim2.ui.live.view_model import GalaxyViewModel, ShipSnapshot
+
+MIN_SPEED = 0.1
+MAX_SPEED = 30.0
+
+
+def _route_position(ship: ShipSnapshot) -> Tuple[float, float]:
+    ox, oy = ship.origin
+    dx, dy = ship.dest
+    t = ship.progress
+    return (ox + (dx - ox) * t, oy + (dy - oy) * t)
+
+
+@dataclass(frozen=True)
+class RenderedShip:
+    snapshot: ShipSnapshot
+    pos: Tuple[float, float]  # interpolated map position this frame
+    heading: float  # radians, 0 when stationary
+
+
+class Director:
+    def __init__(
+        self,
+        simulation: Simulation,
+        view_model: GalaxyViewModel,
+        turns_per_second: float = 1.0,
+        paused: bool = False,
+    ) -> None:
+        self._sim = simulation
+        self._vm = view_model
+        self.turns_per_second = max(MIN_SPEED, min(MAX_SPEED, turns_per_second))
+        self.paused = paused
+        self._accumulator = 0.0
+        # Per-ship map position at the start of the current inter-turn interval.
+        self._prev_pos: Dict[str, Tuple[float, float]] = {
+            s.name: _route_position(s) for s in view_model.ships()
+        }
+
+    @property
+    def alpha(self) -> float:
+        """Fraction [0, 1) through the current inter-turn interval."""
+        if self.paused:
+            return 0.0
+        return min(1.0, self._accumulator * self.turns_per_second)
+
+    def toggle_pause(self) -> None:
+        self.paused = not self.paused
+
+    def change_speed(self, factor: float) -> None:
+        self.turns_per_second = max(
+            MIN_SPEED, min(MAX_SPEED, self.turns_per_second * factor)
+        )
+
+    def update(self, dt: float) -> None:
+        """Advance real time by ``dt`` seconds, stepping turns as needed."""
+        if self.paused:
+            return
+        self._accumulator += dt
+        seconds_per_turn = 1.0 / self.turns_per_second
+        # Step at most a few turns per frame so a hitch can't run away.
+        steps = 0
+        while self._accumulator >= seconds_per_turn and steps < 4:
+            self._accumulator -= seconds_per_turn
+            self._snapshot_positions()
+            self._sim.run_turn()
+            steps += 1
+
+    def _snapshot_positions(self) -> None:
+        self._prev_pos = {s.name: _route_position(s) for s in self._vm.ships()}
+
+    def rendered_ships(self) -> List[RenderedShip]:
+        """Ships at their interpolated positions for this frame."""
+        a = self.alpha
+        out: List[RenderedShip] = []
+        for ship in self._vm.ships():
+            curr = _route_position(ship)
+            prev = self._prev_pos.get(ship.name, curr)
+            pos = (prev[0] + (curr[0] - prev[0]) * a, prev[1] + (curr[1] - prev[1]) * a)
+            if ship.traveling:
+                heading = math.atan2(
+                    ship.dest[1] - ship.origin[1], ship.dest[0] - ship.origin[0]
+                )
+            else:
+                heading = 0.0
+            out.append(RenderedShip(snapshot=ship, pos=pos, heading=heading))
+        return out

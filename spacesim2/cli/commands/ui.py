@@ -47,10 +47,15 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
         help="Disable per-planet resource attributes (enabled by default)",
     )
     parser.add_argument(
-        "--auto-turns",
-        type=int,
-        default=3,
-        help="Number of turns to auto-run before pausing (default: 3)",
+        "--speed",
+        type=float,
+        default=1.0,
+        help="Simulation speed in turns per second (default: 1.0)",
+    )
+    parser.add_argument(
+        "--paused",
+        action="store_true",
+        help="Start paused (press Space to play)",
     )
 
     parser.set_defaults(func=execute)
@@ -68,7 +73,7 @@ def execute(args: argparse.Namespace) -> int:
     """
     # Imported lazily so the pygame dependency (and its startup banner) only
     # loads when the UI is actually launched, not on every CLI invocation.
-    from spacesim2.ui.pygame_ui import PYGAME_AVAILABLE, PygameUI
+    from spacesim2.ui.live.app import PYGAME_AVAILABLE, LiveGalaxyApp
 
     if not PYGAME_AVAILABLE:
         print_error("pygame not available. Install with: uv pip install pygame")
@@ -83,8 +88,8 @@ def execute(args: argparse.Namespace) -> int:
         enable_planet_attributes=args.planet_attributes,
     )
 
-    # Run with pygame UI
-    ui = PygameUI(simulation)
-    ui.run(auto_turns=args.auto_turns)
+    # Launch the live galaxy view.
+    app = LiveGalaxyApp(simulation, speed=args.speed, paused=args.paused)
+    app.run()
 
     return 0
