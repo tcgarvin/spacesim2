@@ -11,7 +11,8 @@ from spacesim2.ui.live.procgen.placeholders import planet_sprite
 from spacesim2.ui.live.view_model import PlanetSnapshot
 
 # Planet visual radius in map units (independent of population for now).
-_PLANET_MAP_RADIUS = 2.2
+# Public: the scene uses it for click hit-testing and selection rings.
+PLANET_MAP_RADIUS = 2.2
 
 
 def _stable_seed(name: str) -> int:
@@ -26,7 +27,7 @@ def draw_planet(
     sprites: PlanetSprites,
 ) -> None:
     screen_pos = camera.world_to_screen(planet.pos)
-    radius = max(4, int(camera.scale(_PLANET_MAP_RADIUS)))
+    radius = max(4, int(camera.scale(PLANET_MAP_RADIUS)))
 
     glow_color = assets.wellbeing_color(planet.wellbeing)
 

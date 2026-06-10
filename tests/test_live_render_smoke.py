@@ -79,3 +79,92 @@ def test_app_handles_quit_event() -> None:
         assert app.handle_event(quit_event) is False
     finally:
         pygame.quit()
+
+
+def test_click_planet_selects_and_renders_detail_panel() -> None:
+    sim = _sim()
+    app = LiveGalaxyApp(sim, size=(900, 600))
+    try:
+        app.initialize()
+        assert app._scene is not None and app._camera is not None
+        planet = sim.planets[0]
+        pos = app._camera.world_to_screen(planet.get_position())
+
+        down = pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos)
+        up = pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=pos)
+        assert app.handle_event(down) is True
+        assert app.handle_event(up) is True
+        assert app._scene.selection == ("planet", planet.name)
+
+        # Panel + planet-scoped charts render without error.
+        app.render()
+        assert app._scene._panel_rect is not None
+
+        # Esc closes the panel first (app keeps running)...
+        esc = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE)
+        assert app.handle_event(esc) is True
+        assert app._scene.selection is None
+        # ...and quits once nothing is open.
+        assert app.handle_event(esc) is False
+    finally:
+        pygame.quit()
+
+
+def test_drag_does_not_select() -> None:
+    sim = _sim()
+    app = LiveGalaxyApp(sim, size=(900, 600))
+    try:
+        app.initialize()
+        assert app._scene is not None and app._camera is not None
+        planet = sim.planets[0]
+        pos = app._camera.world_to_screen(planet.get_position())
+        far = (pos[0] + 60, pos[1] + 60)
+
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos))
+        app.handle_event(
+            pygame.event.Event(
+                pygame.MOUSEMOTION, pos=far, rel=(60, 60), buttons=(1, 0, 0)
+            )
+        )
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=far))
+        assert app._scene.selection is None
+    finally:
+        pygame.quit()
+
+
+def test_click_void_clears_selection_and_ship_pick_works() -> None:
+    sim = _sim()
+    app = LiveGalaxyApp(sim, size=(900, 600))
+    try:
+        app.initialize()
+        scene = app._scene
+        assert scene is not None and app._camera is not None
+
+        # Ship picking: dock position of a known ship.
+        ship = sim.ships[0]
+        assert ship.planet is not None
+        ship_pos = app._camera.world_to_screen(ship.planet.get_position())
+        picked = scene.pick(ship_pos)
+        # The planet sits on top of its docked ships, so the planet wins here.
+        assert picked is not None and picked[0] == "planet"
+
+        scene.selection = ("ship", ship.name)
+        app.render()  # ship panel renders without error
+        assert scene._panel_rect is not None
+
+        # Find a void spot (no pick) and click it: selection clears.
+        void = None
+        for x in range(10, 900, 40):
+            for y in range(10, 600, 40):
+                if scene.pick((x, y)) is None and not (
+                    scene._panel_rect and scene._panel_rect.collidepoint((x, y))
+                ):
+                    void = (x, y)
+                    break
+            if void:
+                break
+        assert void is not None
+        scene.handle_click(void)
+        assert scene.selection is None
+    finally:
+        pygame.quit()

@@ -16,7 +16,8 @@ from spacesim2.ui.live.camera import Camera
 from spacesim2.ui.live.director import RenderedShip
 from spacesim2.ui.live.procgen.placeholders import ship_glyph
 
-_SHIP_MAP_LENGTH = 1.6  # ship glyph length in map units
+# Ship glyph length in map units. Public: the scene uses it for hit-testing.
+SHIP_MAP_LENGTH = 1.6
 
 
 def draw_ship(
@@ -32,17 +33,29 @@ def draw_ship(
         dest = camera.world_to_screen(ship.dest)
         # Trade lane: a quiet line along the route.
         pygame.draw.line(surface, assets.TRADE_LANE, origin, dest, 1)
-        # Engine trail: a short fading segment behind the ship.
-        trail_len = int(camera.scale(_SHIP_MAP_LENGTH * 2.5))
+        # Engine trail: a short fading segment behind the ship. Drawn on a
+        # surface sized to the trail's bounding box (not the whole screen) so
+        # per-ship per-frame allocation stays small.
+        trail_len = int(camera.scale(SHIP_MAP_LENGTH * 2.5))
         if trail_len > 1:
             heading = rendered.heading
             tx = screen_pos[0] - int(math.cos(heading) * trail_len)
             ty = screen_pos[1] - int(math.sin(heading) * trail_len)
-            trail = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
-            pygame.draw.line(trail, (*assets.SHIP_ENGINE, 90), (tx, ty), screen_pos, 2)
-            surface.blit(trail, (0, 0))
+            left, top = min(tx, screen_pos[0]) - 2, min(ty, screen_pos[1]) - 2
+            trail = pygame.Surface(
+                (abs(tx - screen_pos[0]) + 4, abs(ty - screen_pos[1]) + 4),
+                pygame.SRCALPHA,
+            )
+            pygame.draw.line(
+                trail,
+                (*assets.SHIP_ENGINE, 90),
+                (tx - left, ty - top),
+                (screen_pos[0] - left, screen_pos[1] - top),
+                2,
+            )
+            surface.blit(trail, (left, top))
 
-    length = max(6, int(camera.scale(_SHIP_MAP_LENGTH)))
+    length = max(6, int(camera.scale(SHIP_MAP_LENGTH)))
     glyph = ship_glyph(length, rendered.heading, assets.SHIP_BODY, assets.SHIP_ENGINE)
     surface.blit(
         glyph,

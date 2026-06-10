@@ -41,7 +41,7 @@ _RAMP_MID: Color = (220, 190, 90)
 _RAMP_HIGH: Color = (90, 210, 120)
 
 
-def _lerp_color(a: Color, b: Color, t: float) -> Color:
+def lerp_color(a: Color, b: Color, t: float) -> Color:
     t = max(0.0, min(1.0, t))
     return (
         int(round(a[0] + (b[0] - a[0]) * t)),
@@ -54,8 +54,8 @@ def wellbeing_color(wellbeing: float) -> Color:
     """Map a wellbeing score in [0, 1] to a famine->thriving colour."""
     w = max(0.0, min(1.0, wellbeing))
     if w < 0.5:
-        return _lerp_color(_RAMP_LOW, _RAMP_MID, w / 0.5)
-    return _lerp_color(_RAMP_MID, _RAMP_HIGH, (w - 0.5) / 0.5)
+        return lerp_color(_RAMP_LOW, _RAMP_MID, w / 0.5)
+    return lerp_color(_RAMP_MID, _RAMP_HIGH, (w - 0.5) / 0.5)
 
 
 class PlanetSprites:
@@ -97,8 +97,10 @@ class Fonts:
             "large": pygame.font.SysFont(None, 32),
         }
 
+    def font(self, size: str = "normal") -> pygame.font.Font:
+        return self._fonts.get(size, self._fonts["normal"])
+
     def render(
         self, text: str, size: str = "normal", color: Color = HUD_TEXT
     ) -> pygame.Surface:
-        font = self._fonts.get(size, self._fonts["normal"])
-        return font.render(text, True, color)
+        return self.font(size).render(text, True, color)

@@ -20,7 +20,9 @@ from typing import Deque, Dict, List
 
 from spacesim2.core.actor import ActorType
 from spacesim2.core.commodity import CommodityDefinition
+from spacesim2.core.planet import Planet
 from spacesim2.core.simulation import Simulation
+from spacesim2.ui.live.view_model import planet_wellbeing
 
 # How many turns of history to retain. At one point per turn this is plenty for a
 # scrolling chart while staying tiny in memory (a few thousand floats per series).
@@ -82,6 +84,23 @@ def _galaxy_price_and_volume(
     return 0.0, 0.0
 
 
+def _planet_price_and_volume(
+    planet: Planet, commodity: CommodityDefinition
+) -> tuple[float, float]:
+    """One planet market's strike price and volume for ``commodity`` this turn.
+
+    Mirrors the galaxy aggregate's continuity rule: on a turn with no trades the
+    price falls back to the market's own valuation (last strike carried forward)
+    so the local line never drops to a misleading zero.
+    """
+    market = planet.market
+    volumes = market.volume_history.get(commodity, [])
+    last_volume = float(volumes[-1]) if volumes else 0.0
+    if last_volume > 0.0:
+        return float(market.price_history[commodity][-1]), last_volume
+    return float(market.get_avg_price(commodity)), 0.0
+
+
 class HistoryRecorder:
     """Bounded per-turn time series for the live charts.
 
@@ -106,6 +125,19 @@ class HistoryRecorder:
             c.id: deque(maxlen=window) for c in self.commodities
         }
         self._wellbeing: Deque[float] = deque(maxlen=window)
+        # Per-planet series, keyed by planet name then commodity id. Sampled in
+        # lockstep with the galaxy series so they share the same turn axis.
+        self._planet_price: Dict[str, Dict[str, Deque[float]]] = {
+            p.name: {c.id: deque(maxlen=window) for c in self.commodities}
+            for p in simulation.planets
+        }
+        self._planet_volume: Dict[str, Dict[str, Deque[float]]] = {
+            p.name: {c.id: deque(maxlen=window) for c in self.commodities}
+            for p in simulation.planets
+        }
+        self._planet_wellbeing: Dict[str, Deque[float]] = {
+            p.name: deque(maxlen=window) for p in simulation.planets
+        }
         # Capture a turn-0 baseline so the charts have a point before any turn runs.
         self.sample()
 
@@ -117,6 +149,14 @@ class HistoryRecorder:
             price, volume = _galaxy_price_and_volume(self._sim, commodity)
             self._price[commodity.id].append(price)
             self._volume[commodity.id].append(volume)
+        for planet in self._sim.planets:
+            if planet.name not in self._planet_wellbeing:
+                continue  # planet added after startup; not tracked
+            self._planet_wellbeing[planet.name].append(planet_wellbeing(planet))
+            for commodity in self.commodities:
+                price, volume = _planet_price_and_volume(planet, commodity)
+                self._planet_price[planet.name][commodity.id].append(price)
+                self._planet_volume[planet.name][commodity.id].append(volume)
 
     def turn_axis(self) -> List[int]:
         return list(self._turns)
@@ -129,3 +169,12 @@ class HistoryRecorder:
 
     def wellbeing(self) -> List[float]:
         return list(self._wellbeing)
+
+    def planet_prices(self, planet_name: str, commodity_id: str) -> List[float]:
+        return list(self._planet_price.get(planet_name, {}).get(commodity_id, ()))
+
+    def planet_volumes(self, planet_name: str, commodity_id: str) -> List[float]:
+        return list(self._planet_volume.get(planet_name, {}).get(commodity_id, ()))
+
+    def planet_wellbeing_series(self, planet_name: str) -> List[float]:
+        return list(self._planet_wellbeing.get(planet_name, ()))

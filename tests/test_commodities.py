@@ -156,8 +156,12 @@ def test_inventory_commodity_items(mock_sim):
     assert inventory.get_quantity("test_commodity") == 3
 
 
-def test_actor_execute_process():
+def test_actor_execute_process(monkeypatch):
     """Test actor executing a process."""
+    # Pin the RNG above the 1% tool-break probability so the "tools aren't
+    # consumed" assertion can't flake on a random breakage.
+    monkeypatch.setattr("spacesim2.core.commands.random.random", lambda: 0.99)
+
     # Set up simulation
     sim = Simulation()
 

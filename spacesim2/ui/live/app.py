@@ -2,7 +2,9 @@
 
 Holds the pygame window, a fixed-timestep-ish clock, the camera, the director
 (turn pacing), and the galaxy scene. Input is restrained: play/pause, speed,
-zoom, pan, quit. ``initialize`` / ``update`` / ``render`` are split out so tests
+zoom, pan, click-to-inspect, quit. A mouse press only pans once it moves past a
+small slop; a release inside the slop is a click and selects the planet/ship
+under the cursor. ``initialize`` / ``update`` / ``render`` are split out so tests
 can drive frames headlessly (``SDL_VIDEODRIVER=dummy``) without the blocking loop.
 """
 
@@ -27,6 +29,9 @@ from spacesim2.ui.live.view_model import GalaxyViewModel
 DEFAULT_SIZE = (1600, 900)
 TARGET_FPS = 60
 ZOOM_STEP = 1.1
+# A press-release pair that moves less than this many pixels is a click
+# (select), anything more is a drag (pan).
+CLICK_SLOP_PX = 5
 
 
 class LiveGalaxyApp:
@@ -50,6 +55,8 @@ class LiveGalaxyApp:
         self._running = False
         self._dragging = False
         self._last_mouse: Tuple[int, int] = (0, 0)
+        self._mouse_down_at: Optional[Tuple[int, int]] = None
+        self._hand_cursor = False
 
     def initialize(self) -> None:
         pygame.init()
@@ -74,7 +81,12 @@ class LiveGalaxyApp:
         if event.type == pygame.QUIT:
             return False
         if event.type == pygame.KEYDOWN:
-            if event.key in (pygame.K_ESCAPE, pygame.K_q):
+            if event.key == pygame.K_ESCAPE:
+                # Esc peels back one layer: close the detail panel first,
+                # quit only when nothing is open.
+                assert self._scene is not None
+                return self._scene.clear_selection()
+            if event.key == pygame.K_q:
                 return False
             if event.key == pygame.K_SPACE:
                 self._director.toggle_pause()
@@ -95,18 +107,46 @@ class LiveGalaxyApp:
             factor = ZOOM_STEP if event.y > 0 else 1.0 / ZOOM_STEP
             self._camera.zoom_at(pygame.mouse.get_pos(), factor)
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            self._dragging = True
+            self._mouse_down_at = event.pos
             self._last_mouse = event.pos
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            if not self._dragging and self._mouse_down_at is not None:
+                assert self._scene is not None
+                self._scene.handle_click(event.pos)
             self._dragging = False
-        elif event.type == pygame.MOUSEMOTION and self._dragging:
-            dx = event.pos[0] - self._last_mouse[0]
-            dy = event.pos[1] - self._last_mouse[1]
-            self._camera.pan_pixels(dx, dy)
+            self._mouse_down_at = None
+        elif event.type == pygame.MOUSEMOTION:
+            if self._mouse_down_at is not None and not self._dragging:
+                # Promote to a drag once the cursor leaves the click slop.
+                moved = (
+                    abs(event.pos[0] - self._mouse_down_at[0]),
+                    abs(event.pos[1] - self._mouse_down_at[1]),
+                )
+                if max(moved) > CLICK_SLOP_PX:
+                    self._dragging = True
+            if self._dragging:
+                dx = event.pos[0] - self._last_mouse[0]
+                dy = event.pos[1] - self._last_mouse[1]
+                self._camera.pan_pixels(dx, dy)
+            else:
+                assert self._scene is not None
+                self._scene.update_hover(event.pos)
+                self._update_cursor()
             self._last_mouse = event.pos
         elif event.type == pygame.VIDEORESIZE:
             self._resize((event.w, event.h))
         return True
+
+    def _update_cursor(self) -> None:
+        """Show a hand over clickable planets/ships, the arrow elsewhere."""
+        assert self._scene is not None
+        want_hand = self._scene.hover is not None
+        if want_hand != self._hand_cursor:
+            cursor = (
+                pygame.SYSTEM_CURSOR_HAND if want_hand else pygame.SYSTEM_CURSOR_ARROW
+            )
+            pygame.mouse.set_cursor(cursor)
+            self._hand_cursor = want_hand
 
     def _resize(self, size: Tuple[int, int]) -> None:
         assert self._scene is not None

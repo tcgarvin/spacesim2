@@ -73,3 +73,29 @@ def test_unknown_commodity_id_returns_empty() -> None:
     recorder = HistoryRecorder(sim)
     assert recorder.prices("does_not_exist") == []
     assert recorder.volumes("does_not_exist") == []
+
+
+def test_per_planet_series_sampled_in_lockstep_with_galaxy() -> None:
+    sim = _small_sim()
+    recorder = HistoryRecorder(sim)
+    for _ in range(5):
+        sim.run_turn()
+        recorder.sample()
+
+    expected_len = len(recorder.turn_axis())
+    commodity = recorder.commodities[0]
+    for planet in sim.planets:
+        assert len(recorder.planet_wellbeing_series(planet.name)) == expected_len
+        assert len(recorder.planet_prices(planet.name, commodity.id)) == expected_len
+        assert len(recorder.planet_volumes(planet.name, commodity.id)) == expected_len
+        for w in recorder.planet_wellbeing_series(planet.name):
+            assert 0.0 <= w <= 1.0
+        assert all(p >= 0.0 for p in recorder.planet_prices(planet.name, commodity.id))
+
+
+def test_unknown_planet_returns_empty_series() -> None:
+    sim = _small_sim()
+    recorder = HistoryRecorder(sim)
+    assert recorder.planet_prices("Nowhere", recorder.commodities[0].id) == []
+    assert recorder.planet_volumes("Nowhere", recorder.commodities[0].id) == []
+    assert recorder.planet_wellbeing_series("Nowhere") == []

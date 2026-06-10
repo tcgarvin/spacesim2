@@ -63,13 +63,23 @@ def _value_y(value: float, lo: float, hi: float, rect: pygame.Rect) -> int:
 def _glow_line(
     surface: pygame.Surface, points: Sequence[Tuple[int, int]], color: Color
 ) -> None:
-    """Draw a polyline with a soft underglow beneath a crisp 2px stroke."""
+    """Draw a polyline with a soft underglow beneath a crisp 2px stroke.
+
+    The translucent glow passes render onto a surface sized to the polyline's
+    bounding box (not the whole screen) to keep per-frame allocation small.
+    """
     if len(points) < 2:
         return
-    glow = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
-    pygame.draw.lines(glow, (*color, 60), False, points, 6)
-    pygame.draw.lines(glow, (*color, 110), False, points, 3)
-    surface.blit(glow, (0, 0))
+    pad = 4  # room for the widest glow stroke
+    left = min(p[0] for p in points) - pad
+    top = min(p[1] for p in points) - pad
+    width = max(p[0] for p in points) - left + pad
+    height = max(p[1] for p in points) - top + pad
+    local = [(x - left, y - top) for x, y in points]
+    glow = pygame.Surface((max(1, width), max(1, height)), pygame.SRCALPHA)
+    pygame.draw.lines(glow, (*color, 60), False, local, 6)
+    pygame.draw.lines(glow, (*color, 110), False, local, 3)
+    surface.blit(glow, (left, top))
     pygame.draw.lines(surface, color, False, points, 2)
 
 

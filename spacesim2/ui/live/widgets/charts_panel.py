@@ -7,7 +7,9 @@ everything from a :class:`~spacesim2.ui.live.history.HistoryRecorder`; draws
 nothing about the simulation it isn't handed.
 
 The selected commodity is shown prominently with ``‹ name ›`` affordances so
-cycling is discoverable, not a hidden keybinding.
+cycling is discoverable, not a hidden keybinding. When the scene has a planet
+selected the strip scopes itself to that planet's market and wellbeing instead
+of the galaxy aggregate, and shrinks to clear the drill-down panel.
 """
 
 from __future__ import annotations
@@ -24,7 +26,9 @@ from spacesim2.ui.live.widgets import chart
 MARGIN = 16
 HUD_RESERVE = 28  # leave the bottom status line clear
 STRIP_FRACTION = 0.34  # share of the window height the strip occupies
-HEADER_H = 30
+# Tall enough for the large selector title plus the small meta line beneath it,
+# so the plot's max-value label doesn't collide with the header text.
+HEADER_H = 56
 GUTTER = 24
 
 
@@ -52,7 +56,13 @@ class ChartsPanel:
         axis = self._recorder.turn_axis()
         return axis[-1] if axis else 0
 
-    def draw(self, surface: pygame.Surface, fonts: Fonts) -> None:
+    def draw(
+        self,
+        surface: pygame.Surface,
+        fonts: Fonts,
+        planet_name: Optional[str] = None,
+        reserve_right: int = 0,
+    ) -> None:
         if not self.visible:
             return
         commodity = self._selected_commodity()
@@ -64,9 +74,11 @@ class ChartsPanel:
         strip = pygame.Rect(
             MARGIN,
             height - HUD_RESERVE - strip_h,
-            width - 2 * MARGIN,
+            width - 2 * MARGIN - reserve_right,
             strip_h,
         )
+        if strip.width < 200:
+            return  # window too narrow to chart anything legible
         chart.draw_panel_background(surface, strip)
 
         # Split into a wide price/volume column and a narrower wellbeing column.
@@ -81,8 +93,10 @@ class ChartsPanel:
         )
 
         now = self._now()
-        self._draw_selector(surface, fonts, price_col, commodity)
-        self._draw_section_title(surface, fonts, well_col, "Citizen wellbeing")
+        scope = planet_name if planet_name is not None else "galaxy"
+        well_title = f"{planet_name} wellbeing" if planet_name else "Citizen wellbeing"
+        self._draw_selector(surface, fonts, price_col, commodity, scope)
+        self._draw_section_title(surface, fonts, well_col, well_title)
 
         price_plot = pygame.Rect(
             price_col.left,
@@ -97,12 +111,21 @@ class ChartsPanel:
             well_col.height - HEADER_H,
         )
 
+        if planet_name is not None:
+            prices = self._recorder.planet_prices(planet_name, commodity.id)
+            volumes = self._recorder.planet_volumes(planet_name, commodity.id)
+            wellbeing = self._recorder.planet_wellbeing_series(planet_name)
+        else:
+            prices = self._recorder.prices(commodity.id)
+            volumes = self._recorder.volumes(commodity.id)
+            wellbeing = self._recorder.wellbeing()
+
         chart.draw_price_volume_plot(
             surface,
             price_plot,
             self._recorder.turn_axis(),
-            self._recorder.prices(commodity.id),
-            self._recorder.volumes(commodity.id),
+            prices,
+            volumes,
             now,
             fonts,
         )
@@ -110,7 +133,7 @@ class ChartsPanel:
             surface,
             well_plot,
             self._recorder.turn_axis(),
-            self._recorder.wellbeing(),
+            wellbeing,
             now,
             fonts,
         )
@@ -121,13 +144,14 @@ class ChartsPanel:
         fonts: Fonts,
         col: pygame.Rect,
         commodity: CommodityDefinition,
+        scope: str,
     ) -> None:
         """Commodity name flanked by arrows, with the keybinding spelled out."""
         name = fonts.render(f"‹  {commodity.name}  ›", "large", chart.PRICE_LINE)
         surface.blit(name, (col.left, col.top))
         idx = self._selected % max(1, len(self._recorder.commodities))
         meta = fonts.render(
-            f"price & volume · last {chart.WINDOW_TURNS} turns    "
+            f"{scope} price & volume · last {chart.WINDOW_TURNS} turns    "
             f"change commodity: [ or ] or arrow keys   "
             f"({idx + 1}/{len(self._recorder.commodities)})",
             "small",
