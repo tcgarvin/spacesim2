@@ -8,7 +8,6 @@ from spacesim2.core.commands import (
     GovernmentWorkCommand,
     MarketCommand,
     PlaceBuyOrderCommand,
-    PlaceSellOrderCommand,
     ProcessCommand,
 )
 
@@ -116,29 +115,38 @@ class ColonistBrain(ActorBrain):
     def _find_most_profitable_process(
         self, actor: Actor, market: "Market"
     ) -> Optional["ProcessDefinition"]:
-        """Find the most profitable process based on current market prices and available resources."""
-        # Actor always has sim reference
+        """Find the most profitable process based on *expected* outcomes.
 
+        Output value is discounted by planet resource availability and the
+        actor's skill (failed runs waste the turn). Without that discount, a
+        high ore price lures colonists on resource-poor planets into mining
+        loops that fail nearly every turn while they starve.
+        """
         best_process = None
-        best_profit = 10  # Must exceed government work profit
+        best_profit = 10.0  # Must exceed government work profit
 
         for process in actor.sim.process_registry.all_processes():
             # Calculate potential profit using actual market bid/ask prices
-            input_cost = 0
+            input_cost = 0.0
             for commodity, quantity in process.inputs.items():
                 # Use ask price (what we'd pay to buy) if available
                 bid, ask = market.get_bid_ask_spread(commodity)
                 price = ask if ask is not None else market.get_avg_price(commodity)
                 input_cost += price * quantity
 
-            output_value = 0
+            output_value = 0.0
             for commodity, quantity in process.outputs.items():
                 # Use bid price (what buyers will pay) if available
                 bid, ask = market.get_bid_ask_spread(commodity)
                 price = bid if bid is not None else market.get_avg_price(commodity)
                 output_value += price * quantity
 
-            potential_profit = output_value - input_cost
+            expected_value = (
+                output_value
+                * self._expected_yield_modifier(actor, process)
+                * self._expected_skill_factor(actor, process)
+            )
+            potential_profit = expected_value - input_cost
 
             # Check if we can execute this process
             can_execute = actor.can_execute_process(process.id)
@@ -279,7 +287,7 @@ class ColonistBrain(ActorBrain):
     def _sell_excess_commands(
         self, actor: Actor, market: "Market"
     ) -> List[MarketCommand]:
-        """Sell inventory above keep levels, as a price taker on standing bids."""
+        """Sell inventory above keep levels, floored at replacement cost."""
         commands: List[MarketCommand] = []
         for commodity in actor.sim.commodity_registry.all_commodities():
             if not commodity.transportable:
@@ -288,19 +296,9 @@ class ColonistBrain(ActorBrain):
             available = actor.inventory.get_available_quantity(commodity)
             if available <= keep:
                 continue
-            quantity_to_sell = available - keep
-
-            market_buy_orders = sorted(
-                [o for o in market.buy_orders.get(commodity, []) if o.actor != actor],
-                key=lambda o: (-o.price, o.timestamp),
+            commands.extend(
+                self._sell_at_or_above_cost(actor, market, commodity, available - keep)
             )
-            if market_buy_orders:
-                best_buy_order = market_buy_orders[0]
-                commands.append(
-                    PlaceSellOrderCommand(
-                        commodity, quantity_to_sell, best_buy_order.price
-                    )
-                )
         return commands
 
     def _keep_level(self, actor: Actor, commodity: "CommodityDefinition") -> int:

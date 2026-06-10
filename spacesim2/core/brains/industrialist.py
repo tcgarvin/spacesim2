@@ -2,14 +2,17 @@ import math
 import random
 from typing import TYPE_CHECKING, Dict, List, Optional
 
-from spacesim2.core.actor_brain import ActorBrain
+from spacesim2.core.actor_brain import (
+    GOVERNMENT_WAGE,
+    TOOL_EXPECTED_LIFESPAN,
+    ActorBrain,
+)
 from spacesim2.core.commands import (
     CancelOrderCommand,
     EconomicCommand,
     GovernmentWorkCommand,
     MarketCommand,
     PlaceBuyOrderCommand,
-    PlaceSellOrderCommand,
     ProcessCommand,
 )
 
@@ -19,8 +22,6 @@ if TYPE_CHECKING:
     from spacesim2.core.market import Market
     from spacesim2.core.process import ProcessDefinition
 
-# Tools wear out after ~100 uses; amortize their cost across that lifespan.
-TOOL_EXPECTED_LIFESPAN = 100
 # Notional value of a (non-transportable) facility when it is itself a recipe
 # output. Production recipes value facilities via amortized build cost instead.
 FACILITY_NOTIONAL_VALUE = 50.0
@@ -33,6 +34,10 @@ MAX_IMPUTE_DEPTH = 6
 # the population doesn't stampede into the same recipe during a cold start.
 FACILITY_HORIZON_MIN = 150
 FACILITY_HORIZON_MAX = 600
+# How often to check whether the chosen recipe is still profitable. Entry
+# requires a 20% margin while exit waits for an outright loss; the band
+# between the two is hysteresis so producers don't thrash on price noise.
+EXIT_CHECK_INTERVAL = 10
 
 
 class IndustrialistBrain(ActorBrain):
@@ -51,6 +56,22 @@ class IndustrialistBrain(ActorBrain):
         self.turns_since_recipe_evaluation += 1
         if self._should_reevaluate_recipe():
             self.chosen_recipe_id = self._select_new_recipe(actor)
+            self.turns_since_recipe_evaluation = 0
+        elif (
+            self.chosen_recipe_id
+            and actor.planet
+            and self.turns_since_recipe_evaluation >= EXIT_CHECK_INTERVAL
+        ):
+            # Exit an unprofitable line of business: if the recipe no longer
+            # covers its inputs plus a turn of labor, drop it and re-select
+            # (falling back to government work when nothing is viable).
+            process = actor.sim.process_registry.get_process(self.chosen_recipe_id)
+            if process:
+                score = self._calculate_recipe_score(
+                    actor, actor.planet.market, process, require_entry_margin=False
+                )
+                if score <= 0:
+                    self.chosen_recipe_id = None
             self.turns_since_recipe_evaluation = 0
 
         # If we don't have a recipe yet, select one
@@ -264,11 +285,11 @@ class IndustrialistBrain(ActorBrain):
         visiting: frozenset[str],
         memo: Dict[str, float],
     ) -> float:
-        """Total imputed cost to execute ``process`` once: recursively-valued
-        inputs, plus amortized tool and facility costs. ``math.inf`` if any
-        component can't be valued.
+        """Total imputed cost to execute ``process`` once: a turn of labor at
+        the government wage, recursively-valued inputs, plus amortized tool
+        and facility costs. ``math.inf`` if any component can't be valued.
         """
-        total = 0.0
+        total = float(GOVERNMENT_WAGE)
 
         for commodity, quantity in process.inputs.items():
             unit = self._imputed_unit_cost(
@@ -315,12 +336,16 @@ class IndustrialistBrain(ActorBrain):
         market: "Market",
         process: "ProcessDefinition",
         memo: Optional[Dict[str, float]] = None,
+        require_entry_margin: bool = True,
     ) -> float:
         """Calculate a profitability score for a recipe.
 
-        Returns expected profit margin as a score. Higher = more profitable.
-        Returns 0 if recipe is not viable. ``memo`` caches imputed unit costs
-        across a single recipe-selection pass (market state is fixed there).
+        Returns expected profit (output value minus inputs and a turn of
+        labor). With ``require_entry_margin`` (the default, used when picking
+        a recipe) anything below a 20% margin scores 0; exit decisions pass
+        False and act on the raw profit, so the margin band acts as
+        hysteresis. ``memo`` caches imputed unit costs across a single
+        recipe-selection pass (market state is fixed there).
         """
         if memo is None:
             memo = {}
@@ -364,68 +389,13 @@ class IndustrialistBrain(ActorBrain):
             expected_quantity = quantity * attribute_modifier
             total_output_value += price * expected_quantity
 
-        # Require at least 20% margin
-        min_required_value = total_input_cost * 1.2
-        if total_output_value < min_required_value:
+        # Entry requires a 20% margin over costs (which include labor); exit
+        # checks skip the margin and act on raw profit.
+        if require_entry_margin and total_output_value < total_input_cost * 1.2:
             return 0.0
 
-        # Score is expected profit (output - input)
-        # For gathering (no inputs), this is just expected output value
+        # Score is expected profit (output - inputs - labor)
         return total_output_value - total_input_cost
-
-    def _is_recipe_viable(
-        self, actor: "Actor", market: "Market", process: "ProcessDefinition"
-    ) -> bool:
-        """Check if a recipe is economically viable given current market conditions.
-
-        For processes with resource_attribute, adjusts expected output based on
-        planet attributes to reflect actual expected yield.
-        """
-        # Calculate input costs based on actual market ask prices
-        total_input_cost = 0
-        for commodity, quantity in process.inputs.items():
-            # Use ask price (what we'd pay to buy) if available
-            bid, ask = market.get_bid_ask_spread(commodity)
-            if ask is not None:
-                price = ask
-            else:
-                # Fall back to avg price, but require some market activity
-                price = market.get_avg_price(commodity)
-                if price <= 0:
-                    return False
-            total_input_cost += price * quantity
-
-        # Determine planet attribute modifier for this process
-        # This affects expected output for gathering/mining processes
-        attribute_modifier = 1.0
-        if process.resource_attribute and actor.planet and actor.planet.attributes:
-            attr_value = actor.planet.attributes.get_availability(
-                process.resource_attribute.commodity
-            )
-            # Both "success" and "output" effects reduce expected value proportionally
-            # - "output": You get attr_value fraction of base output
-            # - "success": You succeed attr_value fraction of the time
-            attribute_modifier = attr_value
-
-        # Calculate output value based on actual market bid prices
-        total_output_value = 0.0
-        for commodity, quantity in process.outputs.items():
-            # Use bid price (what buyers will pay) if available
-            bid, ask = market.get_bid_ask_spread(commodity)
-            if bid is not None:
-                price = bid
-            else:
-                # Fall back to avg price, but require some market activity
-                price = market.get_avg_price(commodity)
-                if price <= 0:
-                    return False
-            # Apply attribute modifier to expected output
-            expected_quantity = quantity * attribute_modifier
-            total_output_value += price * expected_quantity
-
-        # Recipe is viable if profit margin is at least 20% above input costs
-        min_required_value = total_input_cost * 1.2
-        return total_output_value >= min_required_value
 
     def _calculate_tool_willingness_to_pay(
         self, actor: "Actor", market: "Market"
@@ -436,8 +406,6 @@ class IndustrialistBrain(ActorBrain):
         - Input cost to make the tool (2 common_metal)
         - Opportunity cost of the turn (recipe profit or govt wage)
         """
-        GOVERNMENT_WAGE = 10
-
         # Cost of inputs to make tools (2 common_metal)
         common_metal = actor.sim.commodity_registry.get_commodity("common_metal")
         if not common_metal:
@@ -491,23 +459,13 @@ class IndustrialistBrain(ActorBrain):
     def _sell_command(
         self, actor: "Actor", market: "Market", commodity: "CommodityDefinition"
     ) -> List[MarketCommand]:
-        """Sell all available units of ``commodity``: hit the best resting bid,
-        or, if none exists, rest an ask at the reference price so a buyer can
-        find us. Skips non-transportable goods (facilities aren't tradable).
+        """Sell all available units of ``commodity``, floored at replacement
+        cost. Skips non-transportable goods (facilities aren't tradable).
         """
         if not commodity.transportable:
             return []
         available = actor.inventory.get_available_quantity(commodity)
-        if available <= 0:
-            return []
-        bids = sorted(
-            [o for o in market.buy_orders.get(commodity, []) if o.actor != actor],
-            key=lambda o: (-o.price, o.timestamp),
-        )
-        price = bids[0].price if bids else market.get_avg_price(commodity)
-        if price <= 0:
-            return []
-        return [PlaceSellOrderCommand(commodity, available, price)]
+        return self._sell_at_or_above_cost(actor, market, commodity, available)
 
     def _get_recipe_trading_commands(
         self, actor: "Actor", market: "Market"

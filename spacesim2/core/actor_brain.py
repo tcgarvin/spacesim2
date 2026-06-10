@@ -1,20 +1,27 @@
+import math
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from spacesim2.core.commands import (
     EconomicCommand,
     MarketCommand,
     PlaceBuyOrderCommand,
+    PlaceSellOrderCommand,
 )
+from spacesim2.core.skill import SkillCheck
 
 if TYPE_CHECKING:
     from spacesim2.core.actor import Actor
     from spacesim2.core.commodity import CommodityDefinition
     from spacesim2.core.drives.actor_drive import ActorDrive
     from spacesim2.core.market import Market
+    from spacesim2.core.process import ProcessDefinition
 
 # Opportunity cost floor for a turn of labor (government work wage). Used as the
 # labor component of replacement cost when self-producing a good.
 GOVERNMENT_WAGE = 10
+
+# Tools wear out after ~100 uses; amortize their cost across that lifespan.
+TOOL_EXPECTED_LIFESPAN = 100
 
 # Numeraire drive: marginal value of money is anchored on food, the most basic
 # survival good. Willingness-to-pay for every other drive good is expressed
@@ -121,7 +128,7 @@ class ActorBrain:
             mats = drive.materials()
             if not mats:
                 return 0.0
-            price_food = market.get_avg_price(mats[0])
+            price_food = self._effective_food_price(actor, market, mats[0])
             if price_food <= 0:
                 return 0.0
             # Floor the coverage discount so a hoarded pantry can't zero lambda.
@@ -130,6 +137,25 @@ class ActorBrain:
             )
             return food_welfare / price_food
         return 0.0
+
+    def _effective_food_price(
+        self, actor: "Actor", market: "Market", food: "CommodityDefinition"
+    ) -> float:
+        """The marginal cost of food for this actor: buy it or make it.
+
+        Uses the live ask (what a unit costs right now) or the actor's own
+        replacement cost, whichever is cheaper, falling back to the rolling
+        average when neither exists. Anchoring lambda on the *backward-looking
+        average* instead would make the numeraire's own willingness-to-pay
+        degenerate to the last traded price, so hungry actors could never bid
+        food up to what it is actually worth to them.
+        """
+        _, ask = market.get_bid_ask_spread(food)
+        replacement = self._replacement_cost(actor, market, food)
+        candidates = [float(price) for price in (ask, replacement) if price is not None]
+        if candidates:
+            return min(candidates)
+        return float(market.get_avg_price(food))
 
     def _drive_willingness_to_pay(
         self,
@@ -143,29 +169,50 @@ class ActorBrain:
 
         WTP = marginal_welfare / value_of_money, capped by the cost of producing
         the good locally (never pay more to import than to make it yourself).
+        The cap is relaxed as drive debt accumulates: making it yourself is a
+        long-run substitute, and an actor already going without can't produce
+        fast enough for the cap to be real — they should accept a scarcity
+        premium (up to 2x at full deprivation) rather than keep starving.
         """
         if lam <= 0:
             return 0
         welfare_wtp = drive.marginal_welfare() / lam
 
         replacement = self._replacement_cost(actor, market, commodity)
+        if replacement is not None:
+            replacement *= 1.0 + drive.metrics.debt
         wtp = welfare_wtp if replacement is None else min(welfare_wtp, replacement)
-        return max(0, int(wtp))
+        # Ceil so the ceiling lines up with sellers' (also ceiled) cost floor;
+        # truncating would leave a permanent 1-credit gap that blocks trade
+        # between actors with identical costs.
+        return max(0, math.ceil(wtp))
 
     def _replacement_cost(
         self, actor: "Actor", market: "Market", commodity: "CommodityDefinition"
     ) -> Optional[float]:
-        """Per-unit cost to self-produce a commodity at local input prices.
+        """Per-unit cost for *this actor* to self-produce a commodity.
 
-        Considers every process that outputs the commodity and returns the
-        cheapest (inputs valued at local ask/avg price plus one turn of labor).
-        Returns None if nothing produces it, in which case there is no
+        Considers only processes the actor could realistically run: required
+        facilities must already be owned (a lump-sum facility build is not a
+        substitute for one purchase), while missing tools are charged at an
+        amortized share of their market price. Inputs are valued at local
+        ask/avg prices; labor is one turn at the government wage scaled by the
+        actor's expected skill throughput, and yield is discounted by planet
+        resource availability. Skill and planet attributes make this cost
+        differ per actor/planet — that heterogeneity is what keeps seller
+        floors below buyer ceilings so trade can clear. Returns None when the
+        actor has no way to make the good, in which case there is no
         make-it-yourself ceiling.
         """
         best: Optional[float] = None
         for process in actor.sim.process_registry.all_processes():
             out_qty = process.outputs.get(commodity, 0)
             if out_qty <= 0:
+                continue
+            if not all(
+                actor.inventory.has_quantity(facility, 1)
+                for facility in process.facilities_required
+            ):
                 continue
 
             input_cost = 0.0
@@ -175,12 +222,90 @@ class ActorBrain:
                     ask if ask is not None else market.get_avg_price(input_commodity)
                 )
                 input_cost += price * qty
+            for tool in process.tools_required:
+                if actor.inventory.has_quantity(tool, 1):
+                    continue
+                _, ask = market.get_bid_ask_spread(tool)
+                price = ask if ask is not None else market.get_avg_price(tool)
+                input_cost += price / TOOL_EXPECTED_LIFESPAN
 
-            per_unit = (input_cost + GOVERNMENT_WAGE) / out_qty
+            expected_out = out_qty * self._expected_yield_modifier(actor, process)
+            if expected_out <= 0:
+                continue
+            # Inputs are only consumed on success and scale with the output
+            # multiplier, so per-unit input cost is independent of skill;
+            # labor, by contrast, is spent on failed turns too.
+            skill_factor = self._expected_skill_factor(actor, process)
+            per_unit = input_cost / expected_out + GOVERNMENT_WAGE / (
+                expected_out * skill_factor
+            )
             if best is None or per_unit < best:
                 best = per_unit
 
         return best
+
+    def _expected_yield_modifier(
+        self, actor: "Actor", process: "ProcessDefinition"
+    ) -> float:
+        """Expected output fraction given planet resource availability.
+
+        Both attribute effects reduce expected yield proportionally: "output"
+        scales the quantity, "success" scales the chance the run succeeds.
+        """
+        if process.resource_attribute and actor.planet and actor.planet.attributes:
+            return actor.planet.attributes.get_availability(
+                process.resource_attribute.commodity
+            )
+        return 1.0
+
+    def _expected_skill_factor(
+        self, actor: "Actor", process: "ProcessDefinition"
+    ) -> float:
+        """Expected output per turn of labor relative to a guaranteed run.
+
+        Mirrors the skill check in ProcessCommand: ratings below 1.0 fail
+        (and waste the turn) proportionally; ratings above 1.0 sometimes
+        double the run. Always positive (ratings are clamped to >= 0.5).
+        """
+        if not process.relevant_skills:
+            return 1.0
+        rating = SkillCheck.get_combined_skill_rating(
+            [actor.get_skill_rating(skill_id) for skill_id in process.relevant_skills]
+        )
+        success_probability = min(1.0, rating)
+        expected_multiplier = 1.0 + max(0.0, rating - 1.0) * 0.5
+        return success_probability * expected_multiplier
+
+    def _sell_at_or_above_cost(
+        self,
+        actor: "Actor",
+        market: "Market",
+        commodity: "CommodityDefinition",
+        quantity: int,
+    ) -> List[MarketCommand]:
+        """Sell ``quantity`` units without dumping below replacement cost.
+
+        Hits the best resting bid when it covers what it would cost this
+        actor to remake the good; otherwise rests an ask at that cost so
+        demand has to come up to meet real supply. Without this floor,
+        price-taking sellers fill the market maker's 1-credit discovery
+        probes and anchor the whole price level there.
+        """
+        if quantity <= 0:
+            return []
+
+        floor = self._replacement_cost(actor, market, commodity)
+        min_ask = 1 if floor is None else max(1, math.ceil(floor))
+
+        bids = sorted(
+            [o for o in market.buy_orders.get(commodity, []) if o.actor != actor],
+            key=lambda o: (-o.price, o.timestamp),
+        )
+        if bids and bids[0].price >= min_ask:
+            price = bids[0].price
+        else:
+            price = min_ask
+        return [PlaceSellOrderCommand(commodity, quantity, price)]
 
     def _cheapest_material_ask(
         self,

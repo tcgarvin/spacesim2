@@ -91,6 +91,8 @@ class TestColonistBrainToolMarket:
         process.id = "profitable_process"
         process.inputs = {input_commodity: 1}
         process.outputs = {output_commodity: 1}
+        process.resource_attribute = None
+        process.relevant_skills = []
 
         mock_actor.sim.process_registry.all_processes.return_value = [process]
         mock_actor.can_execute_process.return_value = True

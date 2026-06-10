@@ -153,8 +153,8 @@ class TestIndustrialistBrain:
 
         assert isinstance(action, GovernmentWorkCommand)
 
-    def test_recipe_viability_calculation(self, brain, mock_actor):
-        """Test that recipe viability is calculated correctly."""
+    def test_recipe_score_includes_labor_cost(self, brain, mock_actor):
+        """Recipe scoring charges a turn of labor on top of input costs."""
         # Create mock commodities with id attribute
         input_commodity = Mock()
         input_commodity.id = "input1"
@@ -165,6 +165,8 @@ class TestIndustrialistBrain:
         process = Mock(spec=ProcessDefinition)
         process.inputs = {input_commodity: 2}  # Needs 2 units of input1
         process.outputs = {output_commodity: 1}  # Produces 1 unit of output1
+        process.tools_required = []
+        process.facilities_required = []
         process.resource_attribute = None  # No planet attribute dependency
 
         market = mock_actor.planet.market
@@ -172,31 +174,37 @@ class TestIndustrialistBrain:
         # Mock get_bid_ask_spread to return None (no spread data)
         market.get_bid_ask_spread.return_value = (None, None)
 
-        # Test viable recipe (profitable)
-        # Input costs 10 each (total = 20), output sells for 30, margin = 50%
+        # Viable recipe: inputs 2 x 10 + labor 10 = 30 cost, output sells
+        # for 40 (>= 20% margin) -> score is the profit, 10.
         def viable_prices(commodity):
             if commodity is input_commodity:
                 return 10
             if commodity is output_commodity:
-                return 30
+                return 40
             return 0
 
         market.get_avg_price.side_effect = viable_prices
 
-        assert brain._is_recipe_viable(mock_actor, market, process)
+        score = brain._calculate_recipe_score(mock_actor, market, process)
+        assert score == pytest.approx(10.0, rel=0.01)
 
-        # Test non-viable recipe (unprofitable)
-        # Input costs 15 each (total = 30), output sells for 25, loss
-        def unprofitable_prices(commodity):
+        # Covers inputs but not the turn of labor: 2 x 10 + 10 = 30 cost,
+        # output sells for 25 -> not viable.
+        def below_wage_prices(commodity):
             if commodity is input_commodity:
-                return 15
+                return 10
             if commodity is output_commodity:
                 return 25
             return 0
 
-        market.get_avg_price.side_effect = unprofitable_prices
+        market.get_avg_price.side_effect = below_wage_prices
 
-        assert not brain._is_recipe_viable(mock_actor, market, process)
+        assert brain._calculate_recipe_score(mock_actor, market, process) == 0.0
+        # The exit check sees the raw (negative) profit, without entry margin.
+        raw = brain._calculate_recipe_score(
+            mock_actor, market, process, require_entry_margin=False
+        )
+        assert raw == pytest.approx(-5.0, rel=0.01)
 
     def test_market_actions_cancel_existing_orders(self, brain, mock_actor):
         """Test that existing orders are cancelled first."""
@@ -243,6 +251,7 @@ class TestIndustrialistBrain:
         sell_order.timestamp = 0
 
         mock_actor.planet.market.sell_orders = {mock_food_commodity: [sell_order]}
+        mock_actor.planet.market.get_bid_ask_spread.return_value = (None, 5)
         mock_actor.planet.market.get_actor_orders.return_value = {"buy": [], "sell": []}
         mock_actor.sim.commodity_registry.get_commodity.return_value = (
             mock_food_commodity
@@ -297,21 +306,19 @@ class TestIndustrialistBrain:
         mock_actor.planet.attributes = Mock()
         mock_actor.planet.attributes.get_availability.return_value = 0.9
 
-        # Expected output: 4 * 0.9 = 3.6, value = 3.6 * 10 = 36
+        # Expected output: 4 * 0.9 = 3.6, value = 3.6 * 10 = 36; minus a
+        # turn of labor at the government wage -> profit 26.
         score_good = brain._calculate_recipe_score(mock_actor, market, process)
         assert score_good > 0
-        assert score_good == pytest.approx(36.0, rel=0.01)
+        assert score_good == pytest.approx(26.0, rel=0.01)
 
         # Test with poor planet attributes (biomass = 0.2)
         mock_actor.planet.attributes.get_availability.return_value = 0.2
 
-        # Expected output: 4 * 0.2 = 0.8, value = 0.8 * 10 = 8
+        # Expected output: 4 * 0.2 = 0.8, value = 0.8 * 10 = 8 — below the
+        # cost of the labor turn, so gathering here is not viable at all.
         score_poor = brain._calculate_recipe_score(mock_actor, market, process)
-        assert score_poor > 0
-        assert score_poor == pytest.approx(8.0, rel=0.01)
-
-        # Good planet should have much higher score
-        assert score_good > score_poor * 4
+        assert score_poor == 0.0
 
     def test_recipe_selection_prefers_profitable_recipes(self, brain, mock_actor):
         """Test that recipe selection weights by profitability."""
