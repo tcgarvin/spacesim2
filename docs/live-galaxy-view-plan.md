@@ -1,6 +1,9 @@
 # Plan: Live Galaxy View + AI Pixel-Art Asset Pipeline for SpaceSim2
 
-> Status: **approved, not yet started.** Captured for a future work session.
+> Status: **built.** Build steps 1–9 landed (live view, charts, click-to-drill,
+> asset pipeline, baked planets + freighter rotations + all 40 goods icons).
+> Remaining polish: bundled OFL font, stronger wellbeing overlay on baked
+> planets, possible market ticker.
 
 ## Context
 
