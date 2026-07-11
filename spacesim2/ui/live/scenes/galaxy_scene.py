@@ -114,9 +114,11 @@ class GalaxyScene:
         for rendered in self._director.rendered_ships():
             draw_ship(surface, rendered, self._camera, self._ship_sprites)
 
+        # Wall-clock time drives the distress pulse on suffering worlds.
+        time_s = pygame.time.get_ticks() / 1000.0
         for planet in self._vm.planets():
             draw_planet(
-                surface, planet, self._camera, self._fonts, self._planet_sprites
+                surface, planet, self._camera, self._fonts, self._planet_sprites, time_s
             )
 
         self._draw_rings(surface)

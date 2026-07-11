@@ -1,6 +1,20 @@
-"""Draws a planet: shaded placeholder sphere + wellbeing-tinted glow ring + label."""
+"""Draws a planet: baked/placeholder sphere + wellbeing-reactive glow + label.
+
+Wellbeing is the one signal every world must broadcast at a glance, and the
+baked painterly sprites replaced the old body tint — so the cues here scale
+with *distress* (1 - wellbeing) instead of sitting at a fixed strength:
+
+- The halo is faint and calm on a thriving world, and grows larger, hotter,
+  and brighter as wellbeing drops.
+- Below ``PULSE_WELLBEING`` the halo slowly "breathes" so a famine catches the
+  eye even in a busy frame.
+- A wellbeing-coloured tint, masked to the sprite's silhouette, fades in over
+  the baked art on sick worlds; healthy worlds show the untouched painting.
+"""
 
 from __future__ import annotations
+
+import math
 
 import pygame
 
@@ -14,6 +28,45 @@ from spacesim2.ui.live.view_model import PlanetSnapshot
 # Public: the scene uses it for click hit-testing and selection rings.
 PLANET_MAP_RADIUS = 2.2
 
+# Wellbeing below this makes the halo pulse (a world in real trouble).
+PULSE_WELLBEING = 0.35
+_PULSE_HZ = 0.9
+
+# Sprite tint stays fully off until wellbeing drops below this, so healthy
+# worlds always show the untouched painterly art.
+_TINT_FREE_WELLBEING = 0.75
+_TINT_MAX_ALPHA = 130
+
+_GLOW_MAX_ALPHA = 110
+
+
+def _distress(wellbeing: float) -> float:
+    """Clamp wellbeing to [0, 1] and invert: 0 = thriving, 1 = famine."""
+    return 1.0 - max(0.0, min(1.0, wellbeing))
+
+
+def glow_strength(wellbeing: float, time_s: float) -> float:
+    """Halo intensity in [0, 1]; distressed worlds breathe over ``time_s``.
+
+    The distress exponent keeps mid-range worlds modest so a truly failing
+    world still stands apart from a merely mediocre one.
+    """
+    strength = 0.15 + 0.85 * math.pow(_distress(wellbeing), 1.5)
+    if wellbeing < PULSE_WELLBEING:
+        pulse = 0.5 + 0.5 * math.sin(2.0 * math.pi * _PULSE_HZ * time_s)
+        strength *= 0.7 + 0.3 * pulse
+    return min(strength, 1.0)
+
+
+def tint_alpha(wellbeing: float) -> int:
+    """Surface alpha for the wellbeing tint over the baked sprite.
+
+    Zero at or above ``_TINT_FREE_WELLBEING``, ramping linearly to
+    ``_TINT_MAX_ALPHA`` at wellbeing 0.
+    """
+    span = _distress(wellbeing) - (1.0 - _TINT_FREE_WELLBEING)
+    return int(_TINT_MAX_ALPHA * max(0.0, span) / _TINT_FREE_WELLBEING)
+
 
 def _stable_seed(name: str) -> int:
     return abs(hash(name)) % 100_000
@@ -25,17 +78,20 @@ def draw_planet(
     camera: Camera,
     fonts: Fonts,
     sprites: PlanetSprites,
+    time_s: float,
 ) -> None:
     screen_pos = camera.world_to_screen(planet.pos)
     radius = max(4, int(camera.scale(PLANET_MAP_RADIUS)))
 
     glow_color = assets.wellbeing_color(planet.wellbeing)
+    distress = _distress(planet.wellbeing)
 
-    # Wellbeing glow ring: a soft halo whose colour reads at a glance.
-    glow_r = int(radius * 1.8)
+    # Wellbeing glow ring: reach and brightness both scale with distress.
+    glow_r = int(radius * (1.5 + 0.9 * distress))
+    peak_alpha = int(_GLOW_MAX_ALPHA * glow_strength(planet.wellbeing, time_s))
     glow = pygame.Surface((glow_r * 2, glow_r * 2), pygame.SRCALPHA)
     for i in range(3):
-        alpha = 40 - i * 12
+        alpha = peak_alpha - i * (peak_alpha // 3)
         pygame.draw.circle(
             glow,
             (*glow_color, max(0, alpha)),
@@ -49,6 +105,15 @@ def draw_planet(
         # the current zoom. Stable per world so a planet keeps its look.
         baked = sprites.for_name(planet.name)
         body_sprite = pygame.transform.smoothscale(baked, (radius * 2, radius * 2))
+        overlay_alpha = tint_alpha(planet.wellbeing)
+        if overlay_alpha > 0:
+            # Multiply-tint a copy (keeps the sprite's own alpha silhouette),
+            # then fade it over the art by distress. smoothscale returned a
+            # fresh surface, so mutating body_sprite never touches the cache.
+            overlay = body_sprite.copy()
+            overlay.fill((*glow_color, 255), special_flags=pygame.BLEND_RGBA_MULT)
+            overlay.set_alpha(overlay_alpha)
+            body_sprite.blit(overlay, (0, 0))
     else:
         # Procedural fallback: a shaded sphere tinted by wellbeing.
         body = (
