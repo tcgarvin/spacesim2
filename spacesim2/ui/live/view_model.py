@@ -94,6 +94,7 @@ class PlanetDetail:
 
 @dataclass(frozen=True)
 class CargoRow:
+    commodity_id: str
     commodity_name: str
     quantity: int
 
@@ -218,7 +219,7 @@ def ship_detail(ship: Ship, sim: Simulation) -> ShipDetail:
     fuel = ship.cargo.get_quantity(fuel_commodity) if fuel_commodity else 0
 
     cargo_rows = tuple(
-        CargoRow(commodity_name=c.name, quantity=q)
+        CargoRow(commodity_id=c.id, commodity_name=c.name, quantity=q)
         for c, q in sorted(ship.cargo.commodities.items(), key=lambda cq: cq[0].name)
         if q > 0
     )

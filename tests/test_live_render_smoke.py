@@ -13,6 +13,7 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 import numpy as np  # noqa: E402
 import pygame  # noqa: E402
 
+from spacesim2.core.ship import ShipStatus  # noqa: E402
 from spacesim2.core.simulation import Simulation  # noqa: E402
 from spacesim2.ui.live.app import LiveGalaxyApp  # noqa: E402
 
@@ -67,6 +68,54 @@ def test_charts_panel_renders_and_cycles_commodities() -> None:
         assert app._screen is not None
         frame = pygame.surfarray.array3d(app._screen)
         assert frame.std() > 1.0
+    finally:
+        pygame.quit()
+
+
+def test_baked_ship_sprites_and_good_icons_render() -> None:
+    """The committed sprite/icon assets exercise the baked path by default.
+
+    Forces a ship into travel (so a non-zero-heading directional frame renders)
+    and opens both a planet panel (market-row icons) and the ship panel
+    (hold-row icons), asserting the frame stays exception-free and non-blank.
+    """
+    sim = _sim()
+    app = LiveGalaxyApp(sim, speed=4.0, size=(900, 600))
+    try:
+        app.initialize()
+        assert app._scene is not None
+        # Committed assets must actually be loaded, not silently skipped.
+        assert app._scene._ship_sprites
+        assert app._scene._good_icons
+
+        # Give a ship cargo so the hold section renders an icon row.
+        ship = sim.ships[0]
+        food = sim.commodity_registry["food"]
+        ship.cargo.add_commodity(food, 3)
+
+        for _ in range(5):
+            app.update(0.05)
+            app.render()
+
+        # Put the ship in transit so a non-zero-heading directional frame
+        # renders. Set this *after* the update loop and only render below, so no
+        # turn advances against the forced (travel_time-less) travel state.
+        ship.planet = sim.planets[0]
+        ship.destination = sim.planets[1]
+        ship.status = ShipStatus.TRAVELING
+        ship.travel_progress = 0.4
+        app.render()
+
+        # Render a planet panel (market icons) then the ship panel (hold icons).
+        app._scene.selection = ("planet", sim.planets[0].name)
+        app.render()
+        app._scene.selection = ("ship", ship.name)
+        app.render()
+
+        assert app._screen is not None
+        frame = pygame.surfarray.array3d(app._screen)
+        assert frame.std() > 1.0
+        assert int(np.max(frame.sum(axis=2))) > 30
     finally:
         pygame.quit()
 

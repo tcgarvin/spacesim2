@@ -66,10 +66,95 @@ def disc_alpha_crop(img: Image.Image, size: int = 256) -> Image.Image:
     return square.resize((size, size), Image.Resampling.LANCZOS)
 
 
-def process_file(src: Path, dst: Path, size: int = 256) -> Path:
+def _alpha_min(img: Image.Image) -> int:
+    return int(np.asarray(img.convert("RGBA"))[..., 3].min())
+
+
+def key_background(img: Image.Image, tolerance: int = 16) -> Image.Image:
+    """Make a uniform background transparent by keying the top-left corner colour.
+
+    Fallback for providers that return art on a solid fill instead of true
+    transparency. PixelLab's ``no_background`` yields real alpha, so the object
+    path only invokes this when an image arrives fully opaque.
+    """
+    arr = np.asarray(img.convert("RGBA"), dtype=np.int16)
+    key = arr[0, 0, :3]
+    distance = np.abs(arr[..., :3] - key).sum(axis=-1)
+    keyed = arr.copy()
+    keyed[distance <= tolerance, 3] = 0
+    return Image.fromarray(keyed.astype(np.uint8), mode="RGBA")
+
+
+def trim_pad_square(
+    img: Image.Image, size: int, *, margin: float = 0.08
+) -> Image.Image:
+    """Trim to the alpha bounding box, centre on a square, resize to ``size``.
+
+    Existing transparency is preserved; a fully-opaque image (a provider that
+    ignored the transparent-background request) is keyed first. Resampling uses
+    NEAREST so pixel-art edges stay crisp, and only runs when the padded square
+    differs from ``size``.
+    """
+    rgba = img.convert("RGBA")
+    if _alpha_min(rgba) == 255:
+        rgba = key_background(rgba)
+
+    bbox = rgba.getchannel("A").getbbox()
+    if bbox is None:
+        raise ValueError("image is fully transparent; nothing to trim")
+    cropped = rgba.crop(bbox)
+
+    w, h = cropped.size
+    side = max(int(round(max(w, h) * (1.0 + 2.0 * margin))), w, h, 1)
+    square = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+    square.paste(cropped, ((side - w) // 2, (side - h) // 2))
+    if square.size != (size, size):
+        square = square.resize((size, size), Image.Resampling.NEAREST)
+    return square
+
+
+def pack_strip(frames: list[Image.Image], size: int) -> Image.Image:
+    """Compose equal square frames left-to-right into one RGBA strip.
+
+    The strip is ``len(frames) * size`` wide and ``size`` tall; frame order is
+    preserved (the caller supplies facings already ordered E, NE, N, ...).
+    """
+    if not frames:
+        raise ValueError("pack_strip needs at least one frame")
+    strip = Image.new("RGBA", (size * len(frames), size), (0, 0, 0, 0))
+    for i, frame in enumerate(frames):
+        cell = frame.convert("RGBA")
+        if cell.size != (size, size):
+            cell = cell.resize((size, size), Image.Resampling.NEAREST)
+        strip.paste(cell, (i * size, 0))
+    return strip
+
+
+def process_file(
+    src: Path, dst: Path, size: int = 256, *, kind: str = "painterly"
+) -> Path:
+    """Post-process one raw image into a committed sprite.
+
+    ``kind`` routes the transform: ``painterly`` keeps the planet disc-crop path
+    unchanged; ``object`` applies the pixel-art trim/pad/square path.
+    """
     dst.parent.mkdir(parents=True, exist_ok=True)
-    sprite = disc_alpha_crop(Image.open(src), size=size)
+    img = Image.open(src)
+    if kind == "painterly":
+        sprite = disc_alpha_crop(img, size=size)
+    elif kind == "object":
+        sprite = trim_pad_square(img, size)
+    else:
+        raise ValueError(f"unknown postprocess kind {kind!r}")
     sprite.save(dst)
+    return dst
+
+
+def process_strip(frame_paths: list[Path], dst: Path, size: int) -> Path:
+    """Trim/pad each rotation frame and pack them into one horizontal strip."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    frames = [trim_pad_square(Image.open(p), size) for p in frame_paths]
+    pack_strip(frames, size).save(dst)
     return dst
 
 

@@ -9,8 +9,9 @@ loaded here too; for now everything is procedural.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pygame
 
@@ -85,6 +86,97 @@ class PlanetSprites:
     def for_name(self, name: str) -> pygame.Surface:
         """Return the stable sprite for ``name``. Caller must check truthiness."""
         return self._sprites[abs(hash(name)) % len(self._sprites)]
+
+
+def _slice_strip(strip: pygame.Surface, frames: int, size: int) -> List[pygame.Surface]:
+    """Cut a horizontal sprite strip into ``frames`` square ``size``px surfaces.
+
+    ``.copy()`` detaches each frame from the shared parent surface so later
+    scaling never has to reach back into the strip's pixel buffer.
+    """
+    out: List[pygame.Surface] = []
+    for i in range(frames):
+        frame = strip.subsurface(pygame.Rect(i * size, 0, size, size)).copy()
+        out.append(frame)
+    return out
+
+
+def heading_to_frame(heading: float, frame_count: int) -> int:
+    """Nearest baked facing for a screen-space ``heading`` (radians).
+
+    The renderer's heading comes from ``atan2(dest_y - origin_y, dest_x -
+    origin_x)`` over *map* coordinates, and the camera maps larger map-y to
+    larger screen-y — so heading is measured screen-space (y-down): 0 = east,
+    +pi/2 = down (visually south), -pi/2 = up (visually north).
+
+    The strip is ordered E, NE, N, NW, W, SW, S, SE — i.e. frame ``k`` faces the
+    *math*-convention angle ``k * (2pi / frame_count)`` (y-up, counterclockwise).
+    Flipping y between the two conventions is a sign flip on the angle, so the
+    nearest frame is ``round(-heading / step) mod frame_count``.
+    """
+    step = 2.0 * math.pi / frame_count
+    return round(-heading / step) % frame_count
+
+
+class ShipSprites:
+    """Baked directional ship sprites promoted from the offline asset pipeline.
+
+    ``assets/ships/index.json`` lists ship types, each a horizontal strip of
+    evenly-spaced facings. Today there is one type (the freighter) and every
+    ship in the sim renders with it, so we bake the first entry's strip. When no
+    assets are promoted the set is empty and ``ship_view`` falls back to the
+    procedural arrow glyph.
+    """
+
+    def __init__(self) -> None:
+        self._frames: List[pygame.Surface] = []
+        index_path = _ASSET_ROOT / "ships" / "index.json"
+        if not index_path.exists():
+            return
+        ships = json.loads(index_path.read_text()).get("ships", [])
+        if not ships:
+            return
+        spec = ships[0]
+        png = _ASSET_ROOT / "ships" / f"{spec['id']}.png"
+        if not png.exists():
+            return
+        strip = pygame.image.load(str(png)).convert_alpha()
+        self._frames = _slice_strip(strip, int(spec["frames"]), int(spec["size"]))
+
+    def __bool__(self) -> bool:
+        return bool(self._frames)
+
+    def frame_for_heading(self, heading: float) -> pygame.Surface:
+        """Nearest baked facing for ``heading``. Caller must check truthiness."""
+        return self._frames[heading_to_frame(heading, len(self._frames))]
+
+
+class GoodIcons:
+    """Baked commodity icons promoted from the offline asset pipeline.
+
+    Purely index-driven: ``assets/goods/index.json`` lists commodity ids, one
+    32x32 icon each. New ids are picked up with no code changes. Icons are
+    optional decoration, so a lookup for a missing id returns ``None`` and
+    callers render the text-only row unchanged.
+    """
+
+    def __init__(self) -> None:
+        self._icons: Dict[str, pygame.Surface] = {}
+        index_path = _ASSET_ROOT / "goods" / "index.json"
+        if not index_path.exists():
+            return
+        ids = json.loads(index_path.read_text()).get("ids", [])
+        for good_id in ids:
+            png = _ASSET_ROOT / "goods" / f"{good_id}.png"
+            if png.exists():
+                self._icons[good_id] = pygame.image.load(str(png)).convert_alpha()
+
+    def __bool__(self) -> bool:
+        return bool(self._icons)
+
+    def get(self, commodity_id: str) -> Optional[pygame.Surface]:
+        """Icon for ``commodity_id``, or ``None`` if none was promoted."""
+        return self._icons.get(commodity_id)
 
 
 class Fonts:

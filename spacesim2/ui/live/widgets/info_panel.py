@@ -9,17 +9,20 @@ panel from falling through to the map.
 
 from __future__ import annotations
 
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import pygame
 
 from spacesim2.ui.live import assets
-from spacesim2.ui.live.assets import Color, Fonts
+from spacesim2.ui.live.assets import Color, Fonts, GoodIcons
 from spacesim2.ui.live.view_model import PlanetDetail, ShipDetail
 
 PANEL_W = 380
 MARGIN = 12
 PAD = 14
+# Commodity icon size in market/hold rows, and the gap before the label.
+ICON_PX = 16
+ICON_GAP = 5
 PANEL_FILL: Tuple[int, int, int, int] = (10, 12, 24, 222)
 PANEL_BORDER: Color = (60, 75, 110)
 SECTION: Color = (120, 200, 255)
@@ -103,13 +106,31 @@ class _PanelWriter:
             pygame.draw.line(self.panel, TEXT, (mx, bar_y - 2), (mx, bar_y + bar_h + 1))
         self.y = bar_y + bar_h + 6
 
-    def kv_row(self, left: str, right: str, right_color: Color = TEXT) -> None:
-        """Left label, right-aligned value on one line."""
+    def kv_row(
+        self,
+        left: str,
+        right: str,
+        right_color: Color = TEXT,
+        icon: Optional[pygame.Surface] = None,
+    ) -> None:
+        """Left label, right-aligned value on one line.
+
+        When ``icon`` is given it is drawn (crisp-scaled to ``ICON_PX``) before
+        the label and the label shifts right; text-only rows are unchanged.
+        """
         name = self.fonts.render(left, "small", TEXT)
         value = self.fonts.render(right, "small", right_color)
-        self.panel.blit(name, (PAD, self.y))
+        label_x = PAD
+        row_height = max(name.get_height(), value.get_height())
+        if icon is not None:
+            scaled = pygame.transform.scale(icon, (ICON_PX, ICON_PX))
+            icon_y = self.y + (name.get_height() - ICON_PX) // 2
+            self.panel.blit(scaled, (PAD, icon_y))
+            label_x = PAD + ICON_PX + ICON_GAP
+            row_height = max(row_height, ICON_PX)
+        self.panel.blit(name, (label_x, self.y))
         self.panel.blit(value, (PAD + self.width - value.get_width(), self.y))
-        self.y += max(name.get_height(), value.get_height()) + 3
+        self.y += row_height + 3
 
     def wrapped(self, text: str, color: Color = DIM) -> None:
         font = self.fonts.font("small")
@@ -136,7 +157,7 @@ def _blit_panel(
 
 
 def draw_planet_panel(
-    surface: pygame.Surface, fonts: Fonts, detail: PlanetDetail
+    surface: pygame.Surface, fonts: Fonts, detail: PlanetDetail, icons: GoodIcons
 ) -> pygame.Rect:
     rect = _panel_rect(surface)
     panel = pygame.Surface(rect.size, pygame.SRCALPHA)
@@ -174,7 +195,12 @@ def draw_planet_panel(
         else:
             color = TEXT
             right = f"{row.price}cr"
-        w.kv_row(f"{row.commodity_name}  ·  vol {row.volume_30d:.1f}/d", right, color)
+        w.kv_row(
+            f"{row.commodity_name}  ·  vol {row.volume_30d:.1f}/d",
+            right,
+            color,
+            icon=icons.get(row.commodity_id),
+        )
     if visible < len(rows):
         w.text(f"… {len(rows) - visible} more", "small", DIM)
 
@@ -195,7 +221,7 @@ def draw_planet_panel(
 
 
 def draw_ship_panel(
-    surface: pygame.Surface, fonts: Fonts, detail: ShipDetail
+    surface: pygame.Surface, fonts: Fonts, detail: ShipDetail, icons: GoodIcons
 ) -> pygame.Rect:
     rect = _panel_rect(surface)
     panel = pygame.Surface(rect.size, pygame.SRCALPHA)
@@ -223,7 +249,9 @@ def draw_ship_panel(
     if detail.cargo:
         w.section("hold")
         for row in detail.cargo[: w.fits(len(detail.cargo))]:
-            w.kv_row(row.commodity_name, f"×{row.quantity}")
+            w.kv_row(
+                row.commodity_name, f"×{row.quantity}", icon=icons.get(row.commodity_id)
+            )
 
     if detail.last_action and detail.last_action != "None" and w.fits(3):
         w.section("last action")

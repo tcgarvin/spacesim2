@@ -14,7 +14,7 @@ from typing import Optional, Tuple
 
 import pygame
 
-from spacesim2.ui.live.assets import Fonts, PlanetSprites
+from spacesim2.ui.live.assets import Fonts, GoodIcons, PlanetSprites, ShipSprites
 from spacesim2.ui.live.camera import Camera
 from spacesim2.ui.live.director import Director
 from spacesim2.ui.live.entities.planet_view import PLANET_MAP_RADIUS, draw_planet
@@ -45,7 +45,11 @@ class GalaxyScene:
         self._camera = camera
         self._nebula = Nebula(size)
         self._fonts = Fonts()
+        # Baked sprite sets are loaded once here (after the display exists so
+        # convert_alpha works) and threaded down; never per-frame or via globals.
         self._planet_sprites = PlanetSprites()
+        self._ship_sprites = ShipSprites()
+        self._good_icons = GoodIcons()
         self.charts = ChartsPanel(director.history)
         self.selection: Optional[Selection] = None
         self.hover: Optional[Selection] = None
@@ -108,7 +112,7 @@ class GalaxyScene:
 
         # Ships and lanes under the worlds.
         for rendered in self._director.rendered_ships():
-            draw_ship(surface, rendered, self._camera)
+            draw_ship(surface, rendered, self._camera, self._ship_sprites)
 
         for planet in self._vm.planets():
             draw_planet(
@@ -159,9 +163,11 @@ class GalaxyScene:
             if planet is None:
                 self.selection = None
                 return None
-            return info_panel.draw_planet_panel(surface, self._fonts, planet)
+            return info_panel.draw_planet_panel(
+                surface, self._fonts, planet, self._good_icons
+            )
         ship = self._vm.ship_detail(name)
         if ship is None:
             self.selection = None
             return None
-        return info_panel.draw_ship_panel(surface, self._fonts, ship)
+        return info_panel.draw_ship_panel(surface, self._fonts, ship, self._good_icons)
