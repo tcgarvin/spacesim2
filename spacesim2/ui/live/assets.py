@@ -1,9 +1,10 @@
 """House palette, wellbeing colour ramp, and font loading for the live view.
 
 This consolidates the bits worth salvaging from the deleted ``ui/utils``: the
-restrained space palette and the ``pygame.font.SysFont`` loading pattern. When
-the offline asset pipeline lands (later build steps), committed sprites will be
-loaded here too; for now everything is procedural.
+restrained space palette and the font-loading pattern. Fonts are the bundled
+Space Grotesk OFL TTFs (``assets/fonts/``), loaded by path like every other
+committed asset in this module; for now everything else is procedural, aside
+from committed sprites promoted from the offline asset pipeline.
 """
 
 from __future__ import annotations
@@ -179,14 +180,26 @@ class GoodIcons:
         return self._icons.get(commodity_id)
 
 
+_FONT_DIR = _ASSET_ROOT / "fonts"
+_REGULAR = _FONT_DIR / "SpaceGrotesk-Regular.ttf"
+_MEDIUM = _FONT_DIR / "SpaceGrotesk-Medium.ttf"
+
+
 class Fonts:
-    """Lazily-built font set. Must be created after ``pygame.font.init()``."""
+    """Lazily-built font set. Must be created after ``pygame.font.init()``.
+
+    Point sizes are calibrated against Space Grotesk's metrics (which render
+    noticeably taller than the old ``SysFont(None, N)`` default) to land close
+    to the previous rendered heights: small/normal/large previously rasterised
+    at ~12/16/22px tall and now sit at ~13/17/22px. Headers use the Medium
+    weight so section titles read distinctly from body text.
+    """
 
     def __init__(self) -> None:
         self._fonts: Dict[str, pygame.font.Font] = {
-            "small": pygame.font.SysFont(None, 18),
-            "normal": pygame.font.SysFont(None, 24),
-            "large": pygame.font.SysFont(None, 32),
+            "small": pygame.font.Font(str(_REGULAR), 10),
+            "normal": pygame.font.Font(str(_REGULAR), 13),
+            "large": pygame.font.Font(str(_MEDIUM), 17),
         }
 
     def font(self, size: str = "normal") -> pygame.font.Font:

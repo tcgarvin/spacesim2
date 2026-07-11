@@ -50,8 +50,13 @@ include = ["spacesim2*"]
 exclude = ["tests*", "temp*", "data*"]
 
 [tool.setuptools.package-data]
-# Committed live-view sprites + their index ship in the wheel.
-"spacesim2.ui.live" = ["assets/**/*.png", "assets/**/*.json"]
+# Committed live-view sprites, fonts, and their index ship in the wheel.
+"spacesim2.ui.live" = [
+    "assets/**/*.png",
+    "assets/**/*.json",
+    "assets/**/*.ttf",
+    "assets/**/*.txt",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

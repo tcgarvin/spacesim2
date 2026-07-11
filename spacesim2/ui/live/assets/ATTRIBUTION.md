@@ -47,3 +47,10 @@ Generated offline by tools/assetgen. Provider + prompt per asset:
 - `planet/ice.png` — nanobanana: A frozen ice world: white and pale-blue glaciers, cracked frozen seas, faint aurora tint, crisp cold cyan-white atmospheric rim.
 - `planet/terran.png` — nanobanana: A lush Earth-like terran world: deep blue oceans, green and ochre continents, swirling white cloud systems, cyan atmospheric rim.
 - `ship/freighter.png` — pixellab: A utilitarian cargo freighter with an elongated arrow-like hull, clearly much longer than it is wide: a pointed nose cone on the right end, a slim central spine hull, and twin thruster nozzles glowing cyan on the left rear end. One single connected ship with a clean directional silhouette.
+
+## Fonts
+
+- `fonts/SpaceGrotesk-Regular.ttf`, `fonts/SpaceGrotesk-Medium.ttf` — Space
+  Grotesk, Copyright 2020 The Space Grotesk Project Authors
+  (https://github.com/floriankarsten/space-grotesk). Licensed under the SIL
+  Open Font License, Version 1.1; full license text in `fonts/OFL.txt`.
