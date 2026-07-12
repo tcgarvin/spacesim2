@@ -115,6 +115,12 @@ class Market:
         # Per-commodity scarcity pressure (see SCARCITY_PRESSURE_* constants).
         self.scarcity_pressure: Dict["CommodityDefinition", float] = defaultdict(float)
 
+        # Per-turn cache of drive-bid reference anchors for never-traded goods
+        # (commodity_id -> (turn, anchor)). Written and read by
+        # ActorBrain._drive_bid_reference; imputing replacement cost recurses
+        # over the process graph, far too hot to redo per actor per turn.
+        self.drive_anchor_cache: Dict[str, Tuple[int, float]] = {}
+
         # Reference to commodity registry (will be set by simulation)
         self.commodity_registry: Optional["CommodityRegistry"] = None
 

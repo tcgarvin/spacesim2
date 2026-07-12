@@ -3,6 +3,7 @@ from unittest.mock import Mock
 import pytest
 
 from spacesim2.core.actor import Actor, ActorType
+from spacesim2.core.actor_brain import ActorBrain
 from spacesim2.core.brains.industrialist import IndustrialistBrain
 from spacesim2.core.commands import (
     GovernmentWorkCommand,
@@ -433,7 +434,9 @@ class TestImputedProcurementBids:
 
     def test_never_traded_input_bids_imputed_cost_not_default(self, brain):
         """No resting ask and no price signal -> bid our imputed replacement
-        cost (22), not get_avg_price's fabricated 10.
+        cost (22) times the bootstrap margin, not get_avg_price's fabricated
+        10. The margin must clear a supplier's 1.2x entry threshold:
+        ceil(22 * 1.25) = 28.
         """
         actor = self._actor()
         refined, chem = self._refined_chain(actor)
@@ -454,7 +457,7 @@ class TestImputedProcurementBids:
         assert len(commands) == 1
         assert isinstance(commands[0], PlaceBuyOrderCommand)
         assert commands[0].commodity_type is refined
-        assert commands[0].price == 22
+        assert commands[0].price == 28  # ceil(22 * PROCUREMENT_BOOTSTRAP_MARGIN)
         assert commands[0].quantity == 1
 
     def test_traded_input_lifts_resting_ask(self, brain):
@@ -522,3 +525,113 @@ class TestImputedProcurementBids:
 
         cost = brain._imputed_unit_cost(actor, market, refined, 0, frozenset(), {})
         assert cost == pytest.approx(10.0)
+
+
+class TestDriveBidReference:
+    """Consumer-side twin of TestImputedProcurementBids: the reference a
+    standing drive bid escalates from anchors on the buyer's imputed
+    replacement cost for never-traded goods (not get_avg_price's fabricated
+    default), and that anchor is cached per market/turn.
+    """
+
+    @pytest.fixture
+    def brain(self):
+        # Base-class behavior; any ActorBrain subclass inherits it.
+        return ActorBrain()
+
+    @staticmethod
+    def _commodity(cid):
+        c = Mock(spec=CommodityDefinition)
+        c.id = cid
+        c.transportable = True
+        return c
+
+    @staticmethod
+    def _actor():
+        actor = Mock(spec=Actor)
+        actor.sim = Mock()
+        actor.inventory = Mock(spec=Inventory)
+        actor.inventory.has_quantity.return_value = False
+        return actor
+
+    def _refined_chain(self, actor):
+        """refined_chemicals made from 3 chemicals (which have a live ask of
+        4): imputed cost = labor 10 + 3 * 4 = 22.
+        """
+        refined = self._commodity("refined_chemicals")
+        chem = self._commodity("chemicals")
+
+        process = Mock(spec=ProcessDefinition)
+        process.id = "refine_chemicals"
+        process.inputs = {chem: 3}
+        process.outputs = {refined: 1}
+        process.tools_required = []
+        process.facilities_required = []
+        actor.sim.process_registry.all_processes.return_value = [process]
+        return refined, chem
+
+    @staticmethod
+    def _market(chem):
+        market = Mock()
+        market.current_turn = 5
+        market.drive_anchor_cache = {}
+
+        def spread(commodity):
+            # chemicals has a live ask (its cost anchor); everything else none.
+            return (None, 4) if commodity is chem else (None, None)
+
+        market.get_bid_ask_spread.side_effect = spread
+        market.get_avg_price.return_value = 10  # the fabricated default
+        return market
+
+    def test_never_traded_good_anchors_on_imputed_cost(self, brain):
+        """No price signal -> anchor on imputed replacement cost (22), not the
+        fabricated avg of 10.
+        """
+        actor = self._actor()
+        refined, chem = self._refined_chain(actor)
+        market = self._market(chem)
+        market.has_price_signal.return_value = False
+
+        ref = brain._drive_bid_reference(actor, market, refined)
+
+        assert ref == pytest.approx(22.0)
+
+    def test_price_signal_uses_avg_directly(self, brain):
+        """A real trade history -> trust the backward-looking avg, no imputation."""
+        actor = self._actor()
+        refined, chem = self._refined_chain(actor)
+        market = self._market(chem)
+        market.has_price_signal.return_value = True
+        market.get_avg_price.return_value = 15
+
+        ref = brain._drive_bid_reference(actor, market, refined)
+
+        assert ref == pytest.approx(15.0)
+
+    def test_anchor_is_cached_per_turn_and_recomputed_next_turn(self, brain):
+        """The imputed anchor is memoized per market/turn; a new turn recomputes.
+
+        First call on turn 5 imputes 22 and caches it. Removing the producing
+        recipe would make the good un-imputable, but a same-turn call still
+        returns the cached 22. Advancing the turn recomputes and, with no
+        recipe, falls back to the fabricated default (a floor beats no bid).
+        """
+        actor = self._actor()
+        refined, chem = self._refined_chain(actor)
+        market = self._market(chem)
+        market.has_price_signal.return_value = False
+
+        first = brain._drive_bid_reference(actor, market, refined)
+        assert first == pytest.approx(22.0)
+        assert market.drive_anchor_cache[refined.id] == (5, pytest.approx(22.0))
+
+        # Recipe disappears: fresh imputation would now yield inf -> fallback.
+        actor.sim.process_registry.all_processes.return_value = []
+
+        # Same turn: served from cache, still 22.
+        assert brain._drive_bid_reference(actor, market, refined) == pytest.approx(22.0)
+
+        # New turn: recompute; no recipe -> fall back to fabricated default.
+        market.current_turn = 6
+        assert brain._drive_bid_reference(actor, market, refined) == pytest.approx(10.0)

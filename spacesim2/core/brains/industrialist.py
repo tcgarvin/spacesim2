@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 
 from spacesim2.core.actor_brain import (
     GOVERNMENT_WAGE,
-    TOOL_EXPECTED_LIFESPAN,
     ActorBrain,
 )
 from spacesim2.core.commands import (
@@ -25,8 +24,6 @@ if TYPE_CHECKING:
 # Notional value of a (non-transportable) facility when it is itself a recipe
 # output. Production recipes value facilities via amortized build cost instead.
 FACILITY_NOTIONAL_VALUE = 50.0
-# Bound on how deep make-or-buy imputation recurses through production chains.
-MAX_IMPUTE_DEPTH = 6
 # Per-actor facility amortization horizon is drawn from this range. It encodes
 # risk appetite: a higher horizon spreads the lump-sum build cost over more
 # expected uses (cheaper per unit -> more willing to build on spec); a lower
@@ -38,6 +35,11 @@ FACILITY_HORIZON_MAX = 600
 # requires a 20% margin while exit waits for an outright loss; the band
 # between the two is hysteresis so producers don't thrash on price noise.
 EXIT_CHECK_INTERVAL = 10
+# Premium over imputed cost when resting a procurement bid for a never-traded
+# input. Must exceed the 1.2 entry margin: suppliers impute roughly the same
+# cost we do, so a bid below 1.2x cost can never trigger supplier entry and
+# the cold-start standoff just moves one tier up the production chain.
+PROCUREMENT_BOOTSTRAP_MARGIN = 1.25
 
 
 class IndustrialistBrain(ActorBrain):
@@ -168,21 +170,6 @@ class IndustrialistBrain(ActorBrain):
         """1% chance per turn to re-evaluate recipe choice."""
         return random.random() < 0.01
 
-    def _get_build_process_for_facility(
-        self, facility: "CommodityDefinition"
-    ) -> Optional[str]:
-        """Map facility commodities to their build processes."""
-        facility_to_process = {
-            "smelting_facility": "build_smelting_facility",
-            "metalworking_facility": "build_metalworking_facility",
-            "textile_mill": "build_textile_mill",
-            "chemistry_lab": "build_chemistry_lab",
-            "precision_forge": "build_precision_forge",
-            "electronics_workshop": "build_electronics_workshop",
-            "advanced_factory": "build_advanced_factory",
-        }
-        return facility_to_process.get(facility.id)
-
     def _select_new_recipe(self, actor: "Actor") -> Optional[str]:
         """Select a new recipe based on market viability and expected profit.
 
@@ -221,119 +208,6 @@ class IndustrialistBrain(ActorBrain):
 
         # Fallback (shouldn't reach here)
         return recipe_scores[-1][0]
-
-    def _imputed_unit_cost(
-        self,
-        actor: "Actor",
-        market: "Market",
-        commodity: "CommodityDefinition",
-        depth: int,
-        visiting: frozenset[str],
-        memo: Dict[str, float],
-    ) -> float:
-        """Best estimate of the per-unit cost to acquire ``commodity``: buy it,
-        or, if the market can't price it, make it.
-
-        This is the keystone that lets the planner "see through" intermediates
-        that have never traded (e.g. glass, refined_chemicals): instead of
-        bailing out, we recursively impute their cost from the cheapest recipe
-        that produces them. Returns ``math.inf`` when the commodity can be
-        neither bought nor produced (no recipe, a production cycle, or the
-        recursion depth bound is hit), which callers treat as "not viable".
-        """
-        # 1. Buy it: a live ask is the truest cost; fall back to last-traded avg.
-        #    Only trust the avg when a real trade has set it - otherwise
-        #    get_avg_price returns its fabricated default of 10, which would
-        #    short-circuit the recursive "make it" branch for never-traded goods
-        #    with a bogus price (the exact cold-start deadlock we're fixing).
-        _, ask = market.get_bid_ask_spread(commodity)
-        if ask is not None:
-            return float(ask)
-        if market.has_price_signal(commodity):
-            avg = market.get_avg_price(commodity)
-            if avg > 0:
-                return float(avg)
-
-        if commodity.id in memo:
-            return memo[commodity.id]
-        if depth >= MAX_IMPUTE_DEPTH or commodity.id in visiting:
-            return math.inf  # depth bound or production cycle -> can't value
-
-        # 2. Make it: cheapest producing recipe, costed recursively.
-        visiting = visiting | {commodity.id}
-        best = math.inf
-        for process in actor.sim.process_registry.all_processes():
-            out_qty = 0
-            for out_commodity, qty in process.outputs.items():
-                if out_commodity.id == commodity.id:
-                    out_qty = qty
-                    break
-            if out_qty <= 0:
-                continue
-            recipe_cost = self._impute_recipe_cost(
-                actor, market, process, depth, visiting, memo
-            )
-            if math.isinf(recipe_cost):
-                continue
-            best = min(best, recipe_cost / out_qty)
-
-        if not math.isinf(best):
-            memo[commodity.id] = best
-        return best
-
-    def _impute_recipe_cost(
-        self,
-        actor: "Actor",
-        market: "Market",
-        process: "ProcessDefinition",
-        depth: int,
-        visiting: frozenset[str],
-        memo: Dict[str, float],
-    ) -> float:
-        """Total imputed cost to execute ``process`` once: a turn of labor at
-        the government wage, recursively-valued inputs, plus amortized tool
-        and facility costs. ``math.inf`` if any component can't be valued.
-        """
-        total = float(GOVERNMENT_WAGE)
-
-        for commodity, quantity in process.inputs.items():
-            unit = self._imputed_unit_cost(
-                actor, market, commodity, depth + 1, visiting, memo
-            )
-            if math.isinf(unit):
-                return math.inf
-            total += unit * quantity
-
-        # Tools the actor lacks must be acquired; amortize over their lifespan.
-        for tool in process.tools_required:
-            if actor.inventory.has_quantity(tool, 1):
-                continue
-            unit = self._imputed_unit_cost(
-                actor, market, tool, depth + 1, visiting, memo
-            )
-            if math.isinf(unit):
-                return math.inf
-            total += unit / TOOL_EXPECTED_LIFESPAN
-
-        # Facilities the actor lacks are a lump-sum build cost amortized over
-        # this actor's (risk-appetite-dependent) expected usage horizon.
-        for facility in process.facilities_required:
-            if actor.inventory.has_quantity(facility, 1):
-                continue
-            build_process_id = self._get_build_process_for_facility(facility)
-            if not build_process_id:
-                return math.inf
-            build_process = actor.sim.process_registry.get_process(build_process_id)
-            if not build_process:
-                return math.inf
-            build_cost = self._impute_recipe_cost(
-                actor, market, build_process, depth + 1, visiting, memo
-            )
-            if math.isinf(build_cost):
-                return math.inf
-            total += build_cost / self.facility_amortization_horizon
-
-        return total
 
     def _calculate_recipe_score(
         self,
@@ -465,13 +339,21 @@ class IndustrialistBrain(ActorBrain):
             # cost so a producer's floor can be met. Round up (ceil) so we clear
             # that floor rather than fall a credit short. Fall back to the avg
             # default only when the good can't be imputed at all.
+            #
+            # The PROCUREMENT_BOOTSTRAP_MARGIN matters: a supplier only *enters*
+            # a recipe when the best bid covers 1.2x their imputed cost, and
+            # buyer and supplier impute nearly the same cost, so a bid at
+            # exactly 1.0x cost sits permanently below every supplier's entry
+            # threshold - the standoff just moves one tier up the chain.
+            # Paying a small premium to bootstrap a local supplier is rational:
+            # the alternative is producing nothing at all.
             imputed = self._imputed_unit_cost(
                 actor, market, commodity, 0, frozenset(), {}
             )
             if math.isinf(imputed):
                 price = market.get_avg_price(commodity)
             else:
-                price = math.ceil(imputed)
+                price = math.ceil(imputed * PROCUREMENT_BOOTSTRAP_MARGIN)
         if price <= 0:
             return []
         affordable = min(quantity_to_buy, actor.money // price)
