@@ -262,18 +262,25 @@ class Simulation:
         # Generate fictional planet data with random positions
         planet_data = self._generate_fictional_planets(num_planets)
 
+        # Generate planet attributes if the feature is enabled. Guarantee at
+        # least one abundant fuel source: nova_fuel_ore rolls are bimodal, so
+        # a galaxy can otherwise come up all-poor (~3% of 5-planet worlds),
+        # leaving no viable fuel production anywhere — every ship eventually
+        # strands no matter how carefully it plans.
+        attribute_rolls: list[Optional[PlanetAttributes]] = [None] * len(planet_data)
+        if enable_planet_attributes:
+            rolls = [PlanetAttributes.generate_random() for _ in planet_data]
+            if rolls and all(a.nova_fuel_ore < 0.7 for a in rolls):
+                random.choice(rolls).nova_fuel_ore = random.uniform(0.7, 1.0)
+            attribute_rolls = list(rolls)
+
         # Create the planets with their markets
-        for name, x, y in planet_data:
+        for (name, x, y), attributes in zip(planet_data, attribute_rolls):
             # Create and initialize the market for the planet
             planet_market = Market()
             planet_market.commodity_registry = (
                 self.commodity_registry
             )  # Give market access to commodity registry
-
-            # Generate planet attributes if feature is enabled
-            attributes = None
-            if enable_planet_attributes:
-                attributes = PlanetAttributes.generate_random()
 
             planet = Planet(name, planet_market, x=x, y=y, attributes=attributes)
             self.planets.append(planet)

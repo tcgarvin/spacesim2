@@ -260,8 +260,12 @@ class Market:
         # Verify the actor has enough money to cover the potential transaction
         total_cost = quantity * price
         if actor.money < total_cost:
-            # Adjust quantity based on available money
+            # Adjust quantity based on available money, and recompute the cost
+            # for the clamped quantity — reserving the original cost would
+            # drive the actor's money negative and orphan the difference in
+            # reserved_money forever.
             quantity = int(actor.money / price) if price > 0 else 0
+            total_cost = quantity * price
 
         if quantity <= 0:
             return ""  # Cannot place order with zero or negative quantity

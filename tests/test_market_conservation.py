@@ -224,3 +224,23 @@ def test_conservation_when_clearing_all_orders(market_with_actors, nova_fuel):
     # Verify that order books are empty
     assert len(market.buy_orders.get(nova_fuel, [])) == 0
     assert len(market.sell_orders.get(nova_fuel, [])) == 0
+
+
+def test_conservation_when_buy_order_quantity_is_clamped(market_with_actors, nova_fuel):
+    """A buy order larger than the actor can afford reserves only the clamped
+    cost — reserving the original cost drove money negative and orphaned the
+    difference in reserved_money forever."""
+    market, buyer, seller = market_with_actors
+
+    buyer.money = 100
+    order_id = market.place_buy_order(buyer, nova_fuel, 1000, 10)
+    assert order_id
+
+    order = market.orders_by_id[order_id]
+    assert order.quantity == 10  # clamped to what 100 money affords
+    assert buyer.money == 0
+    assert buyer.reserved_money == 100
+
+    market.cancel_order(order_id)
+    assert buyer.money == 100
+    assert buyer.reserved_money == 0

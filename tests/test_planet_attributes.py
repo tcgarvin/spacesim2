@@ -303,3 +303,24 @@ class TestProcessCommandIntegration:
         gained = actor.inventory.get_quantity(food) - initial_food
         # Should get full output (may be doubled by skill multiplier)
         assert gained >= 2
+
+
+def test_setup_guarantees_a_fuel_rich_planet():
+    """Every generated galaxy must contain at least one planet where fuel can
+    realistically be mined — an all-poor bimodal roll strands all ships by
+    design, so setup re-rolls one planet into the abundant band."""
+    from spacesim2.core.simulation import Simulation
+
+    for _ in range(30):
+        sim = Simulation()
+        sim.setup_simple(
+            num_planets=2,
+            num_regular_actors=1,
+            num_market_makers=0,
+            num_ships=0,
+            enable_planet_attributes=True,
+        )
+        assert any(
+            p.attributes is not None and p.attributes.nova_fuel_ore >= 0.7
+            for p in sim.planets
+        )

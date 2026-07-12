@@ -304,3 +304,108 @@ def test_deliverer_keeps_escape_fuel_when_selling():
     reserve = deliverer.brain._fuel_sell_reserve()
     assert reserve > 0
     assert sells[0].quantity == 40 - reserve
+
+
+# ---------------------------------------------------------------------------
+# Deadlock fixes: stale-order cleanup, hold/travel consistency, maintenance
+# rescue bids
+# ---------------------------------------------------------------------------
+
+
+def test_departure_cancels_resting_orders():
+    """Departing must reclaim reserved cargo/money from unfilled local orders.
+
+    Cancellation is local-market-only, so orders left behind imprison their
+    reserves forever if the ship never returns (this deadlocked ships in
+    needs_maintenance when the fuel they needed sat reserved in a stale ask).
+    """
+    sim, fuel, _, (a, b) = _make_world([("A", 0, 0), ("B", 50, 0)])
+    ship = _make_ship(sim, a, fuel_units=10)
+    a.market.place_sell_order(ship, fuel, 8, 99)
+    assert ship.cargo.get_available_quantity(fuel) == 2  # below the 3 needed
+
+    assert ship.start_journey(b)
+
+    assert not a.market.sell_orders[fuel]
+    assert ship.cargo.get_reserved_quantity(fuel) == 0
+    assert ship.cargo.get_quantity(fuel) == 10 - 3
+
+
+def test_sells_locally_when_better_price_is_fuel_unsafe():
+    """A better price at a fuel dead end must not keep cargo on hold forever.
+
+    decide_travel vetoes unsafe destinations, so if the hold decision does
+    not apply the same veto the ship waits for a trip it never takes.
+    """
+    sim, fuel, food, (a, b) = _make_world([("A", 0, 0), ("B", 50, 0)])
+    buyer = _make_ship(sim, a, money=2000, name="LocalBuyer")
+    a.market.place_buy_order(buyer, food, 20, 10)
+    remote_buyer = _make_ship(sim, b, money=5000, name="RemoteBuyer")
+    b.market.place_buy_order(remote_buyer, food, 20, 100)
+
+    # Exactly one-way fuel: B is reachable but leaves no escape route.
+    ship = _make_ship(sim, a, fuel_units=3, name="Holder")
+    ship.cargo.add_commodity(food, 10)
+
+    ship.brain.decide_trade_actions()
+
+    assert any(o.actor is ship for o in a.market.sell_orders[food])
+    assert ship.brain.decide_travel() is None
+
+
+def test_no_departure_same_turn_as_local_sell():
+    """Once the brain commits to selling here, it must not depart this turn."""
+    sim, fuel, food, (a, b) = _make_world([("A", 0, 0), ("B", 50, 0)])
+    buyer = _make_ship(sim, a, money=2000, name="LocalBuyer")
+    a.market.place_buy_order(buyer, food, 20, 10)
+    remote_buyer = _make_ship(sim, b, money=5000, name="RemoteBuyer")
+    # Only 10% better: not enough to hold, so the ship sells locally...
+    b.market.place_buy_order(remote_buyer, food, 20, 11)
+
+    ship = _make_ship(sim, a, fuel_units=10, name="Seller")
+    ship.cargo.add_commodity(food, 10)
+
+    ship.brain.decide_trade_actions()
+    assert any(o.actor is ship for o in a.market.sell_orders[food])
+
+    # ...and must not also fly to B, stranding the just-placed sell order.
+    assert ship.brain.decide_travel() is None
+
+
+def test_maintenance_standing_bid_when_no_asks():
+    """A broken ship with no supplies for sale posts an escalating bid."""
+    sim, fuel, _, (a, _) = _make_world([("A", 0, 0), ("B", 50, 0)])
+    ship = _make_ship(sim, a, fuel_units=0, money=1000)
+    ship.maintenance_needed = True
+
+    ship._buy_maintenance_supplies()
+    bids = [o for o in a.market.buy_orders[fuel] if o.actor is ship]
+    assert len(bids) == 1
+    assert bids[0].quantity == 5  # the full nova_fuel tier shortfall
+    first_price = bids[0].price
+    assert first_price >= 10
+
+    # Unfilled at end of turn: scarcity pressure builds, the re-posted bid
+    # escalates.
+    a.market.match_orders()
+    ship._buy_maintenance_supplies()
+    bids = [o for o in a.market.buy_orders[fuel] if o.actor is ship]
+    assert len(bids) == 1
+    assert bids[0].price > first_price
+
+
+def test_survival_reposition_leaves_fuel_desert():
+    """With no trades anywhere, a ship on a planet with no fuel supply flies
+    to a planet where fuel is purchasable instead of idling into stranding."""
+    sim, fuel, _, (desert, oasis) = _make_world([("A", 0, 0), ("B", 50, 0)])
+    supplier = _make_ship(sim, oasis, fuel_units=100, name="Supplier")
+    oasis.market.place_sell_order(supplier, fuel, 50, 12)
+
+    ship = _make_ship(sim, desert, fuel_units=10, name="Idler")
+    assert ship.brain.decide_travel() is oasis
+
+    # Where fuel IS locally purchasable, idling is fine: stay put.
+    desert.market.place_sell_order(
+        _make_ship(sim, desert, fuel_units=20, name="LocalSupplier"), fuel, 10, 12
+    )
+    assert ship.brain.decide_travel() is None
