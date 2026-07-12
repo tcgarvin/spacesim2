@@ -1,5 +1,5 @@
 import math
-from typing import TYPE_CHECKING, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from spacesim2.core.commands import (
     EconomicCommand,
@@ -29,6 +29,76 @@ TOOL_EXPECTED_LIFESPAN = 100
 NUMERAIRE_DRIVE = "food"
 
 
+class BrainCache:
+    """Per-call memoization for market quotes and process cost/yield math.
+
+    Scoped to the lifetime of a single top-level ``decide_economic_action``
+    or ``decide_market_actions`` call. Within one such call nothing mutates
+    actor state or market order books: commands built during the call are
+    only *returned*, not executed - ``Actor.take_turn`` executes the
+    economic command and then the market commands afterward, in separate
+    steps. That makes market quotes, per-process expected-yield/skill
+    factors, and per-commodity replacement costs provably invariant for the
+    call's duration, so caching them here can never let an actor see stale
+    data mid-decision.
+
+    Callers must create a **fresh** ``BrainCache`` at the top of each
+    top-level ``decide_*`` call and must never reuse one across a call
+    boundary where an economic command actually executes (that's where
+    inventory/skills can change). Keys are commodity/process ``id`` strings
+    rather than the objects themselves, since object identity/hashing is
+    outside this module's concern.
+    """
+
+    __slots__ = (
+        "bid_ask",
+        "avg_price",
+        "yield_modifier",
+        "skill_factor",
+        "replacement_cost",
+        "best_result",
+    )
+
+    def __init__(self) -> None:
+        self.bid_ask: Dict[str, Tuple[Optional[int], Optional[int]]] = {}
+        self.avg_price: Dict[str, float] = {}
+        self.yield_modifier: Dict[str, float] = {}
+        self.skill_factor: Dict[str, float] = {}
+        self.replacement_cost: Dict[str, Optional[float]] = {}
+        # Colonist-specific: memoized (best_process, raw_profit) for the
+        # whole-registry profitability scan. Opaque here; colonist.py owns
+        # the type, this is just a slot to hold it.
+        self.best_result: Optional[Tuple[object, float]] = None
+
+
+def _get_bid_ask(
+    market: "Market",
+    commodity: "CommodityDefinition",
+    cache: Optional[BrainCache],
+) -> Tuple[Optional[int], Optional[int]]:
+    """Cache-aware wrapper around ``market.get_bid_ask_spread``."""
+    if cache is None:
+        return market.get_bid_ask_spread(commodity)
+    key = commodity.id
+    if key not in cache.bid_ask:
+        cache.bid_ask[key] = market.get_bid_ask_spread(commodity)
+    return cache.bid_ask[key]
+
+
+def _get_avg_price(
+    market: "Market",
+    commodity: "CommodityDefinition",
+    cache: Optional[BrainCache],
+) -> float:
+    """Cache-aware wrapper around ``market.get_avg_price``."""
+    if cache is None:
+        return market.get_avg_price(commodity)
+    key = commodity.id
+    if key not in cache.avg_price:
+        cache.avg_price[key] = market.get_avg_price(commodity)
+    return cache.avg_price[key]
+
+
 class ActorBrain:
     """Base class for actor decision making strategies."""
 
@@ -51,7 +121,10 @@ class ActorBrain:
     # ------------------------------------------------------------------
 
     def _drive_buy_commands(
-        self, actor: "Actor", market: "Market"
+        self,
+        actor: "Actor",
+        market: "Market",
+        cache: Optional[BrainCache] = None,
     ) -> List[MarketCommand]:
         """Place buy orders for drive materials, survival-first within budget.
 
@@ -59,10 +132,12 @@ class ActorBrain:
         welfare). Each drive draws from a running budget so higher-priority
         needs get first claim on the actor's money.
         """
+        if cache is None:
+            cache = BrainCache()
         commands: List[MarketCommand] = []
         available = actor.money
 
-        lam = self._value_of_money(actor, market)
+        lam = self._value_of_money(actor, market, cache)
         if lam <= 0:
             return commands
 
@@ -78,7 +153,7 @@ class ActorBrain:
 
             target_commodity, ask = self._cheapest_material_ask(actor, market, mats)
             wtp = self._drive_willingness_to_pay(
-                actor, market, drive, target_commodity, lam
+                actor, market, drive, target_commodity, lam, cache
             )
             if wtp <= 0:
                 continue
@@ -89,7 +164,7 @@ class ActorBrain:
             else:
                 # No affordable local supply: post a standing bid that escalates
                 # toward the ceiling under scarcity pressure to attract imports.
-                ref = market.get_avg_price(target_commodity)
+                ref = _get_avg_price(market, target_commodity, cache)
                 pressure = market.scarcity_pressure_for(target_commodity)
                 bid = min(wtp, int(round(ref * (1.0 + pressure))))
 
@@ -112,7 +187,12 @@ class ActorBrain:
 
         return sorted(actor.drives, key=key)
 
-    def _value_of_money(self, actor: "Actor", market: "Market") -> float:
+    def _value_of_money(
+        self,
+        actor: "Actor",
+        market: "Market",
+        cache: Optional[BrainCache] = None,
+    ) -> float:
         """Marginal welfare per unit of money, anchored on the food numeraire.
 
         lambda = marginal_welfare_food / price_food: the welfare a marginal
@@ -128,7 +208,7 @@ class ActorBrain:
             mats = drive.materials()
             if not mats:
                 return 0.0
-            price_food = self._effective_food_price(actor, market, mats[0])
+            price_food = self._effective_food_price(actor, market, mats[0], cache)
             if price_food <= 0:
                 return 0.0
             # Floor the coverage discount so a hoarded pantry can't zero lambda.
@@ -139,7 +219,11 @@ class ActorBrain:
         return 0.0
 
     def _effective_food_price(
-        self, actor: "Actor", market: "Market", food: "CommodityDefinition"
+        self,
+        actor: "Actor",
+        market: "Market",
+        food: "CommodityDefinition",
+        cache: Optional[BrainCache] = None,
     ) -> float:
         """The marginal cost of food for this actor: buy it or make it.
 
@@ -150,12 +234,12 @@ class ActorBrain:
         degenerate to the last traded price, so hungry actors could never bid
         food up to what it is actually worth to them.
         """
-        _, ask = market.get_bid_ask_spread(food)
-        replacement = self._replacement_cost(actor, market, food)
+        _, ask = _get_bid_ask(market, food, cache)
+        replacement = self._replacement_cost(actor, market, food, cache)
         candidates = [float(price) for price in (ask, replacement) if price is not None]
         if candidates:
             return min(candidates)
-        return float(market.get_avg_price(food))
+        return float(_get_avg_price(market, food, cache))
 
     def _drive_willingness_to_pay(
         self,
@@ -164,6 +248,7 @@ class ActorBrain:
         drive: "ActorDrive",
         commodity: "CommodityDefinition",
         lam: float,
+        cache: Optional[BrainCache] = None,
     ) -> int:
         """Maximum price the actor would pay for one unit of a drive material.
 
@@ -178,7 +263,7 @@ class ActorBrain:
             return 0
         welfare_wtp = drive.marginal_welfare() / lam
 
-        replacement = self._replacement_cost(actor, market, commodity)
+        replacement = self._replacement_cost(actor, market, commodity, cache)
         if replacement is not None:
             replacement *= 1.0 + drive.metrics.debt
         wtp = welfare_wtp if replacement is None else min(welfare_wtp, replacement)
@@ -188,7 +273,11 @@ class ActorBrain:
         return max(0, math.ceil(wtp))
 
     def _replacement_cost(
-        self, actor: "Actor", market: "Market", commodity: "CommodityDefinition"
+        self,
+        actor: "Actor",
+        market: "Market",
+        commodity: "CommodityDefinition",
+        cache: Optional[BrainCache] = None,
     ) -> Optional[float]:
         """Per-unit cost for *this actor* to self-produce a commodity.
 
@@ -203,7 +292,14 @@ class ActorBrain:
         floors below buyer ceilings so trade can clear. Returns None when the
         actor has no way to make the good, in which case there is no
         make-it-yourself ceiling.
+
+        Memoized per commodity in ``cache`` for the duration of one decide_*
+        call (market state and this actor's inventory/skills are frozen for
+        that whole call — see ``BrainCache``).
         """
+        if cache is not None and commodity.id in cache.replacement_cost:
+            return cache.replacement_cost[commodity.id]
+
         best: Optional[float] = None
         for process in actor.sim.process_registry.all_processes():
             out_qty = process.outputs.get(commodity, 0)
@@ -217,64 +313,105 @@ class ActorBrain:
 
             input_cost = 0.0
             for input_commodity, qty in process.inputs.items():
-                _, ask = market.get_bid_ask_spread(input_commodity)
+                _, ask = _get_bid_ask(market, input_commodity, cache)
                 price = (
-                    ask if ask is not None else market.get_avg_price(input_commodity)
+                    ask
+                    if ask is not None
+                    else _get_avg_price(market, input_commodity, cache)
                 )
                 input_cost += price * qty
             for tool in process.tools_required:
                 if actor.inventory.has_quantity(tool, 1):
                     continue
-                _, ask = market.get_bid_ask_spread(tool)
-                price = ask if ask is not None else market.get_avg_price(tool)
+                _, ask = _get_bid_ask(market, tool, cache)
+                price = ask if ask is not None else _get_avg_price(market, tool, cache)
                 input_cost += price / TOOL_EXPECTED_LIFESPAN
 
-            expected_out = out_qty * self._expected_yield_modifier(actor, process)
+            expected_out = out_qty * self._expected_yield_modifier(
+                actor, process, cache
+            )
             if expected_out <= 0:
                 continue
             # Inputs are only consumed on success and scale with the output
             # multiplier, so per-unit input cost is independent of skill;
             # labor, by contrast, is spent on failed turns too.
-            skill_factor = self._expected_skill_factor(actor, process)
+            skill_factor = self._expected_skill_factor(actor, process, cache)
             per_unit = input_cost / expected_out + GOVERNMENT_WAGE / (
                 expected_out * skill_factor
             )
             if best is None or per_unit < best:
                 best = per_unit
 
+        if cache is not None:
+            cache.replacement_cost[commodity.id] = best
         return best
 
     def _expected_yield_modifier(
-        self, actor: "Actor", process: "ProcessDefinition"
+        self,
+        actor: "Actor",
+        process: "ProcessDefinition",
+        cache: Optional[BrainCache] = None,
     ) -> float:
         """Expected output fraction given planet resource availability.
 
         Both attribute effects reduce expected yield proportionally: "output"
         scales the quantity, "success" scales the chance the run succeeds.
+
+        Memoized per process in ``cache`` (see ``BrainCache``); a planet's
+        attributes never change during a run, so this is even safe to reuse
+        beyond a single call, but we scope it to the call for simplicity and
+        to keep cache lifetime rules uniform across all cached quantities.
         """
+        if cache is not None and process.id in cache.yield_modifier:
+            return cache.yield_modifier[process.id]
+
         if process.resource_attribute and actor.planet and actor.planet.attributes:
-            return actor.planet.attributes.get_availability(
+            value = actor.planet.attributes.get_availability(
                 process.resource_attribute.commodity
             )
-        return 1.0
+        else:
+            value = 1.0
+
+        if cache is not None:
+            cache.yield_modifier[process.id] = value
+        return value
 
     def _expected_skill_factor(
-        self, actor: "Actor", process: "ProcessDefinition"
+        self,
+        actor: "Actor",
+        process: "ProcessDefinition",
+        cache: Optional[BrainCache] = None,
     ) -> float:
         """Expected output per turn of labor relative to a guaranteed run.
 
         Mirrors the skill check in ProcessCommand: ratings below 1.0 fail
         (and waste the turn) proportionally; ratings above 1.0 sometimes
         double the run. Always positive (ratings are clamped to >= 0.5).
+
+        Memoized per process in ``cache`` for the duration of one decide_*
+        call; the actor's skills don't change mid-call (skill improvement
+        happens only when a ProcessCommand executes, which is after
+        decide_economic_action returns).
         """
+        if cache is not None and process.id in cache.skill_factor:
+            return cache.skill_factor[process.id]
+
         if not process.relevant_skills:
-            return 1.0
-        rating = SkillCheck.get_combined_skill_rating(
-            [actor.get_skill_rating(skill_id) for skill_id in process.relevant_skills]
-        )
-        success_probability = min(1.0, rating)
-        expected_multiplier = 1.0 + max(0.0, rating - 1.0) * 0.5
-        return success_probability * expected_multiplier
+            value = 1.0
+        else:
+            rating = SkillCheck.get_combined_skill_rating(
+                [
+                    actor.get_skill_rating(skill_id)
+                    for skill_id in process.relevant_skills
+                ]
+            )
+            success_probability = min(1.0, rating)
+            expected_multiplier = 1.0 + max(0.0, rating - 1.0) * 0.5
+            value = success_probability * expected_multiplier
+
+        if cache is not None:
+            cache.skill_factor[process.id] = value
+        return value
 
     def _sell_at_or_above_cost(
         self,
@@ -282,6 +419,7 @@ class ActorBrain:
         market: "Market",
         commodity: "CommodityDefinition",
         quantity: int,
+        cache: Optional[BrainCache] = None,
     ) -> List[MarketCommand]:
         """Sell ``quantity`` units without dumping below replacement cost.
 
@@ -294,7 +432,7 @@ class ActorBrain:
         if quantity <= 0:
             return []
 
-        floor = self._replacement_cost(actor, market, commodity)
+        floor = self._replacement_cost(actor, market, commodity, cache)
         min_ask = 1 if floor is None else max(1, math.ceil(floor))
 
         bids = sorted(
