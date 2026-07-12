@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 from spacesim2.core.actor_brain import (
     GOVERNMENT_WAGE,
     ActorBrain,
+    BrainCache,
 )
 from spacesim2.core.commands import (
     CancelOrderCommand,
@@ -153,15 +154,21 @@ class IndustrialistBrain(ActorBrain):
         for order in existing_orders["buy"] + existing_orders["sell"]:
             commands.append(CancelOrderCommand(order.order_id))
 
+        # Per-call memoization shared across both phases below: nothing
+        # executes until Actor.take_turn runs the returned commands
+        # afterward, so market quotes and replacement costs are stable for
+        # this whole call (see BrainCache).
+        cache = BrainCache()
+
         # 1. Buy commodities for personal consumption at willingness-to-pay.
         #    Industrialists specialize in production and rely on the market for
         #    their own drives (food/clothing/shelter/health); this is the same
         #    generic, drive-backed demand the colonists use.
-        commands.extend(self._drive_buy_commands(actor, market))
+        commands.extend(self._drive_buy_commands(actor, market, cache))
 
         # 2. Handle recipe-related trading
         if self.chosen_recipe_id:
-            recipe_commands = self._get_recipe_trading_commands(actor, market)
+            recipe_commands = self._get_recipe_trading_commands(actor, market, cache)
             commands.extend(recipe_commands)
 
         return commands
@@ -362,7 +369,11 @@ class IndustrialistBrain(ActorBrain):
         return [PlaceBuyOrderCommand(commodity, affordable, price)]
 
     def _sell_command(
-        self, actor: "Actor", market: "Market", commodity: "CommodityDefinition"
+        self,
+        actor: "Actor",
+        market: "Market",
+        commodity: "CommodityDefinition",
+        cache: Optional[BrainCache] = None,
     ) -> List[MarketCommand]:
         """Sell all available units of ``commodity``, floored at replacement
         cost. Skips non-transportable goods (facilities aren't tradable).
@@ -370,10 +381,10 @@ class IndustrialistBrain(ActorBrain):
         if not commodity.transportable:
             return []
         available = actor.inventory.get_available_quantity(commodity)
-        return self._sell_at_or_above_cost(actor, market, commodity, available)
+        return self._sell_at_or_above_cost(actor, market, commodity, available, cache)
 
     def _get_recipe_trading_commands(
-        self, actor: "Actor", market: "Market"
+        self, actor: "Actor", market: "Market", cache: Optional[BrainCache] = None
     ) -> List[MarketCommand]:
         """Generate trading commands for recipe inputs and outputs."""
         commands: List[MarketCommand] = []
@@ -467,6 +478,6 @@ class IndustrialistBrain(ActorBrain):
 
         # Sell outputs from recipe
         for commodity, _ in process.outputs.items():
-            commands.extend(self._sell_command(actor, market, commodity))
+            commands.extend(self._sell_command(actor, market, commodity, cache))
 
         return commands

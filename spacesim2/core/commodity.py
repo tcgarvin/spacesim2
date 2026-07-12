@@ -5,9 +5,18 @@ from typing import Dict, List, Optional
 import yaml
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class CommodityDefinition:
-    """Definition of a commodity in the simulation."""
+    """Definition of a commodity in the simulation.
+
+    Commodities are singletons owned by ``CommodityRegistry`` (each id is
+    constructed exactly once), so identity is the correct equality semantics.
+    ``eq=False`` makes the dataclass inherit ``object``'s identity-based
+    ``__hash__``/``__eq__`` instead of generating field-by-field versions. These
+    objects are used as dict keys on extremely hot paths (inventories, order
+    books, price histories); the generated hash re-hashed all four fields on
+    every lookup and dominated the profile. Identity hash is O(1) on the id().
+    """
 
     id: str
     name: str

@@ -1,7 +1,12 @@
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from spacesim2.core.actor import Actor
-from spacesim2.core.actor_brain import ActorBrain
+from spacesim2.core.actor_brain import (
+    ActorBrain,
+    BrainCache,
+    _get_avg_price,
+    _get_bid_ask,
+)
 from spacesim2.core.commands import (
     CancelOrderCommand,
     EconomicCommand,
@@ -22,6 +27,13 @@ class ColonistBrain(ActorBrain):
 
     def decide_economic_action(self, actor: Actor) -> Optional[EconomicCommand]:
         """Decide which economic action to take this turn."""
+        # Per-call memoization: market quotes and process cost/yield figures
+        # are invariant for the whole of this call (nothing executes until
+        # the returned command is run by Actor.take_turn), so a single cache
+        # here avoids rescanning the process registry when both the tool
+        # willingness-to-pay path and the profitability search below run.
+        cache = BrainCache()
+
         # First, try to satisfy basic needs (food, clothing, shelter)
         registry = actor.sim.commodity_registry
 
@@ -89,8 +101,10 @@ class ColonistBrain(ActorBrain):
                 should_make_tools = True
 
                 if market:
-                    willingness_to_pay = self._calculate_tool_willingness_to_pay(actor)
-                    bid, ask = market.get_bid_ask_spread(tools_commodity)
+                    willingness_to_pay = self._calculate_tool_willingness_to_pay(
+                        actor, cache
+                    )
+                    bid, ask = _get_bid_ask(market, tools_commodity, cache)
 
                     # If tools are available at a price at or below our willingness to pay,
                     # skip making - we'll buy in the market phase instead
@@ -103,17 +117,21 @@ class ColonistBrain(ActorBrain):
         # Try to find the most profitable process
         market = actor.planet.market if actor.planet else None
         if market:
-            best_process = self._find_most_profitable_process(actor, market)
+            best_process = self._find_most_profitable_process(actor, market, cache)
 
-            # Return the most profitable process if better than government work
-            if best_process and actor.can_execute_process(best_process.id):
+            # best_process is only ever set inside the scan when
+            # can_execute_process was already true for it, and nothing
+            # mutates actor state between that scan and here (this whole
+            # method runs before the returned command is executed) - so
+            # re-checking can_execute_process would just repeat work.
+            if best_process:
                 return ProcessCommand(best_process.id)
 
         # If no processes can be executed, do government work
         return GovernmentWorkCommand()
 
     def _find_most_profitable_process(
-        self, actor: Actor, market: "Market"
+        self, actor: Actor, market: "Market", cache: Optional[BrainCache] = None
     ) -> Optional["ProcessDefinition"]:
         """Find the most profitable process based on *expected* outcomes.
 
@@ -122,42 +140,76 @@ class ColonistBrain(ActorBrain):
         high ore price lures colonists on resource-poor planets into mining
         loops that fail nearly every turn while they starve.
         """
-        best_process = None
-        best_profit = 10.0  # Must exceed government work profit
+        best_process, _raw_profit = self._best_process_and_raw_profit(
+            actor, market, cache
+        )
+        return best_process
+
+    def _best_process_and_raw_profit(
+        self, actor: Actor, market: "Market", cache: Optional[BrainCache] = None
+    ) -> Tuple[Optional["ProcessDefinition"], float]:
+        """Scan the process registry once, returning both the actor's best
+        process (selected on *discounted* expected profit, same criterion as
+        ``_find_most_profitable_process``) and that process's *raw*
+        (undiscounted output_value - input_cost) profit, which is what
+        ``_calculate_turn_opportunity_cost`` reports as the opportunity cost
+        of a turn.
+
+        Memoized in ``cache.best_result`` for the lifetime of one decide_*
+        call: both callers below (the tool willingness-to-pay path and the
+        direct profitability search) ask this same question against the same
+        frozen market/inventory state, so a single scan answers both.
+        """
+        if cache is not None and cache.best_result is not None:
+            return cache.best_result  # type: ignore[return-value]
+
+        best_process: Optional["ProcessDefinition"] = None
+        best_discounted_profit = 10.0  # Must exceed government work profit
+        best_raw_profit = 0.0
 
         for process in actor.sim.process_registry.all_processes():
             # Calculate potential profit using actual market bid/ask prices
             input_cost = 0.0
             for commodity, quantity in process.inputs.items():
                 # Use ask price (what we'd pay to buy) if available
-                bid, ask = market.get_bid_ask_spread(commodity)
-                price = ask if ask is not None else market.get_avg_price(commodity)
+                _bid, ask = _get_bid_ask(market, commodity, cache)
+                price = (
+                    ask if ask is not None else _get_avg_price(market, commodity, cache)
+                )
                 input_cost += price * quantity
 
             output_value = 0.0
             for commodity, quantity in process.outputs.items():
                 # Use bid price (what buyers will pay) if available
-                bid, ask = market.get_bid_ask_spread(commodity)
-                price = bid if bid is not None else market.get_avg_price(commodity)
+                bid, _ask = _get_bid_ask(market, commodity, cache)
+                price = (
+                    bid if bid is not None else _get_avg_price(market, commodity, cache)
+                )
                 output_value += price * quantity
 
             expected_value = (
                 output_value
-                * self._expected_yield_modifier(actor, process)
-                * self._expected_skill_factor(actor, process)
+                * self._expected_yield_modifier(actor, process, cache)
+                * self._expected_skill_factor(actor, process, cache)
             )
-            potential_profit = expected_value - input_cost
+            discounted_profit = expected_value - input_cost
 
             # Check if we can execute this process
             can_execute = actor.can_execute_process(process.id)
 
-            if can_execute and potential_profit > best_profit:
+            if can_execute and discounted_profit > best_discounted_profit:
                 best_process = process
-                best_profit = potential_profit
+                best_discounted_profit = discounted_profit
+                best_raw_profit = output_value - input_cost
 
-        return best_process
+        result = (best_process, best_raw_profit)
+        if cache is not None:
+            cache.best_result = result
+        return result
 
-    def _calculate_turn_opportunity_cost(self, actor: Actor) -> int:
+    def _calculate_turn_opportunity_cost(
+        self, actor: Actor, cache: Optional[BrainCache] = None
+    ) -> int:
         """Calculate the opportunity cost of spending a turn making tools.
 
         This is the profit from the actor's next-best economic action.
@@ -169,27 +221,17 @@ class ColonistBrain(ActorBrain):
         if not market:
             return GOVERNMENT_WAGE
 
-        best_process = self._find_most_profitable_process(actor, market)
+        best_process, raw_profit = self._best_process_and_raw_profit(
+            actor, market, cache
+        )
         if not best_process:
             return GOVERNMENT_WAGE
 
-        # Calculate profit of best process (same logic as _find_most_profitable_process)
-        input_cost = 0
-        for commodity, quantity in best_process.inputs.items():
-            bid, ask = market.get_bid_ask_spread(commodity)
-            price = ask if ask is not None else market.get_avg_price(commodity)
-            input_cost += price * quantity
+        return max(GOVERNMENT_WAGE, int(raw_profit))
 
-        output_value = 0
-        for commodity, quantity in best_process.outputs.items():
-            bid, ask = market.get_bid_ask_spread(commodity)
-            price = bid if bid is not None else market.get_avg_price(commodity)
-            output_value += price * quantity
-
-        profit = output_value - input_cost
-        return max(GOVERNMENT_WAGE, int(profit))
-
-    def _calculate_tool_willingness_to_pay(self, actor: Actor) -> int:
+    def _calculate_tool_willingness_to_pay(
+        self, actor: Actor, cache: Optional[BrainCache] = None
+    ) -> int:
         """Calculate maximum price actor would pay for a tool.
 
         Formula: cost_to_make_inputs + opportunity_cost_of_turn
@@ -207,12 +249,14 @@ class ColonistBrain(ActorBrain):
         if not common_metal:
             return 0
 
-        bid, ask = market.get_bid_ask_spread(common_metal)
-        metal_price = ask if ask is not None else market.get_avg_price(common_metal)
+        bid, ask = _get_bid_ask(market, common_metal, cache)
+        metal_price = (
+            ask if ask is not None else _get_avg_price(market, common_metal, cache)
+        )
         input_cost = int(metal_price * 2)  # make_simple_tools requires 2 common_metal
 
         # Opportunity cost of spending a turn making tools
-        opportunity_cost = self._calculate_turn_opportunity_cost(actor)
+        opportunity_cost = self._calculate_turn_opportunity_cost(actor, cache)
 
         return input_cost + opportunity_cost
 
@@ -237,18 +281,26 @@ class ColonistBrain(ActorBrain):
         for order in existing_orders["buy"] + existing_orders["sell"]:
             commands.append(CancelOrderCommand(order.order_id))
 
+        # Per-call memoization: nothing executes until Actor.take_turn runs
+        # the returned commands afterward, so market quotes, replacement
+        # costs, and the profitability scan are stable for this whole call
+        # and safe to share across the three phases below.
+        cache = BrainCache()
+
         # Buy drive materials (food/clothing/shelter/health) at willingness-to-pay.
-        commands.extend(self._drive_buy_commands(actor, market))
+        commands.extend(self._drive_buy_commands(actor, market, cache))
 
         # Acquire tools, which are an enabler for production rather than a drive.
-        commands.extend(self._tool_buy_commands(actor, market))
+        commands.extend(self._tool_buy_commands(actor, market, cache))
 
         # Sell surplus inventory above what we want to keep.
-        commands.extend(self._sell_excess_commands(actor, market))
+        commands.extend(self._sell_excess_commands(actor, market, cache))
 
         return commands
 
-    def _tool_buy_commands(self, actor: Actor, market: "Market") -> List[MarketCommand]:
+    def _tool_buy_commands(
+        self, actor: Actor, market: "Market", cache: Optional[BrainCache] = None
+    ) -> List[MarketCommand]:
         """Buy simple_tools up to a buffer, bounded by willingness to pay."""
         tools = actor.sim.commodity_registry.get_commodity("simple_tools")
         if not tools:
@@ -260,7 +312,7 @@ class ColonistBrain(ActorBrain):
             return []
         need = keep - have
 
-        willingness = self._calculate_tool_willingness_to_pay(actor)
+        willingness = self._calculate_tool_willingness_to_pay(actor, cache)
         if willingness <= 0:
             return []
 
@@ -285,19 +337,22 @@ class ColonistBrain(ActorBrain):
         return []
 
     def _sell_excess_commands(
-        self, actor: Actor, market: "Market"
+        self, actor: Actor, market: "Market", cache: Optional[BrainCache] = None
     ) -> List[MarketCommand]:
         """Sell inventory above keep levels, floored at replacement cost."""
         commands: List[MarketCommand] = []
+        keep_levels = self._keep_levels_by_commodity(actor)
         for commodity in actor.sim.commodity_registry.all_commodities():
             if not commodity.transportable:
                 continue
-            keep = self._keep_level(actor, commodity)
+            keep = keep_levels.get(commodity.id, 0)
             available = actor.inventory.get_available_quantity(commodity)
             if available <= keep:
                 continue
             commands.extend(
-                self._sell_at_or_above_cost(actor, market, commodity, available - keep)
+                self._sell_at_or_above_cost(
+                    actor, market, commodity, available - keep, cache
+                )
             )
         return commands
 
@@ -307,3 +362,24 @@ class ColonistBrain(ActorBrain):
             if commodity in drive.materials():
                 return drive.target_units()
         return self.NON_DRIVE_KEEP_LEVELS.get(commodity.id, 0)
+
+    def _keep_levels_by_commodity(self, actor: Actor) -> Dict[str, int]:
+        """Precompute ``_keep_level`` for every commodity in one pass.
+
+        Equivalent to calling ``_keep_level`` per commodity (same first-drive-
+        wins precedence, same non-drive fallback), but replaces an O(commodities
+        x drives) linear membership scan with a single O(drives) pass over
+        ``actor.drives`` up front: there are ~40 commodities and only a
+        handful of drives/materials, so inverting the lookup is strictly
+        cheaper. Drive materials/target_units are fixed per drive instance
+        for the whole turn (they don't depend on this-turn metrics), so this
+        is safe to compute once per ``_sell_excess_commands`` call.
+        """
+        levels: Dict[str, int] = {}
+        for drive in actor.drives:
+            target = drive.target_units()
+            for material in drive.materials():
+                levels.setdefault(material.id, target)
+        for commodity_id, keep in self.NON_DRIVE_KEEP_LEVELS.items():
+            levels.setdefault(commodity_id, keep)
+        return levels

@@ -121,6 +121,17 @@ class Market:
         # over the process graph, far too hot to redo per actor per turn.
         self.drive_anchor_cache: Dict[str, Tuple[int, float]] = {}
 
+        # Cache of (highest_bid, lowest_ask) per commodity for get_bid_ask_spread,
+        # by far the hottest market read. Invalidated (entry dropped) on any
+        # mutation of that commodity's order books and recomputed lazily on the
+        # next read. This is mutation-invalidated, NOT turn-scoped: orders placed
+        # mid-turn are visible to later-acting actors (matching is deferred to
+        # end of turn), so any per-turn cache would change behavior. Dropping the
+        # entry on every place/cancel/match/modify keeps reads exact.
+        self._quote_cache: Dict[
+            "CommodityDefinition", Tuple[Optional[int], Optional[int]]
+        ] = {}
+
         # Reference to commodity registry (will be set by simulation)
         self.commodity_registry: Optional["CommodityRegistry"] = None
 
@@ -271,6 +282,7 @@ class Market:
 
         # Add order to various tracking collections
         self.buy_orders[commodity_type].append(order)
+        self._quote_cache.pop(commodity_type, None)
         self.orders_by_id[order.order_id] = order
         self.actor_orders[actor]["buy"].append(order.order_id)
 
@@ -325,6 +337,7 @@ class Market:
 
         # Add order to various tracking collections
         self.sell_orders[commodity_type].append(order)
+        self._quote_cache.pop(commodity_type, None)
         self.orders_by_id[order.order_id] = order
         self.actor_orders[actor]["sell"].append(order.order_id)
 
@@ -493,6 +506,7 @@ class Market:
         # Update remaining orders
         self.buy_orders[commodity_type] = buy_orders
         self.sell_orders[commodity_type] = sell_orders
+        self._quote_cache.pop(commodity_type, None)
 
     def _update_scarcity_pressure(
         self,
@@ -634,7 +648,10 @@ class Market:
             # Use a default price of 10 if no history exists
             return 10
 
-        return int(statistics.mean(prices))
+        # Equivalent to int(statistics.mean(prices)) for the non-negative int
+        # prices stored here, but avoids statistics' exact-Fraction arithmetic,
+        # which dominated the profile on these tiny lists.
+        return sum(prices) // len(prices)
 
     def has_price_signal(self, commodity_type: "CommodityDefinition") -> bool:
         """Whether a real trade has ever set a price for ``commodity_type``.
@@ -654,17 +671,19 @@ class Market:
         self, commodity_type: "CommodityDefinition"
     ) -> Tuple[Optional[int], Optional[int]]:
         """Get the current highest bid and lowest ask for a commodity."""
+        cached = self._quote_cache.get(commodity_type)
+        if cached is not None:
+            return cached
+
         buy_orders = self.buy_orders.get(commodity_type, [])
         sell_orders = self.sell_orders.get(commodity_type, [])
 
-        highest_bid = (
-            max(buy_orders, key=lambda o: o.price).price if buy_orders else None
-        )
-        lowest_ask = (
-            min(sell_orders, key=lambda o: o.price).price if sell_orders else None
-        )
+        highest_bid = max((o.price for o in buy_orders), default=None)
+        lowest_ask = min((o.price for o in sell_orders), default=None)
 
-        return highest_bid, lowest_ask
+        result = (highest_bid, lowest_ask)
+        self._quote_cache[commodity_type] = result
+        return result
 
     def get_30_day_average_price(self, commodity_type: "CommodityDefinition") -> float:
         """Get the 30-day moving average price for a commodity."""
@@ -674,7 +693,7 @@ class Market:
 
         # Take the last 30 days (or as many as we have)
         recent_prices = prices[-30:] if len(prices) >= 30 else prices
-        return statistics.mean(recent_prices) if recent_prices else 10.0
+        return sum(recent_prices) / len(recent_prices) if recent_prices else 10.0
 
     def get_30_day_average_volume(self, commodity_type: "CommodityDefinition") -> float:
         """Get the 30-day moving average trading volume for a commodity."""
@@ -684,7 +703,7 @@ class Market:
 
         # Take the last 30 days (or as many as we have)
         recent_volumes = volumes[-30:] if len(volumes) >= 30 else volumes
-        return statistics.mean(recent_volumes) if recent_volumes else 1.0
+        return sum(recent_volumes) / len(recent_volumes) if recent_volumes else 1.0
 
     def get_30_day_standard_deviation(
         self, commodity_type: "CommodityDefinition"
@@ -731,6 +750,9 @@ class Market:
 
         # Record order cancellation event before removing
         self._record_order_event("cancelled", order)
+
+        # Removing this order can change the best bid/ask for its commodity.
+        self._quote_cache.pop(commodity_type, None)
 
         # Remove from orders by ID
         del self.orders_by_id[order_id]
@@ -808,6 +830,7 @@ class Market:
         # Update the price
         order.price = new_price
         order.timestamp = self.current_turn  # Reset timestamp for priority
+        self._quote_cache.pop(order.commodity_type, None)
 
         return True
 
@@ -864,3 +887,4 @@ class Market:
         self.sell_orders.clear()
         self.orders_by_id.clear()
         self.actor_orders.clear()
+        self._quote_cache.clear()
