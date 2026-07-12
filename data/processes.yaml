@@ -267,7 +267,7 @@
   inputs:
     silica: 3
   outputs:
-    glass: 1
+    glass: 2
   tools_required: []
   facilities_required:
     - smelting_facility
@@ -379,7 +379,7 @@
   inputs:
     chemicals: 3
   outputs:
-    refined_chemicals: 2
+    refined_chemicals: 3
   tools_required: []
   facilities_required:
     - chemistry_lab

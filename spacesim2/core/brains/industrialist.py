@@ -242,12 +242,17 @@ class IndustrialistBrain(ActorBrain):
         recursion depth bound is hit), which callers treat as "not viable".
         """
         # 1. Buy it: a live ask is the truest cost; fall back to last-traded avg.
+        #    Only trust the avg when a real trade has set it - otherwise
+        #    get_avg_price returns its fabricated default of 10, which would
+        #    short-circuit the recursive "make it" branch for never-traded goods
+        #    with a bogus price (the exact cold-start deadlock we're fixing).
         _, ask = market.get_bid_ask_spread(commodity)
         if ask is not None:
             return float(ask)
-        avg = market.get_avg_price(commodity)
-        if avg > 0:
-            return float(avg)
+        if market.has_price_signal(commodity):
+            avg = market.get_avg_price(commodity)
+            if avg > 0:
+                return float(avg)
 
         if commodity.id in memo:
             return memo[commodity.id]
@@ -448,7 +453,25 @@ class IndustrialistBrain(ActorBrain):
             [o for o in market.sell_orders.get(commodity, []) if o.actor != actor],
             key=lambda o: (o.price, o.timestamp),
         )
-        price = asks[0].price if asks else market.get_avg_price(commodity)
+        if asks:
+            price = asks[0].price
+        elif market.has_price_signal(commodity):
+            # A real (if stale) trade price exists - anchor the bid to it.
+            price = market.get_avg_price(commodity)
+        else:
+            # Never-traded good: get_avg_price would hand back its fabricated
+            # default of 10, which sits below a rational seller's replacement-cost
+            # floor and deadlocks price discovery. Bid our own imputed replacement
+            # cost so a producer's floor can be met. Round up (ceil) so we clear
+            # that floor rather than fall a credit short. Fall back to the avg
+            # default only when the good can't be imputed at all.
+            imputed = self._imputed_unit_cost(
+                actor, market, commodity, 0, frozenset(), {}
+            )
+            if math.isinf(imputed):
+                price = market.get_avg_price(commodity)
+            else:
+                price = math.ceil(imputed)
         if price <= 0:
             return []
         affordable = min(quantity_to_buy, actor.money // price)

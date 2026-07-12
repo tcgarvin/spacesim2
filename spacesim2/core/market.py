@@ -630,6 +630,20 @@ class Market:
 
         return int(statistics.mean(prices))
 
+    def has_price_signal(self, commodity_type: "CommodityDefinition") -> bool:
+        """Whether a real trade has ever set a price for ``commodity_type``.
+
+        ``get_avg_price`` returns a hardcoded default of 10 for never-traded
+        goods, which is indistinguishable from a genuine ~10 market price.
+        Callers that must not trust that fabricated default (e.g. imputed
+        replacement-cost procurement) use this to tell the two apart. True only
+        when ``last_traded_prices`` or ``price_history`` holds real data, both
+        of which are populated exclusively when a transaction clears.
+        """
+        if self.last_traded_prices.get(commodity_type):
+            return True
+        return bool(self.price_history.get(commodity_type))
+
     def get_bid_ask_spread(
         self, commodity_type: "CommodityDefinition"
     ) -> Tuple[Optional[int], Optional[int]]:

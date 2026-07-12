@@ -177,6 +177,25 @@ def test_get_avg_price(commodity_registry, food_commodity) -> None:
     assert market.get_avg_price(food_commodity) == 9
 
 
+def test_has_price_signal(commodity_registry, food_commodity) -> None:
+    """has_price_signal distinguishes a real traded price from the default 10."""
+    market = Market()
+    market.commodity_registry = commodity_registry
+
+    # Never traded: get_avg_price fabricates 10, but there is no real signal.
+    assert market.get_avg_price(food_commodity) == 10
+    assert market.has_price_signal(food_commodity) is False
+
+    # A recorded trade is a real signal.
+    market.last_traded_prices[food_commodity] = [8, 9, 10]
+    assert market.has_price_signal(food_commodity) is True
+
+    # price_history alone (recent trades aged out) also counts.
+    market.last_traded_prices[food_commodity] = []
+    market.price_history[food_commodity] = [9]
+    assert market.has_price_signal(food_commodity) is True
+
+
 def test_clear_orders(commodity_registry, food_commodity, mock_sim) -> None:
     """Test that orders can be cleared from the market."""
     market = Market()

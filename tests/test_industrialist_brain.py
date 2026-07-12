@@ -386,3 +386,139 @@ class TestIndustrialistBrain:
 
         # Biomass should be selected much more often (9x score advantage)
         assert selections["gather_biomass"] > selections["gather_fiber"] * 3
+
+
+class TestImputedProcurementBids:
+    """Cold-start procurement for never-traded intermediates should bid the
+    buyer's imputed replacement cost, not get_avg_price's fabricated default.
+    """
+
+    @pytest.fixture
+    def brain(self):
+        return IndustrialistBrain()
+
+    @staticmethod
+    def _commodity(cid):
+        c = Mock(spec=CommodityDefinition)
+        c.id = cid
+        c.transportable = True
+        return c
+
+    @staticmethod
+    def _actor(money=100):
+        actor = Mock(spec=Actor)
+        actor.name = "TestIndustrialist"
+        actor.actor_type = ActorType.REGULAR
+        actor.money = money
+        actor.planet = Mock()
+        actor.sim = Mock()
+        actor.inventory = Mock(spec=Inventory)
+        return actor
+
+    def _refined_chain(self, actor):
+        """A refined_chemicals good produced from chemicals (which has a live
+        ask), so imputed cost = labor 10 + 3 chemicals @ 4 = 22.
+        """
+        refined = self._commodity("refined_chemicals")
+        chem = self._commodity("chemicals")
+
+        process = Mock(spec=ProcessDefinition)
+        process.id = "refine_chemicals"
+        process.inputs = {chem: 3}
+        process.outputs = {refined: 1}
+        process.tools_required = []
+        process.facilities_required = []
+        actor.sim.process_registry.all_processes.return_value = [process]
+        return refined, chem
+
+    def test_never_traded_input_bids_imputed_cost_not_default(self, brain):
+        """No resting ask and no price signal -> bid our imputed replacement
+        cost (22), not get_avg_price's fabricated 10.
+        """
+        actor = self._actor()
+        refined, chem = self._refined_chain(actor)
+
+        market = Mock()
+        market.sell_orders = {}
+
+        def spread(commodity):
+            # chemicals has a live ask (its cost anchor); refined has none.
+            return (None, 4) if commodity is chem else (None, None)
+
+        market.get_bid_ask_spread.side_effect = spread
+        market.has_price_signal.return_value = False
+        market.get_avg_price.return_value = 10  # the broken default
+
+        commands = brain._buy_command(actor, market, refined, 1)
+
+        assert len(commands) == 1
+        assert isinstance(commands[0], PlaceBuyOrderCommand)
+        assert commands[0].commodity_type is refined
+        assert commands[0].price == 22
+        assert commands[0].quantity == 1
+
+    def test_traded_input_lifts_resting_ask(self, brain):
+        """A resting ask is lifted directly, imputation untouched."""
+        actor = self._actor()
+        refined = self._commodity("refined_chemicals")
+
+        ask_order = Mock()
+        ask_order.price = 8
+        ask_order.actor = "someone_else"
+        ask_order.timestamp = 0
+
+        market = Mock()
+        market.sell_orders = {refined: [ask_order]}
+
+        commands = brain._buy_command(actor, market, refined, 1)
+
+        assert len(commands) == 1
+        assert commands[0].price == 8
+
+    def test_traded_input_with_price_signal_uses_avg(self, brain):
+        """No ask but a real trade set a price -> anchor to avg, not imputed."""
+        actor = self._actor()
+        refined = self._commodity("refined_chemicals")
+
+        market = Mock()
+        market.sell_orders = {}
+        market.get_bid_ask_spread.return_value = (None, None)
+        market.has_price_signal.return_value = True
+        market.get_avg_price.return_value = 12
+
+        commands = brain._buy_command(actor, market, refined, 1)
+
+        assert len(commands) == 1
+        assert commands[0].price == 12
+
+    def test_imputation_falls_through_when_no_price_signal(self, brain):
+        """_imputed_unit_cost ignores the fabricated default and recurses into
+        the producing recipe when no real trade has set a price.
+        """
+        actor = self._actor()
+        refined, chem = self._refined_chain(actor)
+
+        market = Mock()
+
+        def spread(commodity):
+            return (None, 4) if commodity is chem else (None, None)
+
+        market.get_bid_ask_spread.side_effect = spread
+        market.has_price_signal.return_value = False
+        market.get_avg_price.return_value = 10
+
+        cost = brain._imputed_unit_cost(actor, market, refined, 0, frozenset(), {})
+        assert cost == pytest.approx(22.0)
+
+    def test_imputation_trusts_avg_when_price_signal_exists(self, brain):
+        """With a real price signal, the avg fallback is trusted (old behavior)."""
+        actor = self._actor()
+        refined = self._commodity("refined_chemicals")
+
+        market = Mock()
+        market.get_bid_ask_spread.return_value = (None, None)
+        market.has_price_signal.return_value = True
+        market.get_avg_price.return_value = 10
+
+        cost = brain._imputed_unit_cost(actor, market, refined, 0, frozenset(), {})
+        assert cost == pytest.approx(10.0)
