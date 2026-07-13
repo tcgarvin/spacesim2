@@ -29,6 +29,28 @@ DELIVERER_WORST_FUEL_EFFICIENCY = 0.8
 # judging whether fuel is realistically purchasable at a planet.
 FUEL_MARKET_RECENCY_TURNS = 10
 
+# Multiplier over the galaxy-wide fuel reference price up to which a docked
+# ship "bunkers" (fills its tank). Above it fuel is scarcity-priced: paying
+# spike prices for a FULL tank is how ships trade themselves broke, so only
+# the survival minimum is bought.
+FUEL_BUNKER_PREMIUM = 1.3
+
+# Fraction of a ship's money that may go to bunkering fuel beyond the
+# survival minimum. Fuel is working capital parked in the tank; cargo margins
+# are usually better, so bunkering must not crowd out trading cash.
+FUEL_BUNKER_BUDGET_FRACTION = 0.5
+
+# Cargo units a plan may commit to when the destination shows no resting bids
+# (revenue is then estimated from the avg price, which often fails to
+# realize; unbounded speculation on it was a reliable money-loser).
+SPECULATIVE_PLAN_CAP = 10
+
+# Chance per departure that a ship rolls a maintenance stop, and the fuel
+# units the legacy maintenance tier consumes. Used both by
+# Ship.check_maintenance and to price expected maintenance into trade plans.
+MAINTENANCE_CHANCE = 0.1
+MAINTENANCE_FUEL_UNITS = 5
+
 
 @dataclass
 class TradePlan:
@@ -55,6 +77,12 @@ class TradePlan:
     fuel_needed_one_way: int
     fuel_price_at_origin: int
 
+    # Expected cost of maintenance rolls over the round trip (2 departures x
+    # MAINTENANCE_CHANCE x the fuel-tier repair cost). Ignoring it made
+    # penny-margin trades look profitable when a single repair wiped out
+    # several trips of profit.
+    expected_maintenance_cost: int = 0
+
     @property
     def fuel_needed_round_trip(self) -> int:
         """Fuel needed for round trip (conservative planning)."""
@@ -78,12 +106,21 @@ class TradePlan:
     @property
     def expected_profit(self) -> int:
         """Expected profit after all costs."""
-        return self.expected_revenue - self.total_purchase_cost - self.total_fuel_cost
+        return (
+            self.expected_revenue
+            - self.total_purchase_cost
+            - self.total_fuel_cost
+            - self.expected_maintenance_cost
+        )
 
     @property
     def profit_margin(self) -> float:
         """Profit as a percentage of costs."""
-        total_costs = self.total_purchase_cost + self.total_fuel_cost
+        total_costs = (
+            self.total_purchase_cost
+            + self.total_fuel_cost
+            + self.expected_maintenance_cost
+        )
         if total_costs <= 0:
             return 0.0
         return self.expected_profit / total_costs
@@ -260,6 +297,47 @@ class TraderBrain(ShipBrain):
             reserve = max(reserve, escape_fuel)
         return reserve
 
+    def _fuel_survival_target(self) -> int:
+        """Fuel units to keep on hand to stay reliably mobile.
+
+        Two shortest round trips or the escape leg to a refueling planet,
+        whichever is larger, capped by the tank. This is the level worth
+        paying scarcity prices for; anything beyond it is bunkering and only
+        worth doing when fuel is cheap.
+        """
+        return min(
+            self.ship.fuel_capacity,
+            max(2 * self._fuel_reserve_need(), self._fuel_sell_reserve()),
+        )
+
+    def _fuel_value_reference(self) -> Optional[float]:
+        """Cheapest believable fuel valuation anywhere in the galaxy.
+
+        Minimum over every planet's current ask and its 30-day average price
+        (where real trades back it). During a local scarcity spike the rolling
+        averages stay near the pre-spike level, so this reference is what
+        keeps a ship from filling its whole tank at panic prices. Returns
+        None when no planet has any signal.
+        """
+        fuel_commodity = self._fuel_commodity()
+        if fuel_commodity is None:
+            return None
+        best: Optional[float] = None
+        for planet in self.ship.simulation.planets:
+            market = planet.market
+            _, ask = market.get_bid_ask_spread(fuel_commodity)
+            candidates = []
+            if ask is not None and ask > 0:
+                candidates.append(float(ask))
+            if market.has_price_signal(fuel_commodity):
+                avg_30 = market.get_30_day_average_price(fuel_commodity)
+                if avg_30 > 0:
+                    candidates.append(avg_30)
+            for value in candidates:
+                if best is None or value < best:
+                    best = value
+        return best
+
     def _fuel_delivery_in_progress(self) -> bool:
         """Whether the ship is at the destination of an active fuel-run plan.
 
@@ -333,14 +411,19 @@ class TraderBrain(ShipBrain):
     def _opportunistic_fuel_topup(
         self, pending_fuel: int = 0, reserved_cargo: int = 0
     ) -> Optional[str]:
-        """Buy fuel toward a full tank with leftover cargo space and money.
+        """Buy fuel with leftover cargo space and money, price-aware.
 
-        Ships keep their tank near full whenever docked somewhere fuel is
-        actually for sale. ``pending_fuel`` and ``reserved_cargo`` account for
-        buy orders already placed this turn (their goods arrive at end-of-turn
-        matching), so a top-up never crowds out the trade plan's cargo space
-        or spends money the plan needs (order placement reserves funds, so
-        ``ship.money`` already excludes the plan's committed money).
+        When the local ask is near the galaxy's cheapest believable fuel
+        price, bunker toward a full tank. When it is scarcity-priced, buy
+        only up to the survival target — ships that topped up full tanks at
+        spike prices (40-85/unit vs single-digit cargo margins) reliably
+        traded themselves broke.
+
+        ``pending_fuel`` and ``reserved_cargo`` account for buy orders already
+        placed this turn (their goods arrive at end-of-turn matching), so a
+        top-up never crowds out the trade plan's cargo space or spends money
+        the plan needs (order placement reserves funds, so ``ship.money``
+        already excludes the plan's committed money).
         """
         ship = self.ship
         planet = ship.planet
@@ -355,12 +438,39 @@ class TraderBrain(ShipBrain):
             return None
 
         current_fuel = ship.cargo.get_quantity(fuel_commodity) + pending_fuel
-        tank_headroom = ship.fuel_capacity - current_fuel
         cargo_room = (
             ship.cargo_capacity - ship.cargo.get_total_quantity() - reserved_cargo
         )
-        budget = int(ship.money * 0.9)  # keep a small operating buffer
-        quantity = min(tank_headroom, cargo_room, budget // fuel_ask)
+
+        reference = self._fuel_value_reference()
+        # The local ask is itself a galaxy signal, so reference is never None
+        # here; guard anyway for safety.
+        bunkering = reference is not None and fuel_ask <= math.ceil(
+            reference * FUEL_BUNKER_PREMIUM
+        )
+
+        survival_target = self._fuel_survival_target()
+        survival_units = min(
+            max(0, survival_target - current_fuel),
+            cargo_room,
+            int(ship.money * 0.9) // fuel_ask,
+        )
+        survival_units = max(0, survival_units)
+
+        bunker_units = 0
+        if bunkering:
+            bunker_budget = (
+                int(ship.money * FUEL_BUNKER_BUDGET_FRACTION)
+                - survival_units * fuel_ask
+            )
+            bunker_units = min(
+                ship.fuel_capacity - current_fuel - survival_units,
+                cargo_room - survival_units,
+                max(0, bunker_budget) // fuel_ask,
+            )
+            bunker_units = max(0, bunker_units)
+
+        quantity = survival_units + bunker_units
         if quantity <= 0:
             return None
 
@@ -443,7 +553,11 @@ class TraderBrain(ShipBrain):
 
         current_fuel = ship.cargo.get_quantity(fuel_commodity)
         cargo_room = ship.cargo_capacity - ship.cargo.get_total_quantity()
-        max_units = min(ship.fuel_capacity - current_fuel, cargo_room)
+        # Bid only up to the survival target, not a full tank: a tank-sized
+        # rescue bid at delivery prices reserves most of the ship's money for
+        # hundreds of turns if it goes unfilled, locking it out of the very
+        # trading that could earn its way out.
+        max_units = min(self._fuel_survival_target() - current_fuel, cargo_room)
         if max_units <= 0:
             return None
 
@@ -517,13 +631,22 @@ class TraderBrain(ShipBrain):
         if fuel_price is None or fuel_price <= 0:
             fuel_price = 10  # Default fuel price if no market data
 
-        # Get expected sell price at destination (highest bid)
-        sell_bid, _ = dest_market.get_bid_ask_spread(commodity)
-        if sell_bid is None:
-            # Use average price as fallback
-            sell_bid = dest_market.get_avg_price(commodity)
-        if sell_bid is None or sell_bid <= 0:
-            return None
+        # Destination demand: resting bids that beat the purchase price.
+        # Planning revenue from the top bid alone overestimates — selling
+        # more units than the book holds means walking down the levels.
+        bid_levels = [
+            (price, qty)
+            for price, qty in dest_market.get_bid_levels(commodity)
+            if price > buy_price
+        ]
+        speculative = not bid_levels
+        avg_fallback = 0
+        if speculative:
+            # No profitable resting demand visible; the avg price is a guess
+            # that often fails to realize, so such plans are capped small.
+            avg_fallback = dest_market.get_avg_price(commodity)
+            if avg_fallback <= buy_price:
+                return None
 
         # Calculate how much we can trade
         current_fuel = self.ship.cargo.get_quantity(fuel_commodity)
@@ -544,12 +667,21 @@ class TraderBrain(ShipBrain):
         if not self._fuel_safe_destination(destination, origin, fuel_after_arrival):
             return None
 
+        # Expected maintenance over the round trip: two departure rolls, each
+        # potentially costing the fuel-tier repair at origin fuel prices.
+        maintenance_cost = math.ceil(
+            2 * MAINTENANCE_CHANCE * MAINTENANCE_FUEL_UNITS * fuel_price
+        )
+
         # Money available for commodity purchase. Withhold the fuel purchase,
         # a cash floor able to re-buy the travel reserve after the trip (a
         # trade that disappoints must never leave the ship broke AND dry —
-        # that is the stranding spiral), and a 10% operating buffer.
+        # that is the stranding spiral), expected maintenance, and a 10%
+        # operating buffer.
         refuel_floor = self._fuel_reserve_need() * fuel_price
-        money_for_trading = int((self.ship.money - fuel_cost - refuel_floor) * 0.9)
+        money_for_trading = int(
+            (self.ship.money - fuel_cost - refuel_floor - maintenance_cost) * 0.9
+        )
         if money_for_trading <= 0:
             return None
 
@@ -558,19 +690,41 @@ class TraderBrain(ShipBrain):
         max_by_cargo = cargo_space - fuel_to_buy  # Account for fuel taking cargo space
         max_quantity = max(0, min(max_by_money, max_by_cargo))
 
-        if max_quantity <= 0:
+        if speculative:
+            quantity = min(max_quantity, SPECULATIVE_PLAN_CAP)
+            sell_price = avg_fallback
+        else:
+            # Cap at the visible profitable depth and project revenue by
+            # walking the book for the units actually taken.
+            depth = sum(qty for _, qty in bid_levels)
+            quantity = min(max_quantity, depth)
+            if quantity > 0:
+                remaining = quantity
+                revenue = 0
+                for price, qty in bid_levels:
+                    take = min(qty, remaining)
+                    revenue += price * take
+                    remaining -= take
+                    if remaining == 0:
+                        break
+                sell_price = revenue // quantity
+            else:
+                sell_price = 0
+
+        if quantity <= 0:
             return None
 
         return TradePlan(
             origin=origin,
             destination=destination,
             commodity=commodity,
-            quantity=max_quantity,
+            quantity=quantity,
             purchase_price_per_unit=buy_price,
-            expected_sell_price_per_unit=sell_bid,
+            expected_sell_price_per_unit=sell_price,
             distance=distance,
             fuel_needed_one_way=fuel_one_way,
             fuel_price_at_origin=fuel_price,
+            expected_maintenance_cost=maintenance_cost,
         )
 
     def _find_best_trade_plan(self) -> Optional[TradePlan]:
@@ -1128,8 +1282,7 @@ class Ship:
         Returns:
             True if maintenance is needed, False otherwise.
         """
-        # Random chance of needing maintenance: 10%
-        return random.random() < 0.1
+        return random.random() < MAINTENANCE_CHANCE
 
     def perform_maintenance(self) -> bool:
         """Attempt to perform maintenance on the ship.
@@ -1209,14 +1362,17 @@ class Ship:
                     )
                     return
 
-        # No tier has an ask to lift: post a standing, scarcity-escalated bid
-        # for the cheapest completable tier so local producers see the demand
-        # (the maintenance analogue of the standing fuel rescue bid). Without
-        # it a ship needing repairs at a planet where no supplies are for
-        # sale is deadlocked forever — it can never trade again to earn its
-        # way out. Re-posted each turn; the price grows with scarcity
-        # pressure while it goes unfilled.
-        best_bid_plan: Optional[tuple[int, CommodityDefinition, int, int]] = None
+        # No tier has an ask to lift: post standing, scarcity-escalated bids
+        # so producers see the demand (the maintenance analogue of the
+        # standing fuel rescue bid). Without them a ship needing repairs at a
+        # planet where no supplies are for sale is deadlocked forever — it
+        # can never trade again to earn its way out. Bid on EVERY completable
+        # tier money allows, preferring tiers whose commodity has actually
+        # traded somewhere (a bid on a good nobody in the galaxy produces —
+        # e.g. ship_components early on — can rest unfilled for hundreds of
+        # turns while a fillable tier would have freed the ship). Re-posted
+        # each turn; prices grow with scarcity pressure while unfilled.
+        candidates: list[tuple[int, int, CommodityDefinition, int, int]] = []
         for commodity_id, qty_needed in tiers:
             commodity = registry.get_commodity(commodity_id)
             if commodity is None:
@@ -1231,19 +1387,31 @@ class Ship:
                     * (1.0 + market.scarcity_pressure_for(commodity))
                 ),
             )
+            produced_somewhere = any(
+                planet.market.has_price_signal(commodity)
+                for planet in self.simulation.planets
+            )
+            candidates.append(
+                (
+                    0 if produced_somewhere else 1,
+                    price * shortfall,
+                    commodity,
+                    shortfall,
+                    price,
+                )
+            )
+        placed: list[str] = []
+        for _, _, commodity, shortfall, price in sorted(
+            candidates, key=lambda c: (c[0], c[1])
+        ):
             if self.money // price < shortfall:
                 continue  # can only repair if the whole shortfall is fillable
-            expected_cost = price * shortfall
-            if best_bid_plan is None or expected_cost < best_bid_plan[0]:
-                best_bid_plan = (expected_cost, commodity, shortfall, price)
-        if best_bid_plan is not None:
-            _, commodity, shortfall, price = best_bid_plan
             order_id = market.place_buy_order(self, commodity, shortfall, price)
             if order_id:
                 self.active_orders[order_id] = f"buy {commodity.id} (maintenance bid)"
-                self.last_action = (
-                    f"Standing maintenance bid: {shortfall} {commodity.id} at {price}"
-                )
+                placed.append(f"{shortfall} {commodity.id} at {price}")
+        if placed:
+            self.last_action = "Standing maintenance bid(s): " + ", ".join(placed)
 
     def start_journey(self, destination: Planet) -> bool:
         """Begin a journey to another planet.

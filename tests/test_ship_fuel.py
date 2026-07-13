@@ -106,6 +106,9 @@ def test_plan_rejected_when_origin_cannot_sell_needed_fuel():
     seller = _make_ship(sim, a, name="Seller")
     seller.cargo.add_commodity(food, 50)
     a.market.place_sell_order(seller, food, 50, 10)
+    # Real demand at the destination (plans need visible profitable bids).
+    buyer_b = _make_ship(sim, b, money=2000, name="BuyerB")
+    b.market.place_buy_order(buyer_b, food, 50, 25)
     # Fuel is only for sale at the destination, not the origin.
     supplier_b = _make_ship(sim, b, fuel_units=100, name="SupplierB")
     b.market.place_sell_order(supplier_b, fuel, 50, 12)
@@ -392,6 +395,154 @@ def test_maintenance_standing_bid_when_no_asks():
     bids = [o for o in a.market.buy_orders[fuel] if o.actor is ship]
     assert len(bids) == 1
     assert bids[0].price > first_price
+
+
+def test_topup_rations_fuel_at_spike_prices():
+    """A scarcity-priced local ask must not be lifted for a FULL tank.
+
+    Ships that bunkered whole tanks at spike prices (40-85/unit) traded
+    themselves broke; above the bunker ceiling only the survival target
+    is bought.
+    """
+    sim, fuel, _, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    # Cheap fuel exists at B (galaxy reference ~10)...
+    remote_supplier = _make_ship(sim, b, fuel_units=200, name="RemoteSupplier")
+    b.market.place_sell_order(remote_supplier, fuel, 100, 10)
+    # ...but the local ask at A is spike-priced.
+    local_supplier = _make_ship(sim, a, fuel_units=200, name="LocalSupplier")
+    a.market.place_sell_order(local_supplier, fuel, 100, 60)
+
+    ship = _make_ship(sim, a, fuel_units=0, money=5000, name="Trader")
+    ship.brain.decide_trade_actions()
+
+    buys = [o for o in a.market.buy_orders[fuel] if o.actor is ship]
+    assert len(buys) == 1
+    # Only the survival target, nowhere near tank capacity.
+    assert buys[0].quantity == ship.brain._fuel_survival_target()
+    assert buys[0].quantity < ship.fuel_capacity // 2
+
+
+def test_topup_bunkers_at_cheap_prices():
+    """Near the galaxy reference price, the ship fills its tank."""
+    sim, fuel, _, (a, _) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    supplier = _make_ship(sim, a, fuel_units=200, name="Supplier")
+    a.market.place_sell_order(supplier, fuel, 100, 10)
+
+    ship = _make_ship(sim, a, fuel_units=0, money=5000, name="Trader")
+    ship.brain.decide_trade_actions()
+
+    buys = [o for o in a.market.buy_orders[fuel] if o.actor is ship]
+    assert len(buys) == 1
+    assert buys[0].quantity == ship.fuel_capacity
+
+
+def test_plan_quantity_capped_by_destination_bid_depth():
+    """Plans must not buy more cargo than the destination book can absorb."""
+    sim, fuel, food, (a, b) = _make_world([("A", 0, 0), ("B", 60, 0)])
+    seller = _make_ship(sim, a, fuel_units=200, name="Seller")
+    seller.cargo.add_commodity(food, 80)
+    a.market.place_sell_order(seller, food, 80, 10)
+    a.market.place_sell_order(seller, fuel, 50, 5)
+    # Destination demand: only 7 units bid above cost.
+    buyer = _make_ship(sim, b, money=2000, name="Buyer")
+    b.market.place_buy_order(buyer, food, 7, 30)
+
+    trader = _make_ship(sim, a, money=2000, name="Trader")
+    plan = trader.brain._evaluate_trade_opportunity(a, b, food)
+
+    assert plan is not None
+    assert plan.quantity == 7
+    assert plan.expected_sell_price_per_unit == 30
+
+
+def test_plan_revenue_walks_the_bid_book():
+    """Expected revenue uses each level's price, not top-of-book for all units."""
+    sim, fuel, food, (a, b) = _make_world([("A", 0, 0), ("B", 60, 0)])
+    seller = _make_ship(sim, a, fuel_units=200, name="Seller")
+    seller.cargo.add_commodity(food, 80)
+    a.market.place_sell_order(seller, food, 80, 10)
+    a.market.place_sell_order(seller, fuel, 50, 5)
+    buyer = _make_ship(sim, b, money=5000, name="Buyer")
+    b.market.place_buy_order(buyer, food, 5, 40)
+    b.market.place_buy_order(buyer, food, 10, 20)
+
+    trader = _make_ship(sim, a, money=5000, name="Trader")
+    plan = trader.brain._evaluate_trade_opportunity(a, b, food)
+
+    assert plan is not None
+    assert plan.quantity == 15
+    # Weighted average of 5@40 + 10@20 = 400/15 = 26.67 -> floor 26.
+    assert plan.expected_sell_price_per_unit == (5 * 40 + 10 * 20) // 15
+
+
+def test_plan_prices_in_expected_maintenance():
+    """Round-trip maintenance risk is part of the plan's cost side."""
+    sim, fuel, food, (a, b) = _make_world([("A", 0, 0), ("B", 60, 0)])
+    seller = _make_ship(sim, a, fuel_units=200, name="Seller")
+    seller.cargo.add_commodity(food, 50)
+    a.market.place_sell_order(seller, food, 50, 10)
+    a.market.place_sell_order(seller, fuel, 50, 20)
+    buyer = _make_ship(sim, b, money=5000, name="Buyer")
+    b.market.place_buy_order(buyer, food, 20, 30)
+
+    trader = _make_ship(sim, a, money=5000, name="Trader")
+    plan = trader.brain._evaluate_trade_opportunity(a, b, food)
+
+    assert plan is not None
+    # 2 departures x 10% x 5 fuel units x fuel ask 20 = 20.
+    assert plan.expected_maintenance_cost == 20
+    assert (
+        plan.expected_profit
+        == plan.expected_revenue - plan.total_purchase_cost - plan.total_fuel_cost - 20
+    )
+
+
+def test_standing_fuel_bid_capped_at_survival_target():
+    """Rescue bids ask for mobility, not a full tank of reserved money."""
+    sim, fuel, _, (a, b) = _make_world([("A", 0, 0), ("B", 60, 0)])
+    supplier = _make_ship(sim, a, fuel_units=200, name="Supplier")
+    a.market.place_sell_order(supplier, fuel, 100, 10)
+
+    stranded = _make_ship(sim, b, fuel_units=0, money=10000, name="Stranded")
+    stranded.brain.decide_trade_actions()
+
+    bids = [o for o in b.market.buy_orders[fuel] if o.actor is stranded]
+    assert len(bids) == 1
+    assert bids[0].quantity == stranded.brain._fuel_survival_target()
+    assert bids[0].quantity < stranded.fuel_capacity
+
+
+def test_maintenance_bids_prefer_produced_tiers_and_cover_all():
+    """Standing maintenance bids cover every fundable tier, produced first.
+
+    A ship that bid only on the cheapest tier (ship_components) sat dead for
+    hundreds of turns with plenty of money because nobody in the galaxy made
+    components; a simultaneous fuel-tier bid would have freed it.
+    """
+    sim, fuel, _, (a, _) = _make_world([("A", 0, 0), ("B", 50, 0)])
+    registry = sim.commodity_registry
+    components = CommodityDefinition(
+        id="ship_components",
+        name="Ship Components",
+        transportable=True,
+        description="Precision ship repair components.",
+    )
+    registry.add_commodity(components)
+    # Fuel HAS traded here; components never traded anywhere.
+    a.market.last_traded_prices[fuel] = [12]
+
+    ship = _make_ship(sim, a, fuel_units=0, money=1000)
+    ship.maintenance_needed = True
+    ship._buy_maintenance_supplies()
+
+    fuel_bids = [o for o in a.market.buy_orders[fuel] if o.actor is ship]
+    comp_bids = [o for o in a.market.buy_orders[components] if o.actor is ship]
+    assert len(fuel_bids) == 1
+    assert fuel_bids[0].quantity == 5
+    assert len(comp_bids) == 1
+    assert comp_bids[0].quantity == 1
+    # The produced (fuel) tier was funded first: with money to spare both
+    # rest in the book, maximizing the chance one fills.
 
 
 def test_survival_reposition_leaves_fuel_desert():

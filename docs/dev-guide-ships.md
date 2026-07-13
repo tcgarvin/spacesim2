@@ -19,6 +19,13 @@ origin → buy goods → travel → sell goods
 
 - Account for round-trip fuel costs (conservative planning)
 - Only execute trades with minimum profit margin (e.g., 15%+)
+- Cap quantity at the destination's visible bid depth above cost and project
+  revenue by walking the bid book (`Market.get_bid_levels`) — top-of-book ×
+  quantity systematically overestimates on thin books
+- Plans with no resting destination bids are speculative: capped at
+  `SPECULATIVE_PLAN_CAP` units
+- Price in expected maintenance (2 departures × `MAINTENANCE_CHANCE` × the
+  fuel-tier repair cost) via `TradePlan.expected_maintenance_cost`
 - Example: `TraderBrain` in `ship.py`
 
 ### 2. Checking Market Conditions
@@ -58,8 +65,27 @@ fuel_round_trip = fuel_needed * 2
 | Fuel capacity | 50 units | Maximum fuel a ship can carry |
 | Starting fuel | 30 units | Initial fuel for new ships |
 | Fuel efficiency | 0.8-1.2 | Random multiplier per ship |
-| Maintenance cost | 5 fuel | 10% chance per departure |
+| Maintenance cost | 5 fuel | `MAINTENANCE_CHANCE` (10%) per departure |
 | Travel time | `ceil(distance/20)` turns | Independent of fuel |
+
+### Fuel Purchasing Policy (bunker vs ration)
+
+`TraderBrain` buys fuel price-aware (`_opportunistic_fuel_topup`):
+
+- **Bunker** (fill the tank) only when the local ask is within
+  `FUEL_BUNKER_PREMIUM` (30%) of the galaxy's cheapest believable fuel price —
+  the min over current asks and 30-day averages backed by real trades
+  (`_fuel_value_reference`). Bunkering beyond the survival target is capped at
+  `FUEL_BUNKER_BUDGET_FRACTION` (50%) of cash so fuel never crowds out trading
+  capital.
+- **Ration** at scarcity prices: buy only up to `_fuel_survival_target()`
+  (two shortest round trips or the escape leg, whichever is larger). Ships
+  that filled 50-unit tanks at spike prices (40-85/unit vs single-digit cargo
+  margins) reliably traded themselves broke.
+
+Standing fuel rescue bids are likewise capped at the survival target — a
+tank-sized bid reserves most of the ship's money for as long as it rests
+unfilled.
 
 ### 4. Cargo-Before-Travel Pattern
 

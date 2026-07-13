@@ -689,6 +689,22 @@ class Market:
         self._quote_cache[commodity_type] = result
         return result
 
+    def get_bid_levels(
+        self, commodity_type: "CommodityDefinition"
+    ) -> List[Tuple[int, int]]:
+        """Resting buy orders as (price, quantity) pairs, best price first.
+
+        Lets planners see bid DEPTH, not just the top of book: selling more
+        units than the book holds at acceptable prices means walking down the
+        levels (or not filling at all), so revenue projected from the top bid
+        alone systematically overestimates.
+        """
+        levels = [
+            (o.price, o.quantity) for o in self.buy_orders.get(commodity_type, [])
+        ]
+        levels.sort(key=lambda level: -level[0])
+        return levels
+
     def get_30_day_average_price(self, commodity_type: "CommodityDefinition") -> float:
         """Get the 30-day moving average price for a commodity."""
         prices = self.price_history.get(commodity_type, [])
