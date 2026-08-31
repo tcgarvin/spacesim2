@@ -26,9 +26,9 @@ shuffle of ``sim.actors``, each planet's actors are shuffled independently
 (per-shard RNG). Within the actor phase, cross-planet ordering cannot matter
 — actors never observe another planet — so this changes no observable
 behavior, only the (already non-reproducible) random stream. In-actor code
-keeps using the global ``random`` module: free-threaded CPython makes it
-thread-safe via an internal lock, which is a known contention point (the
-measured 12-thread speedup is ~2.8x, not 12x, largely for this reason).
+draws from ``Actor.rng`` (a per-actor ``random.Random``) rather than the
+module-level ``random``, whose internal lock on free-threaded builds was a
+contention suspect for the sub-linear thread scaling.
 """
 
 import random

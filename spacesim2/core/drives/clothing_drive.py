@@ -1,5 +1,3 @@
-import random
-
 from spacesim2.core.actor import Actor
 from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
 from spacesim2.core.drives.actor_drive import (
@@ -81,7 +79,7 @@ class ClothingDrive(ActorDrive):
         health = 1.0 if has_clothes else 0.0
 
         consumed_quality = False
-        event_today = random.random() < p_event
+        event_today = actor.rng.random() < p_event
         if event_today:
             # Try quality first, fall back to basic
             if self.quality_good and actor.inventory.remove_commodity(

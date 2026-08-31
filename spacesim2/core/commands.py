@@ -1,4 +1,3 @@
-import random
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from typing import TYPE_CHECKING, Dict, List, Tuple
@@ -88,10 +87,10 @@ class ProcessCommand(EconomicCommand):
             combined_rating = SkillCheck.get_combined_skill_rating(skill_ratings)
 
             # Perform success check
-            success = SkillCheck.success_check(combined_rating)
+            success = SkillCheck.success_check(combined_rating, actor.rng)
 
             # If successful, check for multiplier
-            if success and SkillCheck.multiplier_check(combined_rating):
+            if success and SkillCheck.multiplier_check(combined_rating, actor.rng):
                 multiplier = 2  # Apply ×2 multiplier
 
         # If the process failed the skill check nothing happens
@@ -109,7 +108,7 @@ class ProcessCommand(EconomicCommand):
 
             if process.resource_attribute.effect == "success":
                 # Availability affects whether process works at all
-                if random.random() > availability:
+                if actor.rng.random() > availability:
                     actor.last_action = (
                         f"Failed {process.name}: insufficient planetary resources"
                     )
@@ -141,7 +140,7 @@ class ProcessCommand(EconomicCommand):
         # Tool degradation: 1% chance per tool to break after successful use
         TOOL_BREAK_PROBABILITY = 0.01
         for tool in process.tools_required:
-            if random.random() < TOOL_BREAK_PROBABILITY:
+            if actor.rng.random() < TOOL_BREAK_PROBABILITY:
                 actor.inventory.remove_commodity(tool, 1)
                 if actor.sim.data_logger:
                     # Handle both CommodityDefinition objects and string IDs
