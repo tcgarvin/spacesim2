@@ -1,41 +1,49 @@
 import math
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
+from spacesim2.core import kernel
 from spacesim2.core.commands import (
     EconomicCommand,
     MarketCommand,
     PlaceBuyOrderCommand,
     PlaceSellOrderCommand,
 )
-from spacesim2.core.skill import SkillCheck
+
+# Kernel constants, re-exported from their canonical home so existing imports
+# (brains, tests) keep working: GOVERNMENT_WAGE is the opportunity-cost floor
+# for a turn of labor, TOOL_EXPECTED_LIFESPAN amortizes tool costs,
+# MAX_IMPUTE_DEPTH bounds make-or-buy recursion, and
+# DEFAULT_FACILITY_AMORTIZATION_HORIZON spreads lump-sum facility builds for
+# actors that don't set their own (industrialists randomize theirs).
+from spacesim2.core.kernel import (
+    DEFAULT_FACILITY_AMORTIZATION_HORIZON,
+    GOVERNMENT_WAGE,
+    MAX_IMPUTE_DEPTH,
+    TOOL_EXPECTED_LIFESPAN,
+)
 
 if TYPE_CHECKING:
     from spacesim2.core.actor import Actor
     from spacesim2.core.commodity import CommodityDefinition
     from spacesim2.core.drives.actor_drive import ActorDrive
+    from spacesim2.core.kernel import ActorPack, EconomyTable, PlanetSnapshot, Quotes
     from spacesim2.core.market import Market
     from spacesim2.core.process import ProcessDefinition
 
-# Opportunity cost floor for a turn of labor (government work wage). Used as the
-# labor component of replacement cost when self-producing a good.
-GOVERNMENT_WAGE = 10
-
-# Tools wear out after ~100 uses; amortize their cost across that lifespan.
-TOOL_EXPECTED_LIFESPAN = 100
+__all__ = [
+    "DEFAULT_FACILITY_AMORTIZATION_HORIZON",
+    "GOVERNMENT_WAGE",
+    "MAX_IMPUTE_DEPTH",
+    "NUMERAIRE_DRIVE",
+    "TOOL_EXPECTED_LIFESPAN",
+    "ActorBrain",
+    "BrainCache",
+]
 
 # Numeraire drive: marginal value of money is anchored on food, the most basic
 # survival good. Willingness-to-pay for every other drive good is expressed
 # relative to it.
 NUMERAIRE_DRIVE = "food"
-
-# Bound on how deep make-or-buy imputation recurses through production chains.
-MAX_IMPUTE_DEPTH = 6
-
-# Default facility amortization horizon for actors that don't set their own
-# (industrialists randomize a per-actor value to encode risk appetite; see
-# brains/industrialist.py). Used when imputation must amortize a lump-sum
-# facility build cost into a per-run cost.
-DEFAULT_FACILITY_AMORTIZATION_HORIZON = 300
 
 
 class BrainCache:
@@ -78,10 +86,12 @@ class BrainCache:
         "bid_ask",
         "avg_price",
         "yield_modifier",
+        "kernel_quotes",
         "skill_factor",
         "replacement_cost",
         "imputed_cost",
         "best_result",
+        "kernel_pack",
         "_turn",
         "_actor_key",
     )
@@ -96,6 +106,9 @@ class BrainCache:
         self.bid_ask: Dict[str, Tuple[Optional[int], Optional[int]]] = {}
         self.avg_price: Dict[str, float] = {}
         self.yield_modifier: Dict[str, float] = {}
+        # Kernel-path twin of ``bid_ask``: the live top-of-book vectors for
+        # one actor-turn (books never move between an actor's decide_* calls).
+        self.kernel_quotes: Optional["Quotes"] = None
 
     def _reset_actor_group(self) -> None:
         self.skill_factor: Dict[str, float] = {}
@@ -105,6 +118,11 @@ class BrainCache:
         # Colonist-specific: memoized (best_process, raw_profit) for the
         # whole-registry profitability scan (see colonist.py).
         self.best_result: Optional[Tuple[Optional["ProcessDefinition"], float]] = None
+        # Kernel-path state: the actor's flattened pack (skills + available
+        # inventory). Depends on inventory/skills, so it lives in the actor
+        # group and is rebuilt after a ProcessCommand — BrainCache stays the
+        # miss-driver for the kernel exactly as for the legacy memos.
+        self.kernel_pack: Optional[Tuple["EconomyTable", "ActorPack"]] = None
 
     def refresh(self, actor: "Actor") -> "BrainCache":
         """Validate the cache against ``actor``'s current turn/state.
@@ -173,6 +191,69 @@ class ActorBrain:
         if self._cache is None:
             self._cache = BrainCache()
         return self._cache.refresh(actor)
+
+    # ------------------------------------------------------------------
+    # Kernel plumbing. The valuation math (best-process scan, replacement
+    # cost, make-or-buy imputation) lives in core/kernel as pure functions
+    # over flattened plain data; these helpers build/cache the kernel inputs
+    # from live objects. When the actor/market aren't real simulation objects
+    # (unit tests drive brains with Mocks), kernel.try_context returns None
+    # and the *_fallback legacy implementations run instead.
+    # ------------------------------------------------------------------
+
+    def _kernel_quotes(
+        self, table: "EconomyTable", market: "Market", cache: Optional[BrainCache]
+    ) -> "Quotes":
+        """Live top-of-book vectors, cached for at most one actor-turn.
+
+        Same lifetime as the legacy ``cache.bid_ask`` memo: order books never
+        move between one actor's ``decide_*`` calls (command execution
+        happens outside them), and the market group resets every sim turn, so
+        each actor still reads live quotes at its own turn.
+        """
+        if (
+            cache is not None
+            and cache.kernel_quotes is not None
+            and cache.kernel_quotes.table is table
+        ):
+            return cache.kernel_quotes
+        quotes = kernel.build_quotes(table, market)
+        if cache is not None:
+            cache.kernel_quotes = quotes
+        return quotes
+
+    def _kernel_pack(
+        self, table: "EconomyTable", actor: "Actor", cache: Optional[BrainCache]
+    ) -> "ActorPack":
+        """The actor's flattened kernel pack, invalidated with the actor group."""
+        if cache is not None and cache.kernel_pack is not None:
+            pack_table, pack = cache.kernel_pack
+            if pack_table is table:
+                return pack
+        pack = kernel.build_pack(table, actor, self.facility_amortization_horizon)
+        if cache is not None:
+            cache.kernel_pack = (table, pack)
+        return pack
+
+    def _kernel_state(
+        self, actor: "Actor", market: "Market", cache: Optional[BrainCache]
+    ) -> Optional[Tuple["EconomyTable", "PlanetSnapshot", "Quotes", "ActorPack"]]:
+        """The full kernel input closure for one invocation, or None when the
+        kernel can't represent the inputs (mock-based tests -> legacy path).
+
+        Quotes and pack are cached in ``BrainCache`` with the same lifetimes
+        as the legacy memos they mirror; kernel *results* are cached by the
+        callers (``cache.replacement_cost``, ``cache.best_result``,
+        ``cache.imputed_cost``), so BrainCache stays the miss-driver across
+        the economic->market phase boundary.
+        """
+        context = kernel.try_context(actor, market)
+        if context is None:
+            return None
+        table, snapshot = context
+        quotes = self._kernel_quotes(table, market, cache)
+        pack = self._kernel_pack(table, actor, cache)
+        return table, snapshot, quotes, pack
 
     def decide_economic_action(self, actor: "Actor") -> Optional[EconomicCommand]:
         """Decide which economic action to take this turn."""
@@ -413,6 +494,33 @@ class ActorBrain:
             return cache.replacement_cost[commodity.id]
 
         best: Optional[float] = None
+        computed = False
+        state = self._kernel_state(actor, market, cache)
+        if state is not None:
+            table, snapshot, quotes, pack = state
+            cidx = table.commodity_index.get(commodity.id)
+            if cidx is not None:
+                best = kernel.replacement_cost(table, snapshot, quotes, pack, cidx)
+                computed = True
+        if not computed:
+            best = self._replacement_cost_fallback(actor, market, commodity, cache)
+
+        if cache is not None:
+            cache.replacement_cost[commodity.id] = best
+        return best
+
+    def _replacement_cost_fallback(
+        self,
+        actor: "Actor",
+        market: "Market",
+        commodity: "CommodityDefinition",
+        cache: Optional[BrainCache] = None,
+    ) -> Optional[float]:
+        """Legacy implementation of ``_replacement_cost``; the reference the
+        kernel backend is held to (see tests/test_kernel_parity.py). Runs when
+        the kernel can't represent the inputs (mock-based tests).
+        """
+        best: Optional[float] = None
         for process in actor.sim.process_registry.get_processes_producing(commodity):
             out_qty = process.outputs.get(commodity, 0)
             if out_qty <= 0:
@@ -454,8 +562,6 @@ class ActorBrain:
             if best is None or per_unit < best:
                 best = per_unit
 
-        if cache is not None:
-            cache.replacement_cost[commodity.id] = best
         return best
 
     def _expected_yield_modifier(
@@ -507,18 +613,13 @@ class ActorBrain:
         if cache is not None and process.id in cache.skill_factor:
             return cache.skill_factor[process.id]
 
-        if not process.relevant_skills:
-            value = 1.0
-        else:
-            rating = SkillCheck.get_combined_skill_rating(
-                [
-                    actor.get_skill_rating(skill_id)
-                    for skill_id in process.relevant_skills
-                ]
-            )
-            success_probability = min(1.0, rating)
-            expected_multiplier = 1.0 + max(0.0, rating - 1.0) * 0.5
-            value = success_probability * expected_multiplier
+        # The formula itself lives in the kernel (single source shared with
+        # evaluate_actor); an empty ratings list means "no relevant skills"
+        # and yields 1.0. Combined rating is the plain mean, matching
+        # SkillCheck.get_combined_skill_rating.
+        value = kernel.expected_skill_factor(
+            [actor.get_skill_rating(skill_id) for skill_id in process.relevant_skills]
+        )
 
         if cache is not None:
             cache.skill_factor[process.id] = value
@@ -527,17 +628,12 @@ class ActorBrain:
     def _get_build_process_for_facility(
         self, facility: "CommodityDefinition"
     ) -> Optional[str]:
-        """Map facility commodities to their build processes."""
-        facility_to_process = {
-            "smelting_facility": "build_smelting_facility",
-            "metalworking_facility": "build_metalworking_facility",
-            "textile_mill": "build_textile_mill",
-            "chemistry_lab": "build_chemistry_lab",
-            "precision_forge": "build_precision_forge",
-            "electronics_workshop": "build_electronics_workshop",
-            "advanced_factory": "build_advanced_factory",
-        }
-        return facility_to_process.get(facility.id)
+        """Map facility commodities to their build processes.
+
+        The table itself lives in the kernel (baked into EconomyTable at
+        build time); this is the same single source.
+        """
+        return kernel.FACILITY_BUILD_PROCESSES.get(facility.id)
 
     def _imputed_unit_cost(
         self,
@@ -557,6 +653,38 @@ class ActorBrain:
         that produces them. Returns ``math.inf`` when the commodity can be
         neither bought nor produced (no recipe, a production cycle, or the
         recursion depth bound is hit), which callers treat as "not viable".
+
+        ``memo`` and ``visiting`` are keyed by commodity id strings in both
+        the kernel and legacy paths, so ``BrainCache.imputed_cost`` is
+        interchangeable between them.
+        """
+        context = kernel.try_context(actor, market)
+        if context is not None:
+            table, snapshot = context
+            cidx = table.commodity_index.get(commodity.id)
+            if cidx is not None:
+                cache = self._turn_cache(actor)
+                quotes = self._kernel_quotes(table, market, cache)
+                pack = self._kernel_pack(table, actor, cache)
+                return kernel.imputed_unit_cost(
+                    table, snapshot, quotes, pack, cidx, depth, visiting, memo
+                )
+        return self._imputed_unit_cost_fallback(
+            actor, market, commodity, depth, visiting, memo
+        )
+
+    def _imputed_unit_cost_fallback(
+        self,
+        actor: "Actor",
+        market: "Market",
+        commodity: "CommodityDefinition",
+        depth: int,
+        visiting: frozenset[str],
+        memo: Dict[str, float],
+    ) -> float:
+        """Legacy implementation of ``_imputed_unit_cost``; the reference the
+        kernel backend is held to (see tests/test_kernel_parity.py). Runs when
+        the kernel can't represent the inputs (mock-based tests).
         """
         # 1. Buy it: a live ask is the truest cost; fall back to last-traded avg.
         #    Only trust the avg when a real trade has set it - otherwise
@@ -601,7 +729,7 @@ class ActorBrain:
                 )
             if attribute_modifier <= 0.0:
                 continue  # resource absent here -> can't make it locally
-            recipe_cost = self._impute_recipe_cost(
+            recipe_cost = self._impute_recipe_cost_fallback(
                 actor, market, process, depth, visiting, memo
             )
             if math.isinf(recipe_cost):
@@ -625,10 +753,38 @@ class ActorBrain:
         the government wage, recursively-valued inputs, plus amortized tool
         and facility costs. ``math.inf`` if any component can't be valued.
         """
+        context = kernel.try_context(actor, market)
+        if context is not None:
+            table, snapshot = context
+            pidx = table.process_index.get(process.id)
+            if pidx is not None:
+                cache = self._turn_cache(actor)
+                quotes = self._kernel_quotes(table, market, cache)
+                pack = self._kernel_pack(table, actor, cache)
+                return kernel.impute_recipe_cost(
+                    table, snapshot, quotes, pack, pidx, depth, visiting, memo
+                )
+        return self._impute_recipe_cost_fallback(
+            actor, market, process, depth, visiting, memo
+        )
+
+    def _impute_recipe_cost_fallback(
+        self,
+        actor: "Actor",
+        market: "Market",
+        process: "ProcessDefinition",
+        depth: int,
+        visiting: frozenset[str],
+        memo: Dict[str, float],
+    ) -> float:
+        """Legacy implementation of ``_impute_recipe_cost``; the reference the
+        kernel backend is held to (see tests/test_kernel_parity.py). Runs when
+        the kernel can't represent the inputs (mock-based tests).
+        """
         total = float(GOVERNMENT_WAGE)
 
         for commodity, quantity in process.inputs.items():
-            unit = self._imputed_unit_cost(
+            unit = self._imputed_unit_cost_fallback(
                 actor, market, commodity, depth + 1, visiting, memo
             )
             if math.isinf(unit):
@@ -639,7 +795,7 @@ class ActorBrain:
         for tool in process.tools_required:
             if actor.inventory.has_quantity(tool, 1):
                 continue
-            unit = self._imputed_unit_cost(
+            unit = self._imputed_unit_cost_fallback(
                 actor, market, tool, depth + 1, visiting, memo
             )
             if math.isinf(unit):
@@ -657,7 +813,7 @@ class ActorBrain:
             build_process = actor.sim.process_registry.get_process(build_process_id)
             if not build_process:
                 return math.inf
-            build_cost = self._impute_recipe_cost(
+            build_cost = self._impute_recipe_cost_fallback(
                 actor, market, build_process, depth + 1, visiting, memo
             )
             if math.isinf(build_cost):

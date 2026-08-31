@@ -10,6 +10,7 @@ from spacesim2.core.actor import Actor
 
 if TYPE_CHECKING:
     from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
+    from spacesim2.core.kernel.table import PlanetSnapshot
     from spacesim2.core.ship import Ship
 
 # Anything that can place orders and trade in a market. Ships participate in
@@ -163,6 +164,13 @@ class Market:
 
         # Per-commodity scarcity pressure (see SCARCITY_PRESSURE_* constants).
         self.scarcity_pressure: Dict["CommodityDefinition", float] = defaultdict(float)
+
+        # Per-turn kernel snapshot of turn-constant quote state (avg price /
+        # price signal) plus run-constant planet attributes. Owned by
+        # core/kernel/adapters.py (get_snapshot); lives here so it stays
+        # planet-sharded under the threaded actor phase, like
+        # drive_anchor_cache below. Live bid/ask are deliberately NOT in it.
+        self.kernel_snapshot: Optional["PlanetSnapshot"] = None
 
         # Per-turn cache of drive-bid reference anchors for never-traded goods
         # (commodity_id -> (turn, anchor)). Written and read by

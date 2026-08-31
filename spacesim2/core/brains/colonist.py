@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
+from spacesim2.core import kernel
 from spacesim2.core.actor import Actor
 from spacesim2.core.actor_brain import (
     ActorBrain,
@@ -164,6 +165,30 @@ class ColonistBrain(ActorBrain):
         if cache is not None and cache.best_result is not None:
             return cache.best_result
 
+        state = self._kernel_state(actor, market, cache)
+        if state is not None:
+            table, snapshot, quotes, pack = state
+            best_idx, raw_profit = kernel.best_process_scan(
+                table, snapshot, quotes, pack
+            )
+            result = (
+                table.process_defs[best_idx] if best_idx >= 0 else None,
+                raw_profit,
+            )
+        else:
+            result = self._best_process_and_raw_profit_fallback(actor, market, cache)
+
+        if cache is not None:
+            cache.best_result = result
+        return result
+
+    def _best_process_and_raw_profit_fallback(
+        self, actor: Actor, market: "Market", cache: Optional[BrainCache] = None
+    ) -> Tuple[Optional["ProcessDefinition"], float]:
+        """Legacy implementation of the scan; the reference the kernel backend
+        is held to (see tests/test_kernel_parity.py). Runs when the kernel
+        can't represent the inputs (mock-based tests).
+        """
         best_process: Optional["ProcessDefinition"] = None
         best_discounted_profit = 10.0  # Must exceed government work profit
         best_raw_profit = 0.0
@@ -203,10 +228,7 @@ class ColonistBrain(ActorBrain):
                 best_discounted_profit = discounted_profit
                 best_raw_profit = output_value - input_cost
 
-        result = (best_process, best_raw_profit)
-        if cache is not None:
-            cache.best_result = result
-        return result
+        return (best_process, best_raw_profit)
 
     def _calculate_turn_opportunity_cost(
         self, actor: Actor, cache: Optional[BrainCache] = None
