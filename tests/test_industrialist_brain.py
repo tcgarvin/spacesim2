@@ -1,4 +1,3 @@
-import random
 from unittest.mock import Mock
 
 import pytest
@@ -68,8 +67,6 @@ class TestIndustrialistBrain:
         _wire_producer_index(actor.sim)
         actor.inventory = Mock(spec=Inventory)
         actor.drives = []
-        # Seeded per-actor RNG: deterministic recipe (re)evaluation rolls.
-        actor.rng = random.Random(42)
         return actor
 
     @pytest.fixture
@@ -89,14 +86,14 @@ class TestIndustrialistBrain:
         assert brain.chosen_recipe_id is None
         assert brain.turns_since_recipe_evaluation == 0
 
-    def test_recipe_reevaluation_chance(self, brain, mock_actor):
+    def test_recipe_reevaluation_chance(self, brain):
         """Test that recipe reevaluation has roughly 1% chance."""
         # Run many iterations to test probability
         reevaluations = 0
         iterations = 5000  # More iterations for stable results
 
         for _ in range(iterations):
-            if brain._should_reevaluate_recipe(mock_actor):
+            if brain._should_reevaluate_recipe():
                 reevaluations += 1
 
         # Should be roughly 1% (allow variance: 0.3% to 2.5%)
@@ -393,7 +390,9 @@ class TestIndustrialistBrain:
         mock_actor.planet.attributes.get_availability.side_effect = get_availability
 
         # Run recipe selection many times to check bias
-        mock_actor.rng = random.Random(42)
+        import random
+
+        random.seed(42)
 
         selections = {"gather_biomass": 0, "gather_fiber": 0}
         for _ in range(100):

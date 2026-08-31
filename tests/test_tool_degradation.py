@@ -1,6 +1,6 @@
 """Tests for tool degradation during process execution."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from spacesim2.core.commands import ProcessCommand
 from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
@@ -9,7 +9,7 @@ from spacesim2.core.planet import Planet
 from spacesim2.core.process import ProcessDefinition, ProcessRegistry
 from spacesim2.core.simulation import Simulation
 
-from .helpers import FixedRandom, get_actor
+from .helpers import get_actor
 
 
 def create_sim_with_tool_process():
@@ -69,11 +69,13 @@ def test_tool_not_consumed_on_successful_process():
     actor.inventory.add_commodity("input_commodity", 5)
     actor.inventory.add_commodity("simple_tools", 3)
 
-    # Execute process with controlled randomness (no degradation):
-    # pin the actor's RNG above the 0.01 tool-break threshold.
-    actor.rng = FixedRandom(0.5)
-    command = ProcessCommand("test_process")
-    result = command.execute(actor)
+    # Execute process with controlled randomness (no degradation)
+    # Patch in commands module specifically
+    with patch(
+        "spacesim2.core.commands.random.random", return_value=0.5
+    ):  # Above 0.01 threshold
+        command = ProcessCommand("test_process")
+        result = command.execute(actor)
 
     assert result is True
     assert actor.inventory.get_quantity("simple_tools") == 3  # Tools not consumed
@@ -92,11 +94,13 @@ def test_tool_breaks_when_random_below_threshold():
     actor.inventory.add_commodity("input_commodity", 5)
     actor.inventory.add_commodity("simple_tools", 3)
 
-    # Execute process with controlled randomness (force degradation):
-    # pin the actor's RNG below the 0.01 tool-break threshold.
-    actor.rng = FixedRandom(0.005)
-    command = ProcessCommand("test_process")
-    result = command.execute(actor)
+    # Execute process with controlled randomness (force degradation)
+    # Patch in commands module specifically
+    with patch(
+        "spacesim2.core.commands.random.random", return_value=0.005
+    ):  # Below 0.01 threshold
+        command = ProcessCommand("test_process")
+        result = command.execute(actor)
 
     assert result is True
     assert actor.inventory.get_quantity("simple_tools") == 2  # One tool broke
@@ -119,11 +123,13 @@ def test_tool_break_logged_when_data_logger_present():
     actor.inventory.add_commodity("input_commodity", 5)
     actor.inventory.add_commodity("simple_tools", 3)
 
-    # Execute process with controlled randomness (force degradation):
-    # pin the actor's RNG below the 0.01 tool-break threshold.
-    actor.rng = FixedRandom(0.005)
-    command = ProcessCommand("test_process")
-    result = command.execute(actor)
+    # Execute process with controlled randomness (force degradation)
+    # Patch in commands module specifically
+    with patch(
+        "spacesim2.core.commands.random.random", return_value=0.005
+    ):  # Below 0.01 threshold
+        command = ProcessCommand("test_process")
+        result = command.execute(actor)
 
     assert result is True
     # Check that log_actor_note was called
@@ -148,9 +154,11 @@ def test_tool_degradation_only_after_successful_process():
     # Note: no input_commodity added
 
     # Try to execute process - should fail due to missing inputs
-    actor.rng = FixedRandom(0.005)  # Would cause degradation on success
-    command = ProcessCommand("test_process")
-    result = command.execute(actor)
+    with patch(
+        "spacesim2.core.commands.random.random", return_value=0.005
+    ):  # Would cause degradation
+        command = ProcessCommand("test_process")
+        result = command.execute(actor)
 
     assert result is False
     assert actor.inventory.get_quantity("simple_tools") == 3  # Tools unchanged
@@ -213,10 +221,13 @@ def test_tool_degradation_probability_is_independent_per_tool():
     actor.inventory.add_commodity("tool_a", 3)
     actor.inventory.add_commodity("tool_b", 3)
 
-    # Both tools break (every roll below the 0.01 threshold)
-    actor.rng = FixedRandom(0.005)
-    command = ProcessCommand("multi_tool_process")
-    result = command.execute(actor)
+    # Both tools break (both random calls below threshold)
+    random_values = iter([0.005, 0.005])
+    with patch(
+        "spacesim2.core.commands.random.random", side_effect=lambda: next(random_values)
+    ):
+        command = ProcessCommand("multi_tool_process")
+        result = command.execute(actor)
 
     assert result is True
     assert actor.inventory.get_quantity("tool_a") == 2  # One broke

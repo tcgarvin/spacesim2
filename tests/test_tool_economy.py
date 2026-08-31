@@ -4,7 +4,6 @@ from unittest.mock import patch
 
 from spacesim2.core.commands import ProcessCommand
 from spacesim2.core.simulation import Simulation
-from tests.helpers import FixedRandom
 
 
 class TestBootstrapPath:
@@ -172,10 +171,11 @@ class TestBootstrapPath:
 
         actor = sim.actors[0]
 
-        # Disable skill checks and pin the actor's RNG (above the tool-break
-        # threshold, below availability) for deterministic testing
-        actor.rng = FixedRandom(0.5)
-        with patch("spacesim2.core.skill.SkillCheck.success_check", return_value=True):
+        # Disable skill checks and planet attribute effects for deterministic testing
+        with (
+            patch("spacesim2.core.skill.SkillCheck.success_check", return_value=True),
+            patch("spacesim2.core.commands.random.random", return_value=0.5),
+        ):
             if actor.planet and actor.planet.attributes:
                 actor.planet.attributes.wood = 1.0
                 actor.planet.attributes.common_metal_ore = 1.0

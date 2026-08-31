@@ -1,5 +1,4 @@
 import enum
-import random
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 from spacesim2.core.commands import (
@@ -42,10 +41,6 @@ class Actor:
         initial_skills: Optional[Dict[str, float]] = None,
     ) -> None:
         self.name = name
-        # Per-actor RNG: everything reachable from take_turn() draws from this
-        # instead of the module-level random, whose internal lock serializes
-        # threads in the parallel actor phase (see core/parallel.py).
-        self.rng = random.Random()
         # Market makers get more initial money
         if actor_type == ActorType.MARKET_MAKER and initial_money == 50:
             self.money = 200

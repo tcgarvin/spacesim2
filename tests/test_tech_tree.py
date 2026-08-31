@@ -12,7 +12,6 @@ from unittest.mock import patch
 from spacesim2.core.actor import Actor
 from spacesim2.core.commands import ProcessCommand
 from spacesim2.core.simulation import Simulation
-from tests.helpers import FixedRandom
 
 
 def _run(process_id: str, actor: Actor, times: int = 1) -> None:
@@ -77,13 +76,13 @@ class TestFullTechTree:
         # Patch skill checks to always succeed with no multiplier, and disable tool degradation.
         # multiplier_check must also be patched: an unpredicted 2× input multiplier would
         # exhaust resources mid-phase and make the test non-deterministic.
-        # actor.rng pinned at 0.5 keeps tool-break threshold (0.01) and resource-success checks safe.
-        actor.rng = FixedRandom(0.5)
+        # random.random=0.5 keeps tool-break threshold (0.01) and resource-success checks safe.
         with (
             patch("spacesim2.core.skill.SkillCheck.success_check", return_value=True),
             patch(
                 "spacesim2.core.skill.SkillCheck.multiplier_check", return_value=False
             ),
+            patch("spacesim2.core.commands.random.random", return_value=0.5),
         ):
             self._phase_t0_raw_gathering(sim, actor)
             self._phase_t1_basic_industry(sim, actor)

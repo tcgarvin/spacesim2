@@ -1,23 +1,6 @@
-import random
-
 from spacesim2.core.actor import Actor, ActorType
 from spacesim2.core.commands import GovernmentWorkCommand
 from spacesim2.core.commodity import CommodityRegistry
-
-
-class FixedRandom(random.Random):
-    """A `random.Random` whose `random()` always returns a fixed value.
-
-    Used to pin per-actor RNG outcomes (tool breakage, drive events, skill
-    rolls) deterministically: assign it to `actor.rng`.
-    """
-
-    def __init__(self, value: float) -> None:
-        super().__init__()
-        self._value = value
-
-    def random(self) -> float:
-        return self._value
 
 
 def _get_mock_sim():

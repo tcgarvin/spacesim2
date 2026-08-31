@@ -1,7 +1,7 @@
 """Unit tests for the ShelterDrive module."""
 
 import random
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -19,7 +19,7 @@ from spacesim2.core.drives.shelter_drive import (
     URGENCY,
     ShelterDrive,
 )
-from tests.helpers import FixedRandom, get_actor
+from tests.helpers import get_actor
 
 
 class TestShelterDriveConstants:
@@ -81,9 +81,10 @@ class TestShelterDrive:
         assert shelter_drive.metrics.urgency == URGENCY
         assert mock_commodity_registry.get_commodity.call_count == 2
 
-    def test_tick_no_event(self, shelter_drive, mock_actor):
+    @patch("spacesim2.core.drives.shelter_drive.random.random")
+    def test_tick_no_event(self, mock_random, shelter_drive, mock_actor):
         """No event fires — debt decays, nothing consumed."""
-        mock_actor.rng = FixedRandom(0.9)  # above BASE_EVENT_PROB
+        mock_random.return_value = 0.9  # above BASE_EVENT_PROB
 
         def get_qty(commodity):
             return 5 if commodity.id == BUILDING_MATERIALS_NAME else 0
@@ -97,9 +98,12 @@ class TestShelterDrive:
         assert abs(result.debt - 0.5 * DEBT_DECAY_FACTOR) < 1e-6
         mock_actor.inventory.remove_commodity.assert_not_called()
 
-    def test_tick_event_consumes_basic_material(self, shelter_drive, mock_actor):
+    @patch("spacesim2.core.drives.shelter_drive.random.random")
+    def test_tick_event_consumes_basic_material(
+        self, mock_random, shelter_drive, mock_actor
+    ):
         """Event fires with basic materials only — debt uses normal decay."""
-        mock_actor.rng = FixedRandom(0.001)  # below BASE_EVENT_PROB
+        mock_random.return_value = 0.001  # below BASE_EVENT_PROB
 
         def get_qty(commodity):
             return 5 if commodity.id == BUILDING_MATERIALS_NAME else 0
@@ -117,9 +121,12 @@ class TestShelterDrive:
         # Standard decay (not quality decay) since basic material was used
         assert abs(result.debt - initial_debt * DEBT_DECAY_FACTOR) < 1e-6
 
-    def test_tick_event_prefers_quality_material(self, shelter_drive, mock_actor):
+    @patch("spacesim2.core.drives.shelter_drive.random.random")
+    def test_tick_event_prefers_quality_material(
+        self, mock_random, shelter_drive, mock_actor
+    ):
         """Event fires with both tiers available — quality preferred, faster debt recovery."""
-        mock_actor.rng = FixedRandom(0.001)
+        mock_random.return_value = 0.001
 
         def get_qty(commodity):
             return 5  # both tiers in stock
@@ -143,9 +150,12 @@ class TestShelterDrive:
         first_call = mock_actor.inventory.remove_commodity.call_args_list[0]
         assert first_call[0][0].id == PREFAB_HOUSING_NAME
 
-    def test_tick_event_failed_maintenance(self, shelter_drive, mock_actor):
+    @patch("spacesim2.core.drives.shelter_drive.random.random")
+    def test_tick_event_failed_maintenance(
+        self, mock_random, shelter_drive, mock_actor
+    ):
         """Event fires with no inventory — debt penalized."""
-        mock_actor.rng = FixedRandom(0.001)
+        mock_random.return_value = 0.001
         mock_actor.inventory.get_available_quantity.return_value = 0
         initial_debt = 0.2
         shelter_drive.metrics.debt = initial_debt
@@ -163,9 +173,11 @@ class TestShelterDrive:
             return 50  # both tiers
 
         mock_actor.inventory.get_available_quantity.side_effect = get_qty
-        mock_actor.rng = FixedRandom(0.9)  # no event
 
-        result = shelter_drive.tick(mock_actor)
+        with patch(
+            "spacesim2.core.drives.shelter_drive.random.random", return_value=0.9
+        ):
+            result = shelter_drive.tick(mock_actor)
 
         from spacesim2.core.drives.actor_drive import log_norm_ratio
 
@@ -178,9 +190,11 @@ class TestShelterDrive:
 
     def test_buffer_with_zero_inventory(self, shelter_drive, mock_actor):
         mock_actor.inventory.get_available_quantity.return_value = 0
-        mock_actor.rng = FixedRandom(0.9)  # no event
 
-        result = shelter_drive.tick(mock_actor)
+        with patch(
+            "spacesim2.core.drives.shelter_drive.random.random", return_value=0.9
+        ):
+            result = shelter_drive.tick(mock_actor)
 
         assert result.buffer == 0.0
 
@@ -189,9 +203,11 @@ class TestShelterDrive:
         mock_actor.inventory.get_available_quantity.return_value = 0
         initial_debt = 0.6
         shelter_drive.metrics.debt = initial_debt
-        mock_actor.rng = FixedRandom(0.9)  # no event
 
-        result = shelter_drive.tick(mock_actor)
+        with patch(
+            "spacesim2.core.drives.shelter_drive.random.random", return_value=0.9
+        ):
+            result = shelter_drive.tick(mock_actor)
 
         assert result.debt == initial_debt
 
@@ -235,9 +251,11 @@ class TestShelterDriveIntegration:
         actor = get_actor("TestActor")
         actor.inventory.get_available_quantity = Mock(return_value=0)
         actor.inventory.remove_commodity = Mock(return_value=False)
-        actor.rng = FixedRandom(0.001)  # event fires every tick
 
-        debt_progression = [drive.tick(actor).debt for _ in range(5)]
+        with patch(
+            "spacesim2.core.drives.shelter_drive.random.random", return_value=0.001
+        ):
+            debt_progression = [drive.tick(actor).debt for _ in range(5)]
 
         assert debt_progression[-1] > 0
         assert all(0 <= d <= 1 for d in debt_progression)
@@ -250,9 +268,11 @@ class TestShelterDriveIntegration:
         quality = real_registry.get_commodity(PREFAB_HOUSING_NAME)
         actor.inventory.add_commodity(basic, 10)
         actor.inventory.add_commodity(quality, 10)
-        actor.rng = FixedRandom(0.001)  # event fires
 
-        result = drive.tick(actor)
+        with patch(
+            "spacesim2.core.drives.shelter_drive.random.random", return_value=0.001
+        ):
+            result = drive.tick(actor)
 
         assert result.health == 1.0
         total_remaining = actor.inventory.get_available_quantity(
@@ -268,9 +288,11 @@ class TestShelterDriveIntegration:
         quality = real_registry.get_commodity(PREFAB_HOUSING_NAME)
         actor.inventory.add_commodity(basic, 5)
         actor.inventory.add_commodity(quality, 5)
-        actor.rng = FixedRandom(0.001)  # event fires
 
-        drive.tick(actor)
+        with patch(
+            "spacesim2.core.drives.shelter_drive.random.random", return_value=0.001
+        ):
+            drive.tick(actor)
 
         # Quality should have been consumed, basic left intact
         assert actor.inventory.get_available_quantity(quality) == 4
@@ -311,7 +333,7 @@ class TestShelterDriveStochastic:
 
         num_trials = 1000
         events_occurred = 0
-        actor.rng = random.Random(42)
+        random.seed(42)
 
         for _ in range(num_trials):
             drive.tick(actor)
@@ -326,7 +348,6 @@ class TestShelterDriveStochastic:
     def test_metrics_bounds_over_time(self, setup_drive_and_actor):
         """All metrics stay within [0, 1] over many ticks."""
         drive, actor = setup_drive_and_actor
-        actor.rng = random.Random(123)
 
         random.seed(123)
         for _ in range(100):

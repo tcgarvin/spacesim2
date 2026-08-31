@@ -10,7 +10,7 @@ from spacesim2.core.planet import Planet
 from spacesim2.core.process import ProcessDefinition, ProcessRegistry
 from spacesim2.core.simulation import Simulation
 
-from .helpers import FixedRandom, get_actor
+from .helpers import get_actor
 
 
 def test_load_commodities_from_yaml():
@@ -156,8 +156,12 @@ def test_inventory_commodity_items(mock_sim):
     assert inventory.get_quantity("test_commodity") == 3
 
 
-def test_actor_execute_process():
+def test_actor_execute_process(monkeypatch):
     """Test actor executing a process."""
+    # Pin the RNG above the 1% tool-break probability so the "tools aren't
+    # consumed" assertion can't flake on a random breakage.
+    monkeypatch.setattr("spacesim2.core.commands.random.random", lambda: 0.99)
+
     # Set up simulation
     sim = Simulation()
 
@@ -210,9 +214,6 @@ def test_actor_execute_process():
 
     # Create actor with required inputs, tools, and facilities
     actor = get_actor("Test Actor", sim, planet=planet)
-    # Pin the actor's RNG above the 1% tool-break probability so the "tools
-    # aren't consumed" assertion can't flake on a random breakage.
-    actor.rng = FixedRandom(0.99)
     actor.inventory.add_commodity("input_commodity", 5)
     actor.inventory.add_commodity("tool_commodity", 1)
     actor.inventory.add_commodity("facility_commodity", 1)  # Actor has the facility

@@ -63,7 +63,7 @@ class IndustrialistBrain(ActorBrain):
 
         # First check if we need to re-evaluate our recipe (1% chance per turn)
         self.turns_since_recipe_evaluation += 1
-        if self._should_reevaluate_recipe(actor):
+        if self._should_reevaluate_recipe():
             self.chosen_recipe_id = self._select_new_recipe(actor, cache)
             self.turns_since_recipe_evaluation = 0
         elif (
@@ -183,9 +183,9 @@ class IndustrialistBrain(ActorBrain):
 
         return commands
 
-    def _should_reevaluate_recipe(self, actor: "Actor") -> bool:
+    def _should_reevaluate_recipe(self) -> bool:
         """1% chance per turn to re-evaluate recipe choice."""
-        return actor.rng.random() < 0.01
+        return random.random() < 0.01
 
     def _select_new_recipe(
         self, actor: "Actor", cache: Optional[BrainCache] = None
@@ -219,7 +219,7 @@ class IndustrialistBrain(ActorBrain):
         if total_score <= 0:
             return None
 
-        roll = actor.rng.random() * total_score
+        roll = random.random() * total_score
         cumulative = 0.0
         for process_id, score in recipe_scores:
             cumulative += score

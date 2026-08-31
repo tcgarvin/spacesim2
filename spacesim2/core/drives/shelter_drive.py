@@ -1,3 +1,5 @@
+import random
+
 from spacesim2.core.actor import Actor
 from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
 from spacesim2.core.drives.actor_drive import (
@@ -83,7 +85,7 @@ class ShelterDrive(ActorDrive):
 
         health = 1.0 if has_shelter_materials else 0.0
 
-        event_today = actor.rng.random() < p_event
+        event_today = random.random() < p_event
         did_maintain = False
         used_quality = False
 

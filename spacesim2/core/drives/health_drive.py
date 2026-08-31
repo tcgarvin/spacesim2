@@ -1,3 +1,5 @@
+import random
+
 from spacesim2.core.actor import Actor
 from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
 from spacesim2.core.drives.actor_drive import (
@@ -78,7 +80,7 @@ class HealthDrive(ActorDrive):
         health = 1.0 if has_medicine else 0.0
 
         consumed_quality = False
-        event_today = actor.rng.random() < p_event
+        event_today = random.random() < p_event
         did_treat = False
 
         if event_today and has_medicine:

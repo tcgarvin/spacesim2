@@ -1400,9 +1400,6 @@ class Ship:
         initial_money: int = 1000,
     ) -> None:
         self.name = name
-        # Per-ship RNG, mirroring Actor.rng; the ship phase is serial today,
-        # but keeping draws off the module-level random keeps that option open.
-        self.rng = random.Random()
         self.money = initial_money
         self.reserved_money = 0  # Money reserved for market orders
         self.planet = planet
@@ -1461,7 +1458,7 @@ class Ship:
         Returns:
             True if maintenance is needed, False otherwise.
         """
-        return self.rng.random() < MAINTENANCE_CHANCE
+        return random.random() < MAINTENANCE_CHANCE
 
     def perform_maintenance(self) -> bool:
         """Attempt to perform maintenance on the ship.

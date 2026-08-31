@@ -64,12 +64,11 @@ class SkillCheck:
     """Utility class for performing skill checks."""
 
     @staticmethod
-    def success_check(skill_rating: float, rng: random.Random) -> bool:
+    def success_check(skill_rating: float) -> bool:
         """Determine if a skill check succeeds.
 
         Args:
             skill_rating: The actor's skill rating
-            rng: The acting entity's RNG (per-actor, for thread safety)
 
         Returns:
             True if the check succeeds, False otherwise
@@ -80,15 +79,14 @@ class SkillCheck:
 
         # Skill rating < 1.0: Success probability proportional to rating
         # (e.g., 0.8 rating → 80% success chance)
-        return rng.random() < skill_rating
+        return random.random() < skill_rating
 
     @staticmethod
-    def multiplier_check(skill_rating: float, rng: random.Random) -> bool:
+    def multiplier_check(skill_rating: float) -> bool:
         """Determine if a skill check results in a multiplier.
 
         Args:
             skill_rating: The actor's skill rating
-            rng: The acting entity's RNG (per-actor, for thread safety)
 
         Returns:
             True if a multiplier should be applied, False otherwise
@@ -99,7 +97,7 @@ class SkillCheck:
 
         # Multiplier chance = (Skill Rating - 1.0) × 50%
         multiplier_chance = (skill_rating - 1.0) * 0.5
-        return rng.random() < multiplier_chance
+        return random.random() < multiplier_chance
 
     @staticmethod
     def get_combined_skill_rating(skill_ratings: List[float]) -> float:

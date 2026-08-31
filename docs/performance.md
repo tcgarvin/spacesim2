@@ -53,13 +53,10 @@ the CLI checks `sys._is_gil_enabled()` and warns.
 
 ## Open levers
 
-- **Thread-scaling contention** — thread scaling is only ~2.8x at 12 workers.
-  The global `random` module's internal lock was one suspect and is ruled
-  out: actor-phase code now draws from per-actor `Actor.rng` instances, and
-  a 20-turn target-scale bench measured no change (3.15 s/turn at
-  `--workers 12` vs 8.71 serial, 2.8x — same ratio as before). The prime
-  remaining suspect is refcount traffic on shared read-only objects
-  (registries, commodity/process instances); profile before acting.
+- **Per-planet RNG streams** — thread scaling is only ~2.8x at 12 workers;
+  the global `random` module (internally locked on free-threaded builds,
+  called constantly by actor code) and refcount traffic on shared registries
+  are the contention suspects.
 - **Sorted/heap order books** — matching still re-sorts both sides of every
   commodity book per turn (including dead books unioned in via
   `volume_history` keys) and uses O(B) `list.pop(0)` per fill.
