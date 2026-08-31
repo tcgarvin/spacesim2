@@ -194,25 +194,3 @@ def test_has_price_signal(commodity_registry, food_commodity) -> None:
     market.last_traded_prices[food_commodity] = []
     market.price_history[food_commodity] = [9]
     assert market.has_price_signal(food_commodity) is True
-
-
-def test_clear_orders(commodity_registry, food_commodity, mock_sim) -> None:
-    """Test that orders can be cleared from the market."""
-    market = Market()
-    market.commodity_registry = commodity_registry
-
-    buyer = get_actor("Buyer", mock_sim, initial_money=100)
-    seller = get_actor("Seller", mock_sim)
-
-    seller.inventory.add_commodity(food_commodity, 10)
-
-    market.place_buy_order(buyer, food_commodity, 5, 10)
-    market.place_sell_order(seller, food_commodity, 5, 8)
-
-    assert len(market.buy_orders[food_commodity]) == 1
-    assert len(market.sell_orders[food_commodity]) == 1
-
-    market.clear_orders()
-
-    assert len(market.buy_orders) == 0
-    assert len(market.sell_orders) == 0

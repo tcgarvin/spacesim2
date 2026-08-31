@@ -12,9 +12,8 @@ uv sync --extra analysis             # Install with analysis features
 uv run spacesim2 ui                  # Interactive UI (Pygame)
 uv run spacesim2 run                 # Headless sim with progress bar (default)
 uv run spacesim2 run --quiet         # Suppress all output
-uv run spacesim2 run --verbose       # Per-turn detailed output
 uv run spacesim2 run --no-export     # Quick run without data export
-uv run spacesim2 run --no-planet-attributes  # Disable per-planet resource availability (enabled by default)
+uv run spacesim2 run --log-actors all  # Detailed per-actor logging (also: N, or an actor name)
 
 # Development
 uv run pytest tests/                           # Run all tests
@@ -108,12 +107,14 @@ Read the relevant guide when working on specific areas:
 | Simulation design | `docs/sim-design.md` | Understanding game mechanics, rules |
 | Turn flow & testing | `docs/dev-guide-simulation.md` | Debugging AI, market mechanics, testing |
 | Ship trading AI | `docs/dev-guide-ships.md` | Developing ship brains, fuel/trade logic |
-| Notebook analysis | `docs/dev-guide-notebooks.md` | Working with marimo notebooks |
+| Notebook analysis | `notebooks/README.md` | Working with marimo notebooks |
 | Needs/drives system | `docs/needs.md` | Actor consumption, hunger, clothing |
 | Skills system | `docs/skills.md` | Actor skill levels, production |
-| Commodities | `docs/commodities_implementation.md` | Adding/modifying tradeable goods |
+| Commodities | `docs/commodities.md` | Adding/modifying tradeable goods |
 | Planet attributes | See "Planet Attributes System" below | Per-planet resource availability |
-| UI grid | `docs/actor_grid_ui.md` | Pygame UI development |
+| Live galaxy UI | `docs/live-view.md` | Pygame UI development |
+| Performance | `docs/performance.md` | Perf posture, threaded actor phase, open levers |
+| Decision log | `docs/decision-log.md` | Why past changes were made; closed postmortems |
 | **Commodity/process editing** | `.claude/skills/commodity-process-design/` | Modifying commodities, recipes, production chains |
 | **Evaluating sim behavior** | `.claude/skills/sim-evaluation/` | Checking macro behavior after a change; KPI summary, analysis scripts, notebooks |
 
@@ -124,7 +125,6 @@ These apply to most tasks:
 - **Deferred market matching**: Orders execute at END of turn, not immediately
 - **Brain pattern**: Actors/ships delegate decisions to pluggable `Brain` classes
 - **Core files**: `core/simulation.py` (main loop), `core/actor.py`, `core/ship.py`, `core/market.py`
-- **Feature flags**: Some features (like planet attributes) are toggled via CLI args and `setup_simple()` parameters
 
 ## Common Implementation Patterns
 
@@ -143,7 +143,9 @@ Commodities themselves have no planet-specific attributes. Planet-specific resou
 
 ### Planet Attributes System
 
-Planet attributes control resource availability per-planet. **Enabled by default** (disable with `--no-planet-attributes`).
+Planet attributes control resource availability per-planet. Always on: every
+planet gets random attributes at setup; a directly-constructed `Planet` defaults
+to no penalties (all availabilities 1.0).
 
 **Core file**: `core/planet_attributes.py` - `PlanetAttributes` dataclass
 
@@ -181,7 +183,7 @@ resource_attribute:
 4. Update `to_dict()` for export
 5. Add `resource_attribute` to the gathering process in `processes.yaml`
 
-**Export**: When enabled, `planet_attributes.json` is written alongside other export files.
+**Export**: `planet_attributes.json` is written alongside other export files.
 
 > **To add new extractable resources**, use the `commodity-process-design` skill for the process schema and validation workflow.
 
@@ -189,25 +191,8 @@ resource_attribute:
 
 Processes in `data/processes.yaml` specify `tools_required` and `facilities_required`. The economy is designed with a **wood-first bootstrap path** - actors can start with nothing and build up through wood before transitioning to metal.
 
-**Current requirements**:
-
-| Process | tools_required | facilities_required |
-|---------|----------------|---------------------|
-| gather_biomass | - | - |
-| gather_fiber | - | - |
-| harvest_wood | - | - |
-| make_food | - | - |
-| make_simple_tools_wood | - | - |
-| mine_common_metal_ore | simple_tools | - |
-| mine_nova_fuel_ore | simple_tools | - |
-| make_building_materials_wood | simple_tools | - |
-| make_building_materials_metal | simple_tools | - |
-| build_smelting_facility | simple_tools | - |
-| build_metalworking_facility | simple_tools | - |
-| refine_common_metal | - | smelting_facility |
-| make_simple_tools | - | metalworking_facility |
-| make_clothing | simple_tools | - |
-| refine_nova_fuel | simple_tools | - |
+Per-process requirements live in `data/processes.yaml` (render them with
+`uv run spacesim2 dev graph`).
 
 **Bootstrap path** (wood-first economy):
 1. Harvest wood (no tools needed)
@@ -290,9 +275,6 @@ uv run spacesim2 run --notebook          # opens notebooks/analysis_template.py
 # Or run first, then open manually (auto-detects latest run via SPACESIM_RUN_PATH)
 uv run spacesim2 run
 uv run marimo edit --no-token notebooks/analysis_template.py
-
-# A custom notebook path also works
-uv run spacesim2 run --notebook --notebook-path notebooks/my_analysis.py
 ```
 
 If you deliver a notebook to the user, validate it first with

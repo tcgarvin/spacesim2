@@ -244,10 +244,6 @@ def test_process_registry_loading() -> None:
 
     # Test the process search methods
     producing_processes = process_registry.get_processes_producing(test_output)
-    consuming_processes = process_registry.get_processes_consuming(test_input)
 
     assert len(producing_processes) == 1
     assert producing_processes[0] == test_process
-
-    assert len(consuming_processes) == 1
-    assert consuming_processes[0] == test_process

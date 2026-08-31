@@ -37,12 +37,6 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
         default=None,
         help="Run directory to analyze (default: most recent in data/runs).",
     )
-    parser.add_argument(
-        "--figdir",
-        type=str,
-        default="tmp",
-        help="Directory watched for newly written figures (default: tmp).",
-    )
     parser.set_defaults(func=execute)
     return parser
 
@@ -64,7 +58,7 @@ def execute(args: argparse.Namespace) -> int:
     # Imported here, not at module top: the analysis stack (polars et al.)
     # is an optional extra, and importing it eagerly would break the whole
     # CLI — including plain `run` — on environments without it (e.g. the
-    # free-threaded side venv, docs/threaded-actor-phase.md).
+    # free-threaded side venv, docs/performance.md).
     from spacesim2.analysis.loading import (
         NoRunsFoundError,
         get_run_path_with_fallback,
@@ -83,7 +77,7 @@ def execute(args: argparse.Namespace) -> int:
         print_error(f"Run directory not found: {run_path}")
         return 1
 
-    figdir = Path(args.figdir)
+    figdir = Path("tmp")
     before = _snapshot(figdir)
 
     env = os.environ.copy()

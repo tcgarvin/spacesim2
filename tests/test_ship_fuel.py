@@ -393,7 +393,6 @@ def test_maintenance_standing_bid_when_no_asks():
     """A broken ship with no supplies for sale posts an escalating bid."""
     sim, fuel, _, (a, _) = _make_world([("A", 0, 0), ("B", 50, 0)])
     ship = _make_ship(sim, a, fuel_units=0, money=1000)
-    ship.maintenance_needed = True
 
     ship._buy_maintenance_supplies()
     bids = [o for o in a.market.buy_orders[fuel] if o.actor is ship]
@@ -546,7 +545,6 @@ def test_maintenance_bids_prefer_produced_tiers_and_cover_all():
     a.market.last_traded_prices[fuel] = [12]
 
     ship = _make_ship(sim, a, fuel_units=0, money=1000)
-    ship.maintenance_needed = True
     ship._buy_maintenance_supplies()
 
     fuel_bids = [o for o in a.market.buy_orders[fuel] if o.actor is ship]

@@ -69,21 +69,5 @@ The market system has been updated to work with `CommodityDefinition` objects:
 
 ## Adding New Commodities and Processes
 
-To add new commodities and processes to the simulation:
-
-1. Add new commodity definitions to `data/commodities.yaml`
-2. Add new process definitions to `data/processes.yaml`
-3. Ensure that all used commodity IDs match between the files
-4. The simulation will automatically load these at startup
-
-## Design Considerations
-
-1. **Strict Type Safety**: The implementation only allows `CommodityDefinition` objects to be used throughout the code, not string IDs. This provides better type checking and prevents errors.
-
-2. **Registry Access**: Most components access the commodity and process registries through the `Simulation` instance, which is passed to actors, ships, and planets.
-
-3. **Facilities Ownership**: Facilities are owned by actors, not planets. This means actors must personally own any facilities required by their processes.
-
-4. **Dynamic Pricing**: Commodity prices are determined by market forces (supply and demand) rather than by fixed base prices. Market makers help provide liquidity.
-
-5. **Memory Efficiency**: `CommodityDefinition` objects are shared references, so multiple inventory entries for the same commodity type don't duplicate the definition data.
+Use the `commodity-process-design` skill — it covers schemas, validation,
+bootstrap-path checks, and the dependency-graph workflow.

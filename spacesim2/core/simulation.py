@@ -19,7 +19,7 @@ from spacesim2.core.market import Market
 from spacesim2.core.planet import Planet
 from spacesim2.core.planet_attributes import PlanetAttributes
 from spacesim2.core.process import ProcessRegistry
-from spacesim2.core.ship import Ship, ShipStatus
+from spacesim2.core.ship import Ship
 from spacesim2.core.skill import SkillsRegistry
 
 if TYPE_CHECKING:
@@ -110,15 +110,9 @@ class Simulation:
         self.actors: List[Actor] = []
         self.ships: List[Ship] = []
         self.current_turn = 0
-        self.market_stats: Dict = {}  # Track market statistics
-        # When False (the default), run_turn skips its per-turn banner and the
-        # O(actors) status summary — headless/large runs pay no per-turn
-        # string-formatting cost. The CLI's --verbose path sets this to True.
-        self.verbose: bool = False
-
         # Threaded actor phase (core/parallel.py). >1 shards planets across
         # a thread pool; real speedup needs a free-threaded interpreter.
-        # See docs/threaded-actor-phase.md.
+        # See docs/performance.md.
         self.parallel_workers: int = 1
         self._actor_phase_pool: Optional[ThreadPoolExecutor] = None
         self._actor_phase_pool_size: int = 0
@@ -142,7 +136,6 @@ class Simulation:
 
         self.data_logger = DataLogger()
         self.exporter: Optional["SimulationExporter"] = None
-        self.planet_attributes_enabled: bool = False
 
     def _generate_fictional_planets(
         self, num_planets: int
@@ -440,7 +433,6 @@ class Simulation:
         num_regular_actors: int = 4,
         num_market_makers: int = 1,
         num_ships: int = 2,
-        enable_planet_attributes: bool = False,
     ) -> None:
         """Set up a simple simulation with multiple planets, actors, and ships.
 
@@ -449,24 +441,18 @@ class Simulation:
             num_regular_actors: Number of regular actors to create per planet
             num_market_makers: Number of market makers to create per planet
             num_ships: Number of ships to create per planet
-            enable_planet_attributes: If True, generate per-planet resource attributes
         """
-        self.planet_attributes_enabled = enable_planet_attributes
-
         # Generate fictional planet data with random positions
         planet_data = self._generate_fictional_planets(num_planets)
 
-        # Generate planet attributes if the feature is enabled. Guarantee at
-        # least one abundant fuel source: nova_fuel_ore rolls are bimodal, so
-        # a galaxy can otherwise come up all-poor (~3% of 5-planet worlds),
-        # leaving no viable fuel production anywhere — every ship eventually
-        # strands no matter how carefully it plans.
-        attribute_rolls: list[Optional[PlanetAttributes]] = [None] * len(planet_data)
-        if enable_planet_attributes:
-            rolls = [PlanetAttributes.generate_random() for _ in planet_data]
-            if rolls and all(a.nova_fuel_ore < 0.7 for a in rolls):
-                random.choice(rolls).nova_fuel_ore = random.uniform(0.7, 1.0)
-            attribute_rolls = list(rolls)
+        # Generate planet attributes. Guarantee at least one abundant fuel
+        # source: nova_fuel_ore rolls are bimodal, so a galaxy can otherwise
+        # come up all-poor (~3% of 5-planet worlds), leaving no viable fuel
+        # production anywhere — every ship eventually strands no matter how
+        # carefully it plans.
+        attribute_rolls = [PlanetAttributes.generate_random() for _ in planet_data]
+        if attribute_rolls and all(a.nova_fuel_ore < 0.7 for a in attribute_rolls):
+            random.choice(attribute_rolls).nova_fuel_ore = random.uniform(0.7, 1.0)
 
         # Create the planets with their markets
         for (name, x, y), attributes in zip(planet_data, attribute_rolls):
@@ -636,9 +622,6 @@ class Simulation:
         """Run a single turn of the simulation."""
         self.current_turn += 1
         self.data_logger.set_turn(self.current_turn)
-        if self.verbose:
-            print(f"\n=== Turn {self.current_turn} ===")
-
         # Update market turn counters
         for planet in self.planets:
             # Market is guaranteed to exist
@@ -670,45 +653,9 @@ class Simulation:
         if self.exporter:
             self.exporter.export_turn(self, self.current_turn)
 
-        # Print status after the turn (skipped unless verbose: it makes
-        # several full passes over all actors just to build strings)
-        if self.verbose:
-            self._print_status()
-
     def _process_markets(self) -> None:
         """Process all markets at the end of the turn."""
         for planet in self.planets:
             # Market is guaranteed to exist
             # Execute trades
             planet.market.match_orders()
-
-    def run_simulation(self, num_turns: int) -> None:
-        """Run the simulation for a specified number of turns."""
-        for _ in range(num_turns):
-            self.run_turn()
-
-    def _print_status(self) -> None:
-        """Print the current status of the simulation."""
-        print(f"\n=== Turn {self.current_turn} Summary ===")
-
-        # Count total actors and ships
-        total_actors = len(self.actors)
-        market_makers = sum(
-            1 for a in self.actors if a.actor_type == ActorType.MARKET_MAKER
-        )
-        regular_actors = total_actors - market_makers
-        total_ships = len(self.ships)
-        traveling_ships = sum(1 for s in self.ships if s.status == ShipStatus.TRAVELING)
-
-        # Count hunger
-        total_hungry = sum(1 for a in self.actors if not a.food_consumed_this_turn)
-        hungry_percent = (total_hungry / total_actors * 100) if total_actors > 0 else 0
-
-        # Print simulation stats
-        planet_names = ", ".join([p.name for p in self.planets])
-        print(f"Planets ({len(self.planets)}): {planet_names}")
-        print(f"Population: {regular_actors} colonists, {market_makers} market makers")
-        print(f"Ships: {total_ships} total, {traveling_ships} in transit")
-        print(
-            f"Hunger: {total_hungry}/{total_actors} actors hungry ({hungry_percent:.1f}%)"
-        )

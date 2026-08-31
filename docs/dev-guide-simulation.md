@@ -49,7 +49,7 @@ For interactive human-facing exploration, the marimo dashboard is available:
 uv run spacesim2 run --notebook   # exports data and opens notebooks/analysis_template.py
 ```
 
-See `docs/dev-guide-notebooks.md` for notebook development patterns.
+See `notebooks/README.md` for notebook development patterns.
 
 **Why 50+ turns?**: Markets need time to develop price differentials through:
 - Actors producing/consuming commodities

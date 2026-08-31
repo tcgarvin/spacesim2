@@ -133,24 +133,8 @@ class TestResourceAttribute:
 class TestSimulationIntegration:
     """Integration tests for planet attributes in simulation."""
 
-    def test_simulation_without_planet_attributes(self):
-        """Simulation works without planet attributes enabled."""
-        from spacesim2.core.simulation import Simulation
-
-        sim = Simulation()
-        sim.setup_simple(
-            num_planets=2,
-            num_regular_actors=4,
-            num_market_makers=1,
-            enable_planet_attributes=False,
-        )
-
-        assert sim.planet_attributes_enabled is False
-        for planet in sim.planets:
-            assert planet.attributes is None
-
     def test_simulation_with_planet_attributes(self):
-        """Simulation generates planet attributes when enabled."""
+        """Simulation generates planet attributes."""
         from spacesim2.core.simulation import Simulation
 
         sim = Simulation()
@@ -158,10 +142,8 @@ class TestSimulationIntegration:
             num_planets=3,
             num_regular_actors=4,
             num_market_makers=1,
-            enable_planet_attributes=True,
         )
 
-        assert sim.planet_attributes_enabled is True
         for planet in sim.planets:
             assert planet.attributes is not None
             assert isinstance(planet.attributes, PlanetAttributes)
@@ -175,7 +157,6 @@ class TestSimulationIntegration:
             num_planets=5,
             num_regular_actors=4,
             num_market_makers=1,
-            enable_planet_attributes=True,
         )
 
         # With 5 planets, it's extremely unlikely they'd all be identical
@@ -199,7 +180,6 @@ class TestProcessCommandIntegration:
             num_planets=1,
             num_regular_actors=2,
             num_market_makers=1,
-            enable_planet_attributes=True,
         )
 
         planet = sim.planets[0]
@@ -245,7 +225,6 @@ class TestProcessCommandIntegration:
             num_planets=1,
             num_regular_actors=2,
             num_market_makers=1,
-            enable_planet_attributes=True,
         )
 
         planet = sim.planets[0]
@@ -277,7 +256,6 @@ class TestProcessCommandIntegration:
             num_planets=1,
             num_regular_actors=2,
             num_market_makers=1,
-            enable_planet_attributes=True,
         )
 
         planet = sim.planets[0]
@@ -318,7 +296,6 @@ def test_setup_guarantees_a_fuel_rich_planet():
             num_regular_actors=1,
             num_market_makers=0,
             num_ships=0,
-            enable_planet_attributes=True,
         )
         assert any(
             p.attributes is not None and p.attributes.nova_fuel_ore >= 0.7

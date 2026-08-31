@@ -37,12 +37,6 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
         ),
     )
     parser.add_argument(
-        "--turns",
-        type=int,
-        default=200,
-        help="Turns for the macro-behavior sim stage (default: 200)",
-    )
-    parser.add_argument(
         "--fast",
         action="store_true",
         help="Skip the slower types and sim stages (format, lint, tests only)",
@@ -74,35 +68,32 @@ def _stage_tests() -> tuple[bool, str]:
     return _run_subprocess([sys.executable, "-m", "pytest", "-q"])
 
 
-def _make_sim_stage(turns: int) -> Callable[[], tuple[bool, str]]:
-    """Build the macro-behavior stage: run the sim and check the KPI verdict.
+SIM_STAGE_TURNS = 200
+
+
+def _stage_sim() -> tuple[bool, str]:
+    """Macro-behavior stage: run the sim and check the KPI verdict.
 
     Runs in-process (not via a subprocess) so it reuses the already-imported
     simulation code and avoids a redundant interpreter startup.
     """
+    # Imported lazily so `dev check --fast` does not pay the import cost.
+    from spacesim2.analysis.summary import compute_summary
+    from spacesim2.cli.common import create_and_setup_simulation
 
-    def _stage_sim() -> tuple[bool, str]:
-        # Imported lazily so `dev check --fast` does not pay the import cost.
-        from spacesim2.analysis.summary import compute_summary
-        from spacesim2.cli.common import create_and_setup_simulation
-
-        sim = create_and_setup_simulation(
-            planets=5, actors=100, makers=2, ships=1, enable_planet_attributes=True
-        )
-        # run_turn() prints a per-turn summary; suppress it like `run --quiet`.
-        with contextlib.redirect_stdout(io.StringIO()):
-            for _ in range(turns):
-                sim.run_turn()
-            summary = compute_summary(sim)
-        verdict = cast(dict[str, Any], summary["verdict"])
-        status = verdict["status"]
-        detail = f"verdict={status}"
-        if verdict["flags"]:
-            detail += f" flags={verdict['flags']}"
-        # FAIL is the catastrophe floor; WARN is reported but does not fail the gate.
-        return status != "FAIL", detail
-
-    return _stage_sim
+    sim = create_and_setup_simulation(planets=5, actors=100, makers=2, ships=1)
+    # run_turn() prints a per-turn summary; suppress it like `run --quiet`.
+    with contextlib.redirect_stdout(io.StringIO()):
+        for _ in range(SIM_STAGE_TURNS):
+            sim.run_turn()
+        summary = compute_summary(sim)
+    verdict = cast(dict[str, Any], summary["verdict"])
+    status = verdict["status"]
+    detail = f"verdict={status}"
+    if verdict["flags"]:
+        detail += f" flags={verdict['flags']}"
+    # FAIL is the catastrophe floor; WARN is reported but does not fail the gate.
+    return status != "FAIL", detail
 
 
 def execute(args: argparse.Namespace) -> int:
@@ -122,7 +113,7 @@ def execute(args: argparse.Namespace) -> int:
         stages.append(("types", _stage_types))
     stages.append(("tests", _stage_tests))
     if not args.fast:
-        stages.append(("sim", _make_sim_stage(args.turns)))
+        stages.append(("sim", _stage_sim))
 
     print_section("dev check")
     results: list[tuple[str, bool, float]] = []

@@ -153,9 +153,11 @@ class TradePlan:
             return 0.0
         return self.expected_profit / total_costs
 
-    def is_profitable(self, min_margin: float = 0.15) -> bool:
-        """Check if this trade meets minimum profitability threshold."""
-        return self.expected_profit > 0 and self.profit_margin >= min_margin
+    MIN_MARGIN = 0.15
+
+    def is_profitable(self) -> bool:
+        """Check if this trade meets the minimum profitability threshold."""
+        return self.expected_profit > 0 and self.profit_margin >= self.MIN_MARGIN
 
 
 @dataclass
@@ -211,8 +213,6 @@ class TraderBrain(ShipBrain):
     def __init__(self, ship: "Ship") -> None:
         """Initialize the trader brain."""
         super().__init__(ship)
-        # Track average purchase price per commodity for profitability calculations
-        self.commodity_purchase_prices: Dict[str, float] = {}
         # Active trade plan (if any)
         self._current_plan: Optional[TradePlan] = None
         # True once the plan's cargo is aboard (fully or after patience ran
@@ -232,31 +232,6 @@ class TraderBrain(ShipBrain):
         # again in decide_travel the same turn — the memo answers the second
         # call without re-surveying the galaxy.
         self._plan_search_memo: Optional[tuple[int, Planet, Optional[TradePlan]]] = None
-
-    def _calculate_average_purchase_price(
-        self, commodity: CommodityDefinition
-    ) -> Optional[float]:
-        """Calculate average purchase price from recent transaction history."""
-        if not self.ship.planet:
-            return None
-
-        market = self.ship.planet.market
-        transactions = market.get_actor_transaction_history(self.ship)
-
-        # Look at last 10 purchases of this commodity
-        recent_purchases = [
-            t
-            for t in transactions[-10:]
-            if t.buyer == self.ship and t.commodity_type == commodity
-        ]
-
-        if not recent_purchases:
-            return None
-
-        total_cost = sum(t.price * t.quantity for t in recent_purchases)
-        total_quantity = sum(t.quantity for t in recent_purchases)
-
-        return total_cost / total_quantity if total_quantity > 0 else None
 
     def _recent_flow_per_turn(
         self, market: "Market", commodity: CommodityDefinition
@@ -1440,12 +1415,8 @@ class Ship:
             str, str
         ] = {}  # Track active order IDs and their types
         self.last_action = "None"  # Track the last action performed
-        self.maintenance_needed = False  # Whether maintenance is required
         self.status = ShipStatus.DOCKED
         self.simulation = simulation  # Reference to the simulation
-        self.market_history: list[
-            dict
-        ] = []  # Track market activity for compatibility with market code
         self.food_consumed_this_turn = (
             True  # Ships don't eat, but needed for compatibility
         )
@@ -1514,7 +1485,6 @@ class Ship:
             commodity = registry.get_commodity(commodity_id)
             if commodity and self.cargo.has_quantity(commodity, qty):
                 self.cargo.remove_commodity(commodity, qty)
-                self.maintenance_needed = False
                 self.status = ShipStatus.DOCKED
                 self.last_action = f"Performed maintenance using {qty} {label}"
                 return True
@@ -1647,7 +1617,6 @@ class Ship:
 
         # Check for maintenance needs
         if self.check_maintenance():
-            self.maintenance_needed = True
             self.status = ShipStatus.NEEDS_MAINTENANCE
             self.last_action = "Maintenance required before departure"
             return False

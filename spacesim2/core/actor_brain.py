@@ -477,7 +477,7 @@ class ActorBrain:
         if cache is not None and process.id in cache.yield_modifier:
             return cache.yield_modifier[process.id]
 
-        if process.resource_attribute and actor.planet and actor.planet.attributes:
+        if process.resource_attribute and actor.planet:
             value = actor.planet.attributes.get_availability(
                 process.resource_attribute.commodity
             )
@@ -595,7 +595,7 @@ class ActorBrain:
             # yield (the mispricing that clustered refiners on ore-poor
             # planets).
             attribute_modifier = 1.0
-            if process.resource_attribute and actor.planet and actor.planet.attributes:
+            if process.resource_attribute and actor.planet:
                 attribute_modifier = actor.planet.attributes.get_availability(
                     process.resource_attribute.commodity
                 )

@@ -43,7 +43,6 @@ class TestFullTechTree:
             num_regular_actors=1,
             num_market_makers=0,
             num_ships=0,
-            enable_planet_attributes=True,
         )
         actor = sim.actors[0]
 

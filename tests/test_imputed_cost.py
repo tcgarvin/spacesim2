@@ -143,10 +143,10 @@ class TestAttributeScaledImputation:
 
         assert cost == pytest.approx(7.0)
 
-    def test_attributes_disabled_leaves_cost_unscaled(self, brain):
-        """--no-planet-attributes (attributes=None) keeps the old behavior."""
+    def test_default_attributes_leave_cost_unscaled(self, brain):
+        """Default (all-1.0) attributes apply no scaling."""
         ore = _commodity("nova_fuel_ore")
-        actor = _actor(None)
+        actor = _actor(PlanetAttributes())
         actor.sim.process_registry.all_processes.return_value = [
             _mining_process(ore, effect="success")
         ]

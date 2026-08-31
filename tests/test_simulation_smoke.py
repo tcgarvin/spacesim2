@@ -20,9 +20,7 @@ from spacesim2.cli.common import create_and_setup_simulation
 @pytest.fixture(scope="module")
 def smoke_summary() -> dict:
     """Run a small simulation and return its KPI summary."""
-    sim = create_and_setup_simulation(
-        planets=2, actors=40, makers=1, ships=1, enable_planet_attributes=True
-    )
+    sim = create_and_setup_simulation(planets=2, actors=40, makers=1, ships=1)
     for _ in range(120):
         sim.run_turn()
     return compute_summary(sim)

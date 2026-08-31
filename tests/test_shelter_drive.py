@@ -211,16 +211,9 @@ class TestShelterDrive:
 
         assert result.debt == initial_debt
 
-    def test_get_current_score(self, shelter_drive):
+    def test_score_from_metrics(self, shelter_drive):
         shelter_drive.metrics.debt = 0.3
-        assert shelter_drive.get_current_score() == pytest.approx(0.7)
-
-    def test_get_current_score_edge_cases(self, shelter_drive):
-        shelter_drive.metrics.debt = 1.0
-        assert shelter_drive.get_current_score() == 0.0
-
-        shelter_drive.metrics.debt = 0.0
-        assert shelter_drive.get_current_score() == 1.0
+        assert shelter_drive.metrics.get_score() == pytest.approx(0.7)
 
 
 class TestShelterDriveIntegration:

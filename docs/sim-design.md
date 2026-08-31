@@ -1,4 +1,4 @@
-# MVP Simulation Design Document
+# Simulation Design
 
 ## Overview
 A turn-based economic simulation featuring multiple planets with frictionless internal economies, actors performing economic activities, and interplanetary commodity trading.
@@ -110,6 +110,4 @@ Example:
 - Expanded government economic controls (taxes, subsidies).
 - Market information delays.
 - Travel hazards and piracy.
-
-This document reflects the current state of the MVP design, capturing key elements and structures for initial implementation and iteration.
 

@@ -126,6 +126,3 @@ class HealthDrive(ActorDrive):
 
         self._update_metrics(health=health, debt=debt, buffer=buffer, urgency=URGENCY)
         return self.metrics
-
-    def get_current_score(self) -> float:
-        return self.metrics.get_score()

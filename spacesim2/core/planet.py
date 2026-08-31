@@ -1,9 +1,10 @@
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
+from spacesim2.core.planet_attributes import PlanetAttributes
+
 if TYPE_CHECKING:
     from spacesim2.core.actor import Actor
     from spacesim2.core.market import Market
-    from spacesim2.core.planet_attributes import PlanetAttributes
     from spacesim2.core.ship import Ship
 
 
@@ -16,7 +17,7 @@ class Planet:
         market: "Market",
         x: float = 0.0,
         y: float = 0.0,
-        attributes: Optional["PlanetAttributes"] = None,
+        attributes: Optional[PlanetAttributes] = None,
     ) -> None:
         self.name = name
         self.x = x
@@ -24,7 +25,8 @@ class Planet:
         self.actors: List["Actor"] = []
         self.ships: List["Ship"] = []  # Ships docked at this planet
         self.market: "Market" = market
-        self.attributes = attributes  # None = planet attributes feature disabled
+        # Default: no resource penalties (all availabilities 1.0).
+        self.attributes = attributes if attributes is not None else PlanetAttributes()
 
     def add_actor(self, actor: "Actor") -> None:
         """Add an actor to this planet."""

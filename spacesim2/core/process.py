@@ -179,13 +179,3 @@ class ProcessRegistry:
                     index.setdefault(output.id, []).append(process)
             self._producers_index = index
         return self._producers_index.get(commodity.id, [])
-
-    def get_processes_consuming(
-        self, commodity: CommodityDefinition
-    ) -> List[ProcessDefinition]:
-        """Get all processes that consume a specific commodity.
-
-        Args:
-            commodity: A CommodityDefinition object
-        """
-        return [p for p in self._processes.values() if commodity in p.inputs]

@@ -40,13 +40,6 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
         "--ships", type=int, default=1, help="Number of ships (default: 1)"
     )
     parser.add_argument(
-        "--no-planet-attributes",
-        action="store_false",
-        dest="planet_attributes",
-        default=True,
-        help="Disable per-planet resource attributes (enabled by default)",
-    )
-    parser.add_argument(
         "--speed",
         type=float,
         default=1.0,
@@ -85,7 +78,6 @@ def execute(args: argparse.Namespace) -> int:
         actors=args.actors,
         makers=args.makers,
         ships=args.ships,
-        enable_planet_attributes=args.planet_attributes,
     )
 
     # Launch the live galaxy view.

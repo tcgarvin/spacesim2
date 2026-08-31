@@ -33,9 +33,44 @@ uv run spacesim2 run --notebook              # run + auto-open
 uv run marimo edit --no-token notebooks/analysis_template.py
 ```
 
-It auto-detects the latest run in `data/runs/`, or honors
-`SPACESIM_RUN_PATH`. Requires `uv sync --extra analysis`. See
-`docs/dev-guide-notebooks.md` for marimo patterns and troubleshooting.
+Requires `uv sync --extra analysis` (always use `uv run marimo` for the
+correct environment).
+
+### Run path resolution (all notebooks/scripts)
+
+1. `SPACESIM_RUN_PATH` env var, if set (explicit override).
+2. Auto-detect: most recent `data/runs/run_YYYYMMDD_HHMMSS` directory by
+   parsed timestamp; clear error if none found.
+3. Manual override via the "Run Path" text field in the dashboard UI.
+
+### Debugging a notebook
+
+Use `marimo export html` instead of `marimo run` — it executes the notebook
+headlessly and surfaces errors immediately in the terminal:
+
+```bash
+SPACESIM_RUN_PATH=data/runs/test_run uv run marimo export html \
+    notebooks/analysis_template.py -o /tmp/test.html
+```
+
+Lint with `uv run marimo check notebooks/file.py`.
+
+### Marimo cell gotchas
+
+Cell output must be a **top-level expression**, never nested inside a
+conditional. Do conditional logic first, assign to a variable, then put the
+bare variable on the last line. For possibly-missing data, assign a fallback:
+
+```python
+@app.cell
+def _(data, mo, px):
+    if data is None:
+        output = mo.md("No data available")
+    else:
+        output = px.bar(data.to_pandas(), x="name", y="value")
+    output
+    return (output,)
+```
 
 ## Data Structure
 

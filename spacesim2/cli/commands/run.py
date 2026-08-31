@@ -13,7 +13,6 @@ from typing import Any
 
 from spacesim2.cli.common import configure_actor_logging, create_and_setup_simulation
 from spacesim2.cli.output import print_success, print_warning
-from spacesim2.ui.headless import HeadlessUI
 
 try:
     from spacesim2.analysis.export.exporter import SimulationExporter
@@ -21,6 +20,9 @@ try:
     ANALYSIS_AVAILABLE = True
 except ImportError:
     ANALYSIS_AVAILABLE = False
+
+OUTPUT_DIR = Path("data/runs")
+NOTEBOOK_PATH = Path("notebooks/analysis_template.py")
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser:  # type: ignore
@@ -58,58 +60,24 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
         default=1,
         help=(
             "Actor-phase threads (1 = serial). Real speedup needs a "
-            "free-threaded interpreter; see docs/threaded-actor-phase.md"
+            "free-threaded interpreter; see docs/performance.md"
         ),
     )
-    parser.add_argument(
-        "--no-planet-attributes",
-        action="store_false",
-        dest="planet_attributes",
-        default=True,
-        help="Disable per-planet resource attributes (enabled by default)",
-    )
 
-    # Logging configuration
     parser.add_argument(
-        "--log-all-actors",
-        action="store_true",
-        help="Log all actors (can be memory intensive)",
-    )
-    parser.add_argument(
-        "--log-sample", type=int, default=None, help="Log N randomly selected actors"
-    )
-    parser.add_argument(
-        "--log-actor-types",
-        nargs="+",
-        choices=["colonist", "industrialist", "market_maker", "ship", "trader"],
-        help="Log specific actor types only",
-    )
-    parser.add_argument(
-        "--log-actor-id", type=str, default=None, help="Log specific actor by name"
+        "--log-actors",
+        type=str,
+        default="1",
+        metavar="SPEC",
+        help="Actors to log in per-actor detail: 'all', a sample size N "
+        "(default: 1 random non-market-maker), or an actor name",
     )
 
     # Output configuration
     parser.add_argument(
-        "--output",
-        type=str,
-        default="data/runs",
-        help="Output directory for Parquet files",
-    )
-    parser.add_argument(
-        "--run-id",
-        type=str,
-        default=None,
-        help="Custom run ID (default: auto-generated from timestamp)",
-    )
-    parser.add_argument(
         "--no-export",
         action="store_true",
         help="Skip Parquet export (for quick test runs)",
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Show detailed per-turn output for logged actors",
     )
     parser.add_argument(
         "--quiet",
@@ -123,16 +91,8 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
         "(also written to summary.json when exporting). Token-efficient readout "
         "for agents evaluating whether the economy behaves as intended.",
     )
-
-    # Notebook options
     parser.add_argument(
         "--notebook", action="store_true", help="Open marimo notebook after simulation"
-    )
-    parser.add_argument(
-        "--notebook-path",
-        type=str,
-        default="notebooks/analysis_template.py",
-        help="Path to marimo notebook to open",
     )
 
     parser.set_defaults(func=execute)
@@ -142,10 +102,10 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
 class _TailCapture(io.TextIOBase):
     """A write-only text stream that retains only the last ``max_chars``.
 
-    Used to swallow simulation stdout during non-verbose runs with bounded
-    memory (the old ``io.StringIO`` grew without limit). Only rare warnings
-    (e.g. failed market settlements) write to stdout in quiet runs; the
-    retained tail is echoed after the run so they are not lost.
+    Used to swallow simulation stdout during runs with bounded memory (the old
+    ``io.StringIO`` grew without limit). Only rare warnings (e.g. failed market
+    settlements) write to stdout during runs; the retained tail is echoed after
+    the run so they are not lost.
     """
 
     def __init__(self, max_chars: int = 64_000) -> None:
@@ -197,10 +157,7 @@ def execute(args: argparse.Namespace) -> int:
         actors=args.actors,
         makers=args.makers,
         ships=args.ships,
-        enable_planet_attributes=args.planet_attributes,
     )
-    if not args.planet_attributes:
-        print("  Planet attributes: DISABLED")
     if args.workers > 1:
         sim.parallel_workers = args.workers
         print(f"  Actor phase: {args.workers} threads")
@@ -208,28 +165,19 @@ def execute(args: argparse.Namespace) -> int:
             print_warning(
                 "GIL is enabled: --workers runs correctly but gives no "
                 "speedup. Use a free-threaded interpreter (e.g. 3.14t); "
-                "see docs/threaded-actor-phase.md"
+                "see docs/performance.md"
             )
 
-    # Configure logging
-    print("Configuring actor logging...")
-    num_logged = configure_actor_logging(
-        sim,
-        log_all=args.log_all_actors,
-        log_sample=args.log_sample,
-        log_actor_types=args.log_actor_types,
-        log_actor_id=args.log_actor_id,
-    )
+    num_logged = configure_actor_logging(sim, args.log_actors)
     print(f"  Logging {num_logged} actor(s)")
 
     # Setup exporter if needed
     exporter: Any = None
     output_path: Path | None = None
-    run_id: str | None = None
 
     if should_export:
-        run_id = args.run_id or f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        output_path = Path(args.output) / run_id
+        run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        output_path = OUTPUT_DIR / run_id
 
         print(f"\nSetting up export to: {output_path}")
         exporter = SimulationExporter(output_path, run_id)
@@ -240,38 +188,32 @@ def execute(args: argparse.Namespace) -> int:
     print(f"\nRunning {args.turns} turns...")
     print("=" * 60)
 
-    if args.verbose:
-        # Use HeadlessUI for detailed per-turn output
-        sim.verbose = True
-        ui = HeadlessUI(sim)
-        ui.run(args.turns)
-    else:
-        # Suppress simulation stdout, keeping a bounded tail of any warnings
-        # (only rare warnings print in non-verbose runs; memory stays capped).
-        captured = _TailCapture()
-        old_stdout = sys.stdout
-        sys.stdout = captured
+    # Suppress simulation stdout, keeping a bounded tail of any warnings
+    # (only rare warnings print during runs; memory stays capped).
+    captured = _TailCapture()
+    old_stdout = sys.stdout
+    sys.stdout = captured
 
-        try:
-            # Default: progress bar (unless --quiet)
-            iterator = range(args.turns)
-            if not args.quiet:
-                from tqdm import tqdm
+    try:
+        # Default: progress bar (unless --quiet)
+        iterator = range(args.turns)
+        if not args.quiet:
+            from tqdm import tqdm
 
-                # tqdm writes to stderr by default, so stdout stays suppressed
-                iterator = tqdm(iterator, desc="Simulating turns", file=sys.stderr)
+            # tqdm writes to stderr by default, so stdout stays suppressed
+            iterator = tqdm(iterator, desc="Simulating turns", file=sys.stderr)
 
-            for _ in iterator:
-                sim.run_turn()
-        finally:
-            sys.stdout = old_stdout
+        for _ in iterator:
+            sim.run_turn()
+    finally:
+        sys.stdout = old_stdout
 
-        tail = captured.getvalue().strip()
-        if tail and not args.quiet:
-            header = "Simulation warnings"
-            if captured.truncated:
-                header += " (truncated to last 64KB)"
-            print(f"\n{header}:\n{tail}")
+    tail = captured.getvalue().strip()
+    if tail and not args.quiet:
+        header = "Simulation warnings"
+        if captured.truncated:
+            header += " (truncated to last 64KB)"
+        print(f"\n{header}:\n{tail}")
 
     # Emit compact behavioral summary (Tier-0 readout) if requested.
     if args.summary:
@@ -285,14 +227,13 @@ def execute(args: argparse.Namespace) -> int:
 
         print_success("Simulation complete!")
         print(f"  Data exported to: {output_path}")
-        print(f"  Run ID: {run_id}")
 
         if args.notebook and output_path is not None:
-            _open_notebook(output_path, args.notebook_path)
+            _open_notebook(output_path)
         else:
             print("\nTo analyze this run:")
             print(
-                f"  SPACESIM_RUN_PATH='{output_path}' marimo edit --no-token {args.notebook_path}"
+                f"  SPACESIM_RUN_PATH='{output_path}' marimo edit --no-token {NOTEBOOK_PATH}"
             )
     else:
         print("\n" + "=" * 60)
@@ -324,12 +265,11 @@ def _emit_summary(sim: Any, output_path: Path | None) -> None:
         print(f"Summary written to: {summary_file}")
 
 
-def _open_notebook(output_path: Path, notebook_path_str: str) -> None:
-    """Open a marimo notebook with the run path set.
+def _open_notebook(output_path: Path) -> None:
+    """Open the analysis notebook with the run path set.
 
     Args:
         output_path: Path to the simulation output directory
-        notebook_path_str: Path to the notebook file
     """
     print("\nOpening marimo notebook...")
 
@@ -337,26 +277,15 @@ def _open_notebook(output_path: Path, notebook_path_str: str) -> None:
     env = os.environ.copy()
     env["SPACESIM_RUN_PATH"] = str(output_path)
 
-    # Check if notebook exists
-    notebook_path = Path(notebook_path_str)
-    if not notebook_path.exists():
-        print_warning(f"Notebook not found: {notebook_path}")
-        print("   Please create the notebook first or use an existing one.")
+    try:
+        subprocess.run(
+            ["marimo", "edit", "--no-token", str(NOTEBOOK_PATH)],
+            env=env,
+            check=False,  # Don't raise error if marimo exits normally
+        )
+    except FileNotFoundError:
+        print_warning("marimo not found. Install with: uv sync --extra analysis")
         print("\nTo analyze manually:")
         print(
-            f"  SPACESIM_RUN_PATH='{output_path}' marimo edit --no-token {notebook_path}"
+            f"  SPACESIM_RUN_PATH='{output_path}' marimo edit --no-token {NOTEBOOK_PATH}"
         )
-    else:
-        try:
-            # Launch marimo edit with the notebook
-            subprocess.run(
-                ["marimo", "edit", "--no-token", str(notebook_path)],
-                env=env,
-                check=False,  # Don't raise error if marimo exits normally
-            )
-        except FileNotFoundError:
-            print_warning("marimo not found. Install with: uv sync --extra analysis")
-            print("\nTo analyze manually:")
-            print(
-                f"  SPACESIM_RUN_PATH='{output_path}' marimo edit --no-token {notebook_path}"
-            )

@@ -75,7 +75,7 @@ def run_actor_phase_threaded(sim: "Simulation", workers: int) -> None:
     """Run every planet's actor turns across a thread pool.
 
     Must be called at the point run_turn would otherwise run its serial
-    actor loop (after set_turn/set_current_turn, before the ship phase).
+    actor loop (after set_current_turn, before the ship phase).
     """
     if workers <= 1:
         raise ValueError("run_actor_phase_threaded requires workers >= 2")

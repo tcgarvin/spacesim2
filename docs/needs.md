@@ -1,169 +1,73 @@
-# Actor Needs & Scoring System
+# Actor Needs (Drives)
 
-This document outlines how actor motivations are modeled in the economic simulation. Each actor evaluates their current situation based on the commodities they possess, assigning utility scores based on fulfilling hierarchical needs. Utility includes marginal gains for certain commodities, modeling diminishing returns realistically.
+Actor needs are modeled as **drives** in `spacesim2/core/drives/`. Each drive
+inherits from `ActorDrive` (`actor_drive.py`), is attached to an actor
+(drives have memory), and is ticked once per turn: it consumes satisfying
+goods from the actor's inventory and updates a `DriveMetrics` record.
 
-## Scoring Model Overview
+Four drives exist:
 
-Actors score their status each turn based on a clear hierarchy of needs. The total score is the sum of scores across all needs, including marginal utilities where applicable.
+| Drive | Consumption | Basic good | Quality good | Miss penalty |
+|-------|-------------|------------|--------------|--------------|
+| Food (`food_drive.py`) | deterministic, 1/turn | `food` | `processed_food` | 0.2 |
+| Clothing (`clothing_drive.py`) | stochastic, p = 1/60 per turn | `clothing` | `quality_clothing` | 0.5 |
+| Shelter (`shelter_drive.py`) | stochastic, p = 1/120 per turn | `simple_building_materials` | `prefab_housing` | 0.5 |
+| Health (`health_drive.py`) | stochastic, p = 1/90 per turn | `medicine` | `advanced_medicine` | 0.4 |
 
----
+## The metric model (all values in [0, 1])
 
-## 1. Basic Needs
+Each `tick()` updates four metrics:
 
-Actors have strong penalties for unmet basic needs, driving essential economic behavior.
+- **health** — immediate status: 1.0 if the drive's material is in stock (for
+  food: whether the actor ate this turn), else 0.0.
+- **debt** — accumulated neglect. On a missed consumption event debt gains
+  the drive's `DEBT_MISS_PENALTY`; on satisfied turns it decays by
+  `DEBT_DECAY_FACTOR` (0.8), or faster (`0.5`) when the *quality* good was
+  consumed. Stochastic drives decay only while stocked (or on event turns).
+  The drive's overall score (`get_score()`) is `1 - debt`.
+- **buffer** — log-normalized inventory coverage: expected days of supply
+  (stock / expected events per day) mapped through
+  `log_norm_ratio(days, target, cap)` — diminishing returns toward a
+  per-drive target (e.g. food pantry target 7 days, cap 30; shelter 120/360).
+- **urgency** — context-dependent priority multiplier (currently fixed 1.0
+  for all drives).
 
-### 1.1 Food
+## Quality tiers
 
-- **Baseline need:** Must consume at least 1 food per day.
-- **Penalty if unmet:** `-25` points.
-- **Marginal Utility:**  
-  Each additional unit of food provides diminishing marginal utility, calculated as:
-  
-  \[
-  \text{Utility}_{food}(qty) = 15 \times (1 - e^{-1.0 \times qty})
-  \]
+Every drive tries its quality good first and falls back to the basic good.
+Quality consumption halves debt faster (decay 0.5 vs 0.8); both tiers count
+toward buffer coverage. The basic good is the workhorse that actually trades.
 
-| Food Quantity | Utility (rounded) |
-|---------------|-------------------|
-| 0             | -25 (penalty)     |
-| 1             | 9                 |
-| 2             | 13                |
-| 3             | 14                |
-| 4+            | ~15 (maxed out)   |
+## Economic coupling (willingness to pay)
 
-### 1.2 Shelter (Housing)
+`ActorDrive` exposes the hooks brains use to price buy orders:
 
-- **Baseline need:** At least one house (non-transportable facility).
-- **Penalty if unmet:** `-25` points.
-- **Marginal Utility:** None. Additional houses provide no utility.
+- `deprivation_stake()` — welfare value of one consumed unit; equals the
+  drive's `MISS_PENALTY`, comparable across drives because all drives measure
+  welfare in the same avoided-debt currency.
+- `marginal_welfare()` — `deprivation_stake() * (1 - buffer)`: a well-stocked
+  drive values an extra unit less.
+- `materials()` — satisfying commodities, basic (market) good first.
+- `target_units()` — inventory level the actor aims to keep on hand
+  (food 6, clothing 3, shelter 3, health 2).
 
-| Houses | Utility |
-|--------|---------|
-| 0      | -25     |
-| 1+     | +15     |
+## Adding a new drive
 
-### 1.3 Clothing
+A drive needs a complete supply chain or it will starve silently:
 
-- **Baseline need:** At least 1 set of clothing.
-- **Penalty if unmet:** `-15` points.
-- **Marginal Utility:**  
-  Provides diminishing marginal utility up to a maximum of 10 sets:
+1. Add the raw material and finished good to `data/commodities.yaml`, and
+   gathering + production processes to `data/processes.yaml` (use the
+   `commodity-process-design` skill).
+2. Create the drive class in `core/drives/` inheriting `ActorDrive`; follow
+   the stochastic pattern in `clothing_drive.py` for durable goods or the
+   deterministic pattern in `food_drive.py` for staples. Raise `ValueError`
+   in `__init__` if the required commodity is missing from the registry.
+3. Wire it into actor construction and verify brains trade the new
+   commodities (brains iterate commodities dynamically — avoid hardcoding).
 
-\[
-\text{Utility}_{clothing}(qty) = 10 \times (1 - e^{-0.3 \times qty})
-\]
+## Future ideas (not implemented)
 
-| Clothing Sets | Utility (rounded) |
-|---------------|-------------------|
-| 0             | -15 (penalty)     |
-| 1             | 3                 |
-| 2             | 5                 |
-| 5             | 8                 |
-| 10+           | ~10 (maxed out)   |
-
----
-
-## 2. Safety Needs
-
-Safety needs encourage actors to establish financial and practical security.
-
-### 2.1 Money (Cash Savings)
-
-- **Baseline need:** At least 100 units of currency on hand.
-- **Penalty if unmet:** `-10` points.
-- **Marginal Utility:**  
-  Utility increases up to a maximum of ~300 currency units:
-
-\[
-\text{Utility}_{money}(qty) = 12 \times (1 - e^{-0.02 \times qty})
-\]
-
-| Money Qty | Utility (rounded) |
-|-----------|-------------------|
-| 0         | -10 (penalty)     |
-| 50        | 6                 |
-| 100       | 10                |
-| 200       | 12 (near max)     |
-| 300+      | ~12 (maxed out)   |
-
-### 2.2 Simple Tools
-
-- **Baseline need:** At least one set of simple tools.
-- **Penalty if unmet:** `-10` points.
-- **Marginal Utility:**  
-  Additional tools provide minor marginal utility up to 3 sets:
-
-\[
-\text{Utility}_{tools}(qty) = 8 \times (1 - e^{-1.0 \times qty})
-\]
-
-| Tool Sets | Utility (rounded) |
-|-----------|-------------------|
-| 0         | -10 (penalty)     |
-| 1         | 5                 |
-| 2         | 7                 |
-| 3+        | ~8 (maxed out)    |
-
----
-
-## 3. Social Needs (Interim Design)
-
-Social needs reflect actors' desire for diverse commodities and comfort items, modeled simply for now:
-
-- **Baseline need:** Possess at least 2 different commodity types (beyond basic/safety commodities).
-- **Penalty if unmet:** No penalty (neutral).
-- **Marginal Utility:** +3 utility per additional unique commodity type beyond the first, up to a maximum of 5 different types:
-
-| Unique Commodities | Utility |
-|--------------------|---------|
-| 0-1                | 0       |
-| 2                  | 6       |
-| 3                  | 9       |
-| 4                  | 12      |
-| 5+                 | 15      |
-
-*Note: Future iterations can refine this by adding specific luxury commodities.*
-
----
-
-## Example Full Actor Scoring
-
-Assume the actor currently has:
-
-- Food: 2 units
-- Shelter: 1 house
-- Clothing: 3 sets
-- Money: 150 units
-- Simple Tools: 1 set
-- Unique extra commodities: 3 types (for social)
-
-The calculation would be:
-
-| Need         | Quantity | Utility Calculation                | Utility |
-|--------------|----------|------------------------------------|---------|
-| **Food**     | 2 units  | ~13 points                         | +13     |
-| **Shelter**  | 1 house  | Fully satisfied                    | +15     |
-| **Clothing** | 3 sets   | ~6 points                          | +6      |
-| **Money**    | 150      | ~11 points                         | +11     |
-| **Tools**    | 1 set    | ~5 points                          | +5      |
-| **Social**   | 3 types  | 9 points                           | +9      |
-| **TOTAL**    |          |                                    | **+59** |
-
----
-
-## Marginal Utility Formula (Generalized)
-
-To simplify coding:
-
-```python
-import math
-
-def marginal_utility(quantity, max_utility, marginal_rate, penalty_no_supply=0):
-    if quantity == 0:
-        return penalty_no_supply
-    else:
-        return max_utility * (1 - math.exp(-marginal_rate * quantity))
-
-# Example (Food calculation)
-food_utility = marginal_utility(quantity=2, max_utility=15, marginal_rate=1.0, penalty_no_supply=-25)
-```
+Earlier designs sketched money-savings, tool-ownership, and social/variety
+needs as scored utilities. None have drive classes; money and tools are
+handled directly by brain logic, and social/luxury needs remain an open
+design idea.

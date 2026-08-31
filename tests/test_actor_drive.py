@@ -10,7 +10,6 @@ from spacesim2.core.drives.actor_drive import (
     ActorDrive,
     DriveMetrics,
     clamp01,
-    generate_piecewise_mapping,
     get_zero_metrics,
     log_norm_ratio,
 )
@@ -99,105 +98,6 @@ class TestLogNormRatio:
         result1 = log_norm_ratio(1.0, 0.01, 1.0)
         result2 = log_norm_ratio(2.0, 0.01, 1.0)  # Should be capped at same value
         assert result1 == result2
-
-
-class TestGeneratePiecewiseMapping:
-    """Test the generate_piecewise_mapping function."""
-
-    def test_simple_linear_mapping(self):
-        """Test a simple two-point linear mapping."""
-        mapper = generate_piecewise_mapping([(0, 0), (10, 1)])
-
-        assert mapper(0) == 0.0
-        assert mapper(10) == 1.0
-        assert mapper(5) == 0.5  # Midpoint
-        assert mapper(-5) == 0.0  # Below range
-        assert mapper(15) == 1.0  # Above range
-
-    def test_multi_point_mapping(self):
-        """Test a multi-point piecewise mapping."""
-        mapper = generate_piecewise_mapping([(0, 0), (5, 0.5), (10, 0.8), (20, 1.0)])
-
-        assert mapper(0) == 0.0
-        assert mapper(5) == 0.5
-        assert mapper(10) == 0.8
-        assert mapper(20) == 1.0
-
-        # Test interpolation between points
-        assert mapper(2.5) == 0.25  # Halfway between (0,0) and (5,0.5)
-        assert mapper(7.5) == 0.65  # Halfway between (5,0.5) and (10,0.8)
-        assert mapper(15) == 0.9  # Halfway between (10,0.8) and (20,1.0)
-
-    def test_unsorted_points(self):
-        """Test that unsorted points are handled correctly."""
-        mapper = generate_piecewise_mapping([(10, 1), (0, 0), (5, 0.5)])
-
-        # Should work the same as sorted points
-        assert mapper(0) == 0.0
-        assert mapper(5) == 0.5
-        assert mapper(10) == 1.0
-        assert mapper(2.5) == 0.25
-
-    def test_output_clamping(self):
-        """Test that output values are clamped to [0,1]."""
-        mapper = generate_piecewise_mapping([(0, -0.5), (5, 1.5), (10, 0.5)])
-
-        assert mapper(0) == 0.0  # -0.5 clamped to 0
-        assert mapper(5) == 1.0  # 1.5 clamped to 1
-        assert mapper(10) == 0.5  # 0.5 unchanged
-
-        # Interpolated values should also be properly bounded
-        result = mapper(2.5)  # Halfway between 0.0 and 1.0
-        assert 0.0 <= result <= 1.0
-
-    def test_single_point(self):
-        """Test mapping with a single point."""
-        mapper = generate_piecewise_mapping([(5, 0.7)])
-
-        # All inputs should return the single output value
-        assert mapper(0) == 0.7
-        assert mapper(5) == 0.7
-        assert mapper(10) == 0.7
-
-    def test_identical_x_values(self):
-        """Test handling of identical x values."""
-        mapper = generate_piecewise_mapping([(5, 0.3), (5, 0.8), (10, 1.0)])
-
-        # Should use the first occurrence or handle gracefully
-        assert mapper(5) in [0.3, 0.8]  # Either is acceptable
-        assert mapper(10) == 1.0
-
-    def test_empty_points_error(self):
-        """Test that empty points list raises an error."""
-        with pytest.raises(ValueError, match="Points list cannot be empty"):
-            generate_piecewise_mapping([])
-
-    def test_steep_transitions(self):
-        """Test mapping with steep transitions."""
-        mapper = generate_piecewise_mapping([(0, 0), (1, 0), (2, 1), (3, 1)])
-
-        assert mapper(0) == 0.0
-        assert mapper(1) == 0.0
-        assert mapper(1.5) == 0.5  # Steep transition
-        assert mapper(2) == 1.0
-        assert mapper(3) == 1.0
-
-    def test_negative_inputs(self):
-        """Test mapping with negative input values."""
-        mapper = generate_piecewise_mapping([(-10, 0), (0, 0.5), (10, 1)])
-
-        assert mapper(-10) == 0.0
-        assert mapper(-5) == 0.25  # Halfway between -10 and 0
-        assert mapper(0) == 0.5
-        assert mapper(5) == 0.75  # Halfway between 0 and 10
-        assert mapper(10) == 1.0
-
-    def test_return_type_is_callable(self):
-        """Test that the function returns a callable."""
-        mapper = generate_piecewise_mapping([(0, 0), (1, 1)])
-
-        assert callable(mapper)
-        assert isinstance(mapper(0.5), float)
 
 
 class TestDriveMetrics:

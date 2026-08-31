@@ -124,11 +124,10 @@ def test_fuel_market_scan_reports_asks_and_reference():
     assert dict(nav.fuel_ask_planets()) == {a: 12, b: 8}
 
 
-def test_exportable_and_demandable_commodity_summaries():
+def test_exportable_commodity_summaries():
     sim, fuel, food, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
     nav = Navigator(sim)
     assert nav.exportable_commodities(a) == frozenset()
-    assert nav.demandable_commodities(b) == frozenset()
 
     seller = Ship("Seller", sim, a)
     seller.cargo.add_commodity(food, 50)
@@ -138,7 +137,7 @@ def test_exportable_and_demandable_commodity_summaries():
     nav.refresh_market_facts()
 
     assert nav.exportable_commodities(a) == frozenset({food})
-    assert nav.demandable_commodities(b) == frozenset({food})
+    assert nav.candidate_destinations(a, food) == (b,)
     assert fuel not in nav.exportable_commodities(a)
 
 
@@ -168,9 +167,9 @@ def test_refresh_with_turn_is_a_per_turn_snapshot():
 
     # A turn-less call always forces a refresh, even within the same turn.
     b.market.cancel_order(b.market.buy_orders[food][0].order_id)
-    assert nav.demandable_commodities(b) == frozenset({food})  # still snapshotted
+    assert nav.candidate_destinations(a, food) == (b,)  # still snapshotted
     nav.refresh_market_facts()
-    assert nav.demandable_commodities(b) == frozenset()
+    assert nav.candidate_destinations(a, food) == ()
 
 
 def test_cold_galaxy_has_no_trade_signal():

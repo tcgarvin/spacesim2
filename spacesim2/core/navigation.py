@@ -66,7 +66,6 @@ class _TradeSignalIndex:
 
     # Per-planet summaries (what the old lazy per-planet caches held).
     exportable_by_planet: Dict["Planet", FrozenSet["CommodityDefinition"]]
-    demandable_by_planet: Dict["Planet", FrozenSet["CommodityDefinition"]]
     # Per-commodity: planets where it is plausibly acquirable.
     export_planets: Dict["CommodityDefinition", FrozenSet["Planet"]]
     # Per-commodity: planets with a demand signal, best demand value first
@@ -288,19 +287,6 @@ class Navigator:
         """
         return self._trade_signal_index().exportable_by_planet.get(planet, frozenset())
 
-    def demandable_commodities(
-        self, planet: "Planet"
-    ) -> FrozenSet["CommodityDefinition"]:
-        """Commodities with any demand signal at ``planet`` right now.
-
-        A commodity qualifies with at least one resting bid or a real price
-        signal (which lets flow-based demand be projected). Like
-        :meth:`exportable_commodities` this is a superset filter for pruning
-        plan evaluation, not a substitute for it. Served from the per-turn
-        trade-signal index.
-        """
-        return self._trade_signal_index().demandable_by_planet.get(planet, frozenset())
-
     def has_any_trade_signal(self) -> bool:
         """Whether any commodity has both an export source and a demand planet.
 
@@ -360,7 +346,7 @@ class Navigator:
         """The turn's trade-signal index, built lazily on first use.
 
         One O(planets x commodities) pass over every market collecting the
-        per-planet exportable/demandable summaries and, per commodity, the
+        per-planet exportable summaries and, per commodity, the
         export planets and the demand planets ranked by demand value (the
         better of the best resting bid and the recent clearing price, when a
         real price signal backs it). Cached until the next
@@ -370,7 +356,6 @@ class Navigator:
             return self._trade_index
         tradeable = self.tradeable_commodities()
         exportable_by_planet: Dict["Planet", FrozenSet["CommodityDefinition"]] = {}
-        demandable_by_planet: Dict["Planet", FrozenSet["CommodityDefinition"]] = {}
         export_lists: Dict["CommodityDefinition", List["Planet"]] = {
             commodity: [] for commodity in tradeable
         }
@@ -383,7 +368,6 @@ class Navigator:
         for planet in self._sim.planets:
             market = planet.market
             exportable: List["CommodityDefinition"] = []
-            demandable: List["CommodityDefinition"] = []
             for commodity in tradeable:
                 best_bid, ask = market.get_bid_ask_spread(commodity)
                 has_signal = market.has_price_signal(commodity)
@@ -399,13 +383,11 @@ class Navigator:
                     exportable.append(commodity)
                     export_lists[commodity].append(planet)
                 if best_bid is not None or has_signal:
-                    demandable.append(commodity)
                     value = float(best_bid or 0)
                     if has_signal:
                         value = max(value, float(market.get_avg_price(commodity)))
                     demand_rows[commodity].append((-value, planet))
             exportable_by_planet[planet] = frozenset(exportable)
-            demandable_by_planet[planet] = frozenset(demandable)
         demand_ranked: Dict["CommodityDefinition", Tuple["Planet", ...]] = {}
         demand_planets: Dict["CommodityDefinition", FrozenSet["Planet"]] = {}
         for commodity, rows in demand_rows.items():
@@ -414,7 +396,6 @@ class Navigator:
             demand_planets[commodity] = frozenset(demand_ranked[commodity])
         self._trade_index = _TradeSignalIndex(
             exportable_by_planet=exportable_by_planet,
-            demandable_by_planet=demandable_by_planet,
             export_planets={
                 commodity: frozenset(planets)
                 for commodity, planets in export_lists.items()

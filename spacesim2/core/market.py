@@ -934,51 +934,6 @@ class Market:
 
         return True
 
-    def modify_order(self, order_id: str, new_price: int) -> bool:
-        """Modify an existing order's price.
-
-        Args:
-            order_id: The ID of the order to modify
-            new_price: The new price for the order
-
-        Returns:
-            bool: True if order was found and modified, False otherwise
-        """
-        if order_id not in self.orders_by_id:
-            return False
-
-        order = self.orders_by_id[order_id]
-
-        # For buy orders, we need to adjust reserved money
-        if order.is_buy:
-            actor = order.actor
-            old_reserved = order.quantity * order.price
-            new_reserved = order.quantity * new_price
-
-            # Check if actor has enough money for the price increase
-            if new_reserved > old_reserved:
-                extra_needed = new_reserved - old_reserved
-                if actor.money < extra_needed:
-                    return False
-
-                # Adjust money and reserved money
-                actor.money -= extra_needed
-                actor.reserved_money += extra_needed
-            elif old_reserved > new_reserved:
-                # Return excess reserved money
-                refund = old_reserved - new_reserved
-                actor.reserved_money -= refund
-                actor.money += refund
-
-        # Update the price
-        order.price = new_price
-        order.timestamp = self.current_turn  # Reset timestamp for priority
-        self._quote_cache.pop(order.commodity_type, None)
-        if order.is_buy:
-            self._on_buy_book_changed(order.commodity_type)
-
-        return True
-
     def get_actor_orders(self, actor: MarketParticipant) -> Dict[str, List[Order]]:
         """Get all active orders for an actor.
 
@@ -1002,35 +957,3 @@ class Market:
                 result["sell"].append(self.orders_by_id[order_id])
 
         return result
-
-    def clear_orders(self) -> None:
-        """Clear all orders and release all reserved resources.
-
-        WARNING: This should generally not be used with persistent orders.
-        Use cancel_order instead to properly handle individual orders.
-        """
-        # Return all reserved resources first
-        for order_id, order in self.orders_by_id.items():
-            actor = order.actor
-
-            if order.is_buy:
-                # Return reserved money
-                actor.reserved_money -= order.quantity * order.price
-                actor.money += order.quantity * order.price
-            else:
-                # Return reserved inventory
-                actor.inventory.unreserve_commodity(
-                    order.commodity_type, order.quantity
-                )
-
-            # Clear from actor's tracking
-            if order_id in actor.active_orders:
-                del actor.active_orders[order_id]
-
-        # Clear all order collections
-        self.buy_orders.clear()
-        self.sell_orders.clear()
-        self.orders_by_id.clear()
-        self.actor_orders.clear()
-        self._quote_cache.clear()
-        self._bid_levels_cache.clear()

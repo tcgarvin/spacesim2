@@ -1,6 +1,6 @@
 import random
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import yaml
 
@@ -38,25 +38,6 @@ class SkillsRegistry:
             skill: The skill to register
         """
         self._skills[skill.id] = skill
-
-    def get_skill(self, skill_id: str) -> Optional[Skill]:
-        """Get a skill by its ID.
-
-        Args:
-            skill_id: The ID of the skill to retrieve
-
-        Returns:
-            The skill if found, None otherwise
-        """
-        return self._skills.get(skill_id)
-
-    def all_skills(self) -> List[Skill]:
-        """Get all registered skills.
-
-        Returns:
-            List of all skills
-        """
-        return list(self._skills.values())
 
     def load_from_file(self, filepath: str | Path) -> None:
         """Load skills from a YAML file.

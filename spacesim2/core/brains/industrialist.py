@@ -260,7 +260,7 @@ class IndustrialistBrain(ActorBrain):
 
         # Determine planet attribute modifier
         attribute_modifier = 1.0
-        if process.resource_attribute and actor.planet and actor.planet.attributes:
+        if process.resource_attribute and actor.planet:
             attr_value = actor.planet.attributes.get_availability(
                 process.resource_attribute.commodity
             )

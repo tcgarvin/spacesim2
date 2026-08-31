@@ -50,7 +50,6 @@ class Actor:
         self.planet = planet
         self.inventory = Inventory()
         self.actor_type = actor_type
-        self.market_history: List[Dict] = []  # Track this actor's market activity
         self.active_orders: Dict[
             str, str
         ] = {}  # Track active order IDs and their types

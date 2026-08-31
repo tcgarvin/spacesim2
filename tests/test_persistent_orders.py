@@ -119,40 +119,6 @@ def test_cancel_order(food_commodity, mock_sim) -> None:
     assert seller.inventory.get_reserved_quantity(food_commodity) == 0
 
 
-def test_modify_order(food_commodity, mock_sim) -> None:
-    """Test that order modification works correctly."""
-    market = Market()
-    market.commodity_registry = CommodityRegistry()
-    market.commodity_registry._commodities["food"] = food_commodity
-
-    # Create buyer with 100 money
-    buyer = get_actor("Buyer", mock_sim, initial_money=100)
-
-    # Place a buy order
-    order_id = market.place_buy_order(buyer, food_commodity, 5, 10)
-
-    # Check initial state
-    assert buyer.money == 50
-    assert buyer.reserved_money == 50
-
-    # Modify to higher price
-    assert market.modify_order(order_id, 12)
-
-    # Check additional money was reserved
-    assert buyer.money == 40  # -10 more
-    assert buyer.reserved_money == 60  # +10 more
-
-    # Modify to lower price
-    assert market.modify_order(order_id, 8)
-
-    # Check some money was returned
-    assert buyer.money == 60  # +20 returned
-    assert buyer.reserved_money == 40  # -20
-
-    # Check order price was updated
-    assert market.orders_by_id[order_id].price == 8
-
-
 def test_order_persistence(food_commodity, mock_sim) -> None:
     """Test that orders persist across market cycles."""
     market = Market()
@@ -175,9 +141,10 @@ def test_order_persistence(food_commodity, mock_sim) -> None:
     assert len(market.buy_orders[food_commodity]) == 1
     assert len(market.sell_orders[food_commodity]) == 1
 
-    # Update buyer's order to match
+    # Repost the buyer's order at the matching price
     buy_order = market.buy_orders[food_commodity][0]
-    market.modify_order(buy_order.order_id, 10)
+    market.cancel_order(buy_order.order_id)
+    market.place_buy_order(buyer, food_commodity, 5, 10)
 
     # Now match should succeed
     market.match_orders()
