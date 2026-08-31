@@ -10,11 +10,14 @@ This module centralizes those facts in a :class:`Navigator`:
   per simulation and shared by every ship.
 - **Market-derived facts** (order books mutate as brains post orders): fuel
   purchasability, nearest-fuel-source distances, the galaxy fuel price
-  reference, and per-planet commodity summaries. These are cached per
-  *planning decision*: each ship brain calls :meth:`Navigator.refresh_market_facts`
-  when it starts deciding, then every candidate evaluated inside that decision
-  reuses the snapshot. A decision therefore sees one consistent view of the
-  galaxy instead of re-scanning it per (origin, destination, commodity).
+  reference, and the trade-signal index (per-planet commodity summaries plus
+  per-commodity ranked demand shortlists). These are cached **per turn**:
+  ship brains call :meth:`Navigator.refresh_market_facts` with the current
+  turn number, which rebuilds the snapshot only on the turn's first call, so
+  every ship planning that turn shares one consistent view of the galaxy.
+  Order execution is deferred to end-of-turn matching, which keeps the
+  snapshot a valid superset filter for the whole turn; plan evaluation
+  re-verifies exact prices against the live books anyway.
 
 Use :func:`get_navigator` to obtain the per-simulation shared instance.
 """
@@ -22,6 +25,7 @@ Use :func:`get_navigator` to obtain the per-simulation shared instance.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, FrozenSet, List, Optional, Tuple
 from weakref import WeakKeyDictionary
 
@@ -38,13 +42,60 @@ FUEL_MARKET_RECENCY_TURNS = 10
 # exportable-commodity summary (mirrors TraderBrain's flow recency window).
 FLOW_RECENCY_TURNS = 10
 
+# Candidate-destination shortlist sizes for the per-turn trade-signal index.
+# For each (origin, commodity) the candidate destinations are the union of
+# the DESTINATION_TOP_K demand planets with the highest demand value and the
+# DESTINATION_NEAREST_M demand planets nearest the origin (a nearby modest
+# market can beat a distant top-value one after fuel costs). When a commodity
+# has no more than K + M demand planets in total the shortlist degenerates to
+# ALL of them, so galaxies with <= 16 other planets are surveyed exhaustively
+# and small-run behavior is unchanged.
+DESTINATION_TOP_K = 8
+DESTINATION_NEAREST_M = 8
+
+
+@dataclass
+class _TradeSignalIndex:
+    """One turn's galaxy-wide supply/demand signal snapshot.
+
+    Built by :meth:`Navigator._trade_signal_index` in a single O(planets x
+    commodities) pass over every market, then shared by every ship planning
+    during that turn. All fields describe superset filters: plan evaluation
+    still re-verifies exact prices against the live books.
+    """
+
+    # Per-planet summaries (what the old lazy per-planet caches held).
+    exportable_by_planet: Dict["Planet", FrozenSet["CommodityDefinition"]]
+    demandable_by_planet: Dict["Planet", FrozenSet["CommodityDefinition"]]
+    # Per-commodity: planets where it is plausibly acquirable.
+    export_planets: Dict["CommodityDefinition", FrozenSet["Planet"]]
+    # Per-commodity: planets with a demand signal, best demand value first
+    # (ties keep simulation planet order), plus a set for membership tests.
+    demand_ranked: Dict["CommodityDefinition", Tuple["Planet", ...]]
+    demand_planets: Dict["CommodityDefinition", FrozenSet["Planet"]]
+    # Memo of candidate_destinations results, shared by all ships this turn.
+    candidate_memo: Dict[
+        Tuple["Planet", "CommodityDefinition"], Tuple["Planet", ...]
+    ] = field(default_factory=dict)
+
+    def has_any_trade_signal(self) -> bool:
+        """Whether any commodity is exportable somewhere AND demanded somewhere.
+
+        False means the galaxy is cold: no ship can construct a trade plan,
+        so planning can be skipped outright this turn.
+        """
+        return any(
+            self.export_planets[commodity] and self.demand_ranked[commodity]
+            for commodity in self.export_planets
+        )
+
 
 class Navigator:
     """Cached view of galaxy geometry and fuel reachability for one simulation.
 
     Geometry is cached for the simulation's lifetime. Market-derived facts
-    are cached until the next :meth:`refresh_market_facts` call (ship brains
-    refresh once per planning decision).
+    are cached until the next effective :meth:`refresh_market_facts` call —
+    once per turn when called with the turn number, as ship brains do.
     """
 
     def __init__(self, sim: "Simulation") -> None:
@@ -64,24 +115,34 @@ class Navigator:
         self._fuel_scan: Optional[
             Tuple[List[Tuple["Planet", int]], Optional[int], Optional[float]]
         ] = None
-        self._exportable: Dict["Planet", FrozenSet["CommodityDefinition"]] = {}
-        self._demandable: Dict["Planet", FrozenSet["CommodityDefinition"]] = {}
+        self._trade_index: Optional[_TradeSignalIndex] = None
+        # Turn the current market-fact snapshot belongs to (None = never
+        # refreshed, or force-refreshed outside a turn context).
+        self._facts_turn: Optional[int] = None
 
     # ------------------------------------------------------------------
     # Cache lifecycle
     # ------------------------------------------------------------------
 
-    def refresh_market_facts(self) -> None:
+    def refresh_market_facts(self, turn: Optional[int] = None) -> None:
         """Drop market-derived caches so the next queries see the live books.
 
-        Ship brains call this once at the start of each planning decision;
-        geometry and commodity-registry caches are unaffected.
+        With ``turn`` given (how ship brains call it), the refresh is a no-op
+        when the caches were already refreshed for that turn: market facts are
+        a **per-turn shared snapshot**, built once and reused by every ship
+        planning that turn. Order books only mutate between turns via deferred
+        end-of-turn matching, so within a turn the snapshot stays a valid
+        superset filter. Calling without ``turn`` forces a refresh (tests and
+        ad-hoc probes use this). Geometry and commodity-registry caches are
+        unaffected either way.
         """
+        if turn is not None and turn == self._facts_turn:
+            return
+        self._facts_turn = turn
         self._fuel_purchasable.clear()
         self._nearest_fuel_distance.clear()
         self._fuel_scan = None
-        self._exportable.clear()
-        self._demandable.clear()
+        self._trade_index = None
 
     # ------------------------------------------------------------------
     # Geometry (static after setup)
@@ -223,25 +284,9 @@ class Navigator:
         (real price signal plus recent traded volume). This is a superset
         filter: plan evaluation still verifies exact prices, but commodities
         outside this set are guaranteed unacquirable and can be skipped.
+        Served from the per-turn trade-signal index.
         """
-        cached = self._exportable.get(planet)
-        if cached is not None:
-            return cached
-        market = planet.market
-        exportable = []
-        for commodity in self.tradeable_commodities():
-            _, ask = market.get_bid_ask_spread(commodity)
-            if ask is not None and ask > 0:
-                exportable.append(commodity)
-                continue
-            if market.has_price_signal(commodity) and any(
-                v > 0
-                for v in market.volume_history.get(commodity, [])[-FLOW_RECENCY_TURNS:]
-            ):
-                exportable.append(commodity)
-        result = frozenset(exportable)
-        self._exportable[planet] = result
-        return result
+        return self._trade_signal_index().exportable_by_planet.get(planet, frozenset())
 
     def demandable_commodities(
         self, planet: "Planet"
@@ -251,23 +296,133 @@ class Navigator:
         A commodity qualifies with at least one resting bid or a real price
         signal (which lets flow-based demand be projected). Like
         :meth:`exportable_commodities` this is a superset filter for pruning
-        plan evaluation, not a substitute for it.
+        plan evaluation, not a substitute for it. Served from the per-turn
+        trade-signal index.
         """
-        cached = self._demandable.get(planet)
+        return self._trade_signal_index().demandable_by_planet.get(planet, frozenset())
+
+    def has_any_trade_signal(self) -> bool:
+        """Whether any commodity has both an export source and a demand planet.
+
+        False means the galaxy is cold (typically the pre-market bootstrap):
+        no trade plan can exist anywhere, so ship planning can early-out for
+        the turn instead of surveying every market.
+        """
+        return self._trade_signal_index().has_any_trade_signal()
+
+    def candidate_destinations(
+        self, origin: "Planet", commodity: "CommodityDefinition"
+    ) -> Tuple["Planet", ...]:
+        """Shortlist of destination planets worth evaluating for ``commodity``.
+
+        The union of the :data:`DESTINATION_TOP_K` demand planets with the
+        highest demand value (best resting bid or recent clearing price) and
+        the :data:`DESTINATION_NEAREST_M` demand planets nearest ``origin``,
+        excluding ``origin`` itself. When the commodity has at most K + M
+        demand planets the shortlist is ALL of them, so small galaxies keep
+        exhaustive-survey behavior. Results are memoized in the per-turn
+        index and shared by every ship.
+        """
+        index = self._trade_signal_index()
+        memo_key = (origin, commodity)
+        cached = index.candidate_memo.get(memo_key)
         if cached is not None:
             return cached
-        market = planet.market
-        result = frozenset(
-            commodity
-            for commodity in self.tradeable_commodities()
-            if market.buy_orders.get(commodity) or market.has_price_signal(commodity)
-        )
-        self._demandable[planet] = result
+        pool = [
+            planet
+            for planet in index.demand_ranked.get(commodity, ())
+            if planet is not origin
+        ]
+        if len(pool) <= DESTINATION_TOP_K + DESTINATION_NEAREST_M:
+            result = tuple(pool)
+        else:
+            chosen = pool[:DESTINATION_TOP_K]
+            chosen_set = set(chosen)
+            demand_planets = index.demand_planets.get(commodity, frozenset())
+            found_near = 0
+            for planet in self.planets_by_proximity(origin):
+                if found_near >= DESTINATION_NEAREST_M:
+                    break
+                if planet in demand_planets:
+                    found_near += 1
+                    if planet not in chosen_set:
+                        chosen.append(planet)
+                        chosen_set.add(planet)
+            result = tuple(chosen)
+        index.candidate_memo[memo_key] = result
         return result
 
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    def _trade_signal_index(self) -> _TradeSignalIndex:
+        """The turn's trade-signal index, built lazily on first use.
+
+        One O(planets x commodities) pass over every market collecting the
+        per-planet exportable/demandable summaries and, per commodity, the
+        export planets and the demand planets ranked by demand value (the
+        better of the best resting bid and the recent clearing price, when a
+        real price signal backs it). Cached until the next
+        :meth:`refresh_market_facts`, i.e. for the rest of the turn.
+        """
+        if self._trade_index is not None:
+            return self._trade_index
+        tradeable = self.tradeable_commodities()
+        exportable_by_planet: Dict["Planet", FrozenSet["CommodityDefinition"]] = {}
+        demandable_by_planet: Dict["Planet", FrozenSet["CommodityDefinition"]] = {}
+        export_lists: Dict["CommodityDefinition", List["Planet"]] = {
+            commodity: [] for commodity in tradeable
+        }
+        # Per commodity: (negated demand value, planet) rows; sorting them is
+        # stable, so ties keep simulation planet order without comparing
+        # Planet objects.
+        demand_rows: Dict["CommodityDefinition", List[Tuple[float, "Planet"]]] = {
+            commodity: [] for commodity in tradeable
+        }
+        for planet in self._sim.planets:
+            market = planet.market
+            exportable: List["CommodityDefinition"] = []
+            demandable: List["CommodityDefinition"] = []
+            for commodity in tradeable:
+                best_bid, ask = market.get_bid_ask_spread(commodity)
+                has_signal = market.has_price_signal(commodity)
+                if (ask is not None and ask > 0) or (
+                    has_signal
+                    and any(
+                        v > 0
+                        for v in market.volume_history.get(commodity, [])[
+                            -FLOW_RECENCY_TURNS:
+                        ]
+                    )
+                ):
+                    exportable.append(commodity)
+                    export_lists[commodity].append(planet)
+                if best_bid is not None or has_signal:
+                    demandable.append(commodity)
+                    value = float(best_bid or 0)
+                    if has_signal:
+                        value = max(value, float(market.get_avg_price(commodity)))
+                    demand_rows[commodity].append((-value, planet))
+            exportable_by_planet[planet] = frozenset(exportable)
+            demandable_by_planet[planet] = frozenset(demandable)
+        demand_ranked: Dict["CommodityDefinition", Tuple["Planet", ...]] = {}
+        demand_planets: Dict["CommodityDefinition", FrozenSet["Planet"]] = {}
+        for commodity, rows in demand_rows.items():
+            rows.sort(key=lambda row: row[0])
+            demand_ranked[commodity] = tuple(planet for _, planet in rows)
+            demand_planets[commodity] = frozenset(demand_ranked[commodity])
+        self._trade_index = _TradeSignalIndex(
+            exportable_by_planet=exportable_by_planet,
+            demandable_by_planet=demandable_by_planet,
+            export_planets={
+                commodity: frozenset(planets)
+                for commodity, planets in export_lists.items()
+            },
+            demand_ranked=demand_ranked,
+            demand_planets=demand_planets,
+        )
+        return self._trade_index
 
     def _fuel_market_scan(
         self,

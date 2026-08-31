@@ -4,7 +4,12 @@ import math
 
 from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
 from spacesim2.core.market import Market
-from spacesim2.core.navigation import Navigator, get_navigator
+from spacesim2.core.navigation import (
+    DESTINATION_NEAREST_M,
+    DESTINATION_TOP_K,
+    Navigator,
+    get_navigator,
+)
 from spacesim2.core.planet import Planet
 from spacesim2.core.ship import Ship
 
@@ -135,6 +140,136 @@ def test_exportable_and_demandable_commodity_summaries():
     assert nav.exportable_commodities(a) == frozenset({food})
     assert nav.demandable_commodities(b) == frozenset({food})
     assert fuel not in nav.exportable_commodities(a)
+
+
+def test_refresh_with_turn_is_a_per_turn_snapshot():
+    """Same-turn refresh calls are no-ops; a new turn (or a forced refresh)
+    rebuilds the market-fact snapshot."""
+    sim, _, food, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    nav = Navigator(sim)
+    nav.refresh_market_facts(turn=0)
+    assert nav.exportable_commodities(a) == frozenset()
+    assert nav.has_any_trade_signal() is False
+
+    seller = Ship("Seller", sim, a)
+    seller.cargo.add_commodity(food, 50)
+    a.market.place_sell_order(seller, food, 50, 10)
+    buyer = Ship("Buyer", sim, b, initial_money=1000)
+    b.market.place_buy_order(buyer, food, 10, 15)
+
+    # Same turn: the snapshot is shared and unchanged.
+    nav.refresh_market_facts(turn=0)
+    assert nav.exportable_commodities(a) == frozenset()
+
+    # Next turn: rebuilt from the live books.
+    nav.refresh_market_facts(turn=1)
+    assert nav.exportable_commodities(a) == frozenset({food})
+    assert nav.has_any_trade_signal() is True
+
+    # A turn-less call always forces a refresh, even within the same turn.
+    b.market.cancel_order(b.market.buy_orders[food][0].order_id)
+    assert nav.demandable_commodities(b) == frozenset({food})  # still snapshotted
+    nav.refresh_market_facts()
+    assert nav.demandable_commodities(b) == frozenset()
+
+
+def test_cold_galaxy_has_no_trade_signal():
+    """With no orders and no trade history anywhere, the index reports a cold
+    galaxy and candidate lists are empty."""
+    sim, _, food, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    nav = Navigator(sim)
+    assert nav.has_any_trade_signal() is False
+    assert nav.candidate_destinations(a, food) == ()
+
+    # Supply alone (no demand signal anywhere) is still cold.
+    seller = Ship("Seller", sim, a)
+    seller.cargo.add_commodity(food, 50)
+    a.market.place_sell_order(seller, food, 50, 10)
+    nav.refresh_market_facts()
+    # The ask itself creates a demand signal nowhere; only planet A gains an
+    # exportable entry. B has no bid and no price history.
+    assert nav.exportable_commodities(a) == frozenset({food})
+    assert nav.candidate_destinations(a, food) == ()
+
+
+def _demand_world(num_planets: int):
+    """A line of planets where planet i rests a food bid at price 10 + i.
+
+    Planet 0 (the origin) also bids so demand-set membership excludes the
+    origin itself, not just planets without signals.
+    """
+    specs = [(f"P{i}", i * 10, 0) for i in range(num_planets)]
+    sim, _fuel, food, planets = _make_world(specs)
+    for i, planet in enumerate(planets):
+        buyer = Ship(f"Buyer{i}", sim, planet, initial_money=10_000)
+        planet.market.place_buy_order(buyer, food, 10, 10 + i)
+    return sim, food, planets
+
+
+def test_candidate_destinations_degenerate_to_all_in_small_galaxies():
+    """At or below K + M demand planets, the shortlist is every demand planet
+    (so small-galaxy behavior matches an exhaustive survey)."""
+    count = DESTINATION_TOP_K + DESTINATION_NEAREST_M + 1  # origin + K + M
+    sim, food, planets = _demand_world(count)
+    nav = Navigator(sim)
+    origin = planets[0]
+    candidates = nav.candidate_destinations(origin, food)
+    assert set(candidates) == set(planets) - {origin}
+    # Ranked by demand value (bid price), best first.
+    assert list(candidates) == sorted(
+        candidates, key=lambda p: -max(o.price for o in p.market.buy_orders[food])
+    )
+
+
+def test_candidate_destinations_match_bruteforce_topk_union_nearest():
+    """Above the threshold, candidates equal brute-force top-K-by-value
+    united with the M nearest demand planets."""
+    sim, food, planets = _demand_world(30)
+    nav = Navigator(sim)
+    origin = planets[0]
+    candidates = set(nav.candidate_destinations(origin, food))
+
+    demand = [p for p in planets if p is not origin]
+    top_k = set(
+        sorted(
+            demand,
+            key=lambda p: -max(o.price for o in p.market.buy_orders[food]),
+        )[:DESTINATION_TOP_K]
+    )
+    nearest_m = set(
+        sorted(demand, key=lambda p: _direct_distance(origin, p))[
+            :DESTINATION_NEAREST_M
+        ]
+    )
+    assert candidates == top_k | nearest_m
+    # Bid prices rise with distance here, so the two halves are disjoint and
+    # the union genuinely mixes near and high-value planets.
+    assert top_k.isdisjoint(nearest_m)
+    assert len(candidates) == DESTINATION_TOP_K + DESTINATION_NEAREST_M
+
+
+def test_candidate_destinations_invalidate_on_new_turn():
+    sim, food, planets = _demand_world(30)
+    nav = Navigator(sim)
+    origin = planets[0]
+    nav.refresh_market_facts(turn=0)
+    before = nav.candidate_destinations(origin, food)
+
+    # A new far-out bidder appears with the best price in the galaxy.
+    newcomer = Planet("New", Market(), 500, 0)
+    sim.planets.append(newcomer)
+    buyer = Ship("NewBuyer", sim, newcomer, initial_money=10_000)
+    newcomer.market.place_buy_order(buyer, food, 10, 99)
+
+    # Same turn: memoized shortlist unchanged.
+    nav.refresh_market_facts(turn=0)
+    assert nav.candidate_destinations(origin, food) == before
+    assert newcomer not in before
+
+    # Next turn: the newcomer leads the shortlist.
+    nav.refresh_market_facts(turn=1)
+    after = nav.candidate_destinations(origin, food)
+    assert after[0] is newcomer
 
 
 def test_get_navigator_is_shared_per_simulation():

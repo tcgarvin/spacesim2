@@ -133,9 +133,9 @@ def test_fuel_safe_destination_requires_escape_route():
     assert ship.brain._fuel_safe_destination(b, a, escape_cost)
 
     # Fuel for sale at A: B is safe only with enough fuel to get back to A.
-    # (Market facts are cached per planning decision; tests that poke the
-    # books between direct helper calls refresh the navigator explicitly —
-    # the brain's decide_* entry points do this themselves.)
+    # (Market facts are a per-turn shared snapshot; tests that poke the books
+    # mid-turn refresh the navigator explicitly — in a live sim the change
+    # would become visible on the next turn's snapshot.)
     a.market.place_sell_order(supplier, fuel, 50, 10)
     ship.brain._nav.refresh_market_facts()
     assert not ship.brain._fuel_safe_destination(b, a, escape_cost - 1)
@@ -161,9 +161,12 @@ def test_decide_travel_avoids_fuel_dead_end():
     # flying there would strand the ship.
     assert ship.brain.decide_travel() is None
 
-    # Once fuel is for sale at B, the trip is safe.
+    # Once fuel is for sale at B, the trip is safe. (Force-refresh the
+    # per-turn snapshot so the mid-turn book change is visible now rather
+    # than on the next turn.)
     supplier_b = _make_ship(sim, b, fuel_units=100, name="SupplierB")
     b.market.place_sell_order(supplier_b, fuel, 50, 10)
+    ship.brain._nav.refresh_market_facts()
     assert ship.brain.decide_travel() is b
 
 
@@ -247,8 +250,11 @@ def test_stranded_ship_posts_bid_profitable_for_deliverer():
     assert stranded.reserved_money == bid.quantity * bid.price
 
     # Seller side: a trader on the fuel-rich planet sees the resting bid and
-    # rates the delivery run as its best, profitable plan.
+    # rates the delivery run as its best, profitable plan. (The stranded
+    # ship's decision snapshotted the books before its bid was posted, so
+    # force-refresh the per-turn snapshot to see it now.)
     deliverer = _make_ship(sim, a, fuel_units=30, money=1000, name="Deliverer")
+    deliverer.brain._nav.refresh_market_facts()
     plan = deliverer.brain._find_best_trade_plan()
     assert plan is not None
     assert plan.commodity.id == "nova_fuel"
@@ -564,7 +570,9 @@ def test_survival_reposition_leaves_fuel_desert():
     assert ship.brain.decide_travel() is oasis
 
     # Where fuel IS locally purchasable, idling is fine: stay put.
+    # (Force-refresh the per-turn snapshot to see the mid-turn book change.)
     desert.market.place_sell_order(
         _make_ship(sim, desert, fuel_units=20, name="LocalSupplier"), fuel, 10, 12
     )
+    ship.brain._nav.refresh_market_facts()
     assert ship.brain.decide_travel() is None
