@@ -5,6 +5,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 from spacesim2.core.commodity import CommodityDefinition, Inventory
+from spacesim2.core.navigation import (
+    FLOW_RECENCY_TURNS,
+    Navigator,
+    get_navigator,
+)
 from spacesim2.core.planet import Planet
 
 if TYPE_CHECKING:
@@ -25,10 +30,6 @@ FUEL_BID_FALLBACK_FLOOR = 15
 # Ships are created with fuel_efficiency in [0.8, 1.2]; when estimating another
 # (unknown) ship's delivery burn, assume the worst so the bid stays enticing.
 DELIVERER_WORST_FUEL_EFFICIENCY = 0.8
-
-# How many recent turns of volume history count as "fuel trades here" when
-# judging whether fuel is realistically purchasable at a planet.
-FUEL_MARKET_RECENCY_TURNS = 10
 
 # Multiplier over the galaxy-wide fuel reference price up to which a docked
 # ship "bunkers" (fills its tank). Above it fuel is scarcity-priced: paying
@@ -55,15 +56,22 @@ SPECULATIVE_PLAN_CAP = 10
 #
 # Turns of destination flow a plan expects to sell into (sizes cargo without
 # dumping a hold into a market that clears one unit a turn).
+# (The volume-history window that counts as "this good trades here" is
+# FLOW_RECENCY_TURNS, shared with spacesim2.core.navigation.)
 DEMAND_HORIZON_TURNS = 15
-# Window of volume history that counts as "this good trades here".
-FLOW_RECENCY_TURNS = 10
 # Docked turns a ship keeps a resting buy order open to fill its plan before
 # departing with whatever it has (or replanning if nothing filled).
 ACCUMULATION_PATIENCE = 8
 # Confidence discount on avg-price revenue estimates and resting asks: the
 # flow price is a forecast, not a resting order.
 SELL_PRICE_HAIRCUT = 0.9
+
+# How many candidate origin planets an empty repositioning ship surveys, in
+# proximity order. Surveying every origin is O(planets^2 x commodities) per
+# ship per turn; nearby origins need less fuel to reach anyway, so capping the
+# survey bounds cost at large galaxy sizes without changing small-galaxy
+# behavior (the cap exceeds the planet count of the default setups).
+REPOSITION_ORIGIN_CANDIDATES = 12
 
 # Chance per departure that a ship rolls a maintenance stop, and the fuel
 # units the legacy maintenance tier consumes. Used both by
@@ -198,6 +206,13 @@ class TraderBrain(ShipBrain):
         # Set while local sell orders from this turn are pending so
         # decide_travel doesn't depart and strand them in the book.
         self._selling_locally = False
+        # Shared galaxy geometry / fuel-reachability cache (per simulation).
+        self._nav: Navigator = get_navigator(ship.simulation)
+        # Memo of the last full plan search: (turn, planet, result). The
+        # search runs in decide_trade_actions and, when it found nothing,
+        # again in decide_travel the same turn — the memo answers the second
+        # call without re-surveying the galaxy.
+        self._plan_search_memo: Optional[tuple[int, Planet, Optional[TradePlan]]] = None
 
     def _calculate_average_purchase_price(
         self, commodity: CommodityDefinition
@@ -245,48 +260,27 @@ class TraderBrain(ShipBrain):
 
     def _get_tradeable_commodities(self) -> List[CommodityDefinition]:
         """Get list of commodities that can be traded between planets."""
-        return [
-            c
-            for c in self.ship.simulation.commodity_registry.all_commodities()
-            if c.transportable
-        ]
+        return self._nav.tradeable_commodities()
 
     def _fuel_commodity(self) -> Optional[CommodityDefinition]:
         """The nova_fuel commodity, or None if it is not defined."""
-        return self.ship.simulation.commodity_registry.get_commodity("nova_fuel")
+        return self._nav.fuel_commodity()
 
     def _fuel_purchasable_at(self, planet: Planet) -> bool:
-        """Whether nova_fuel can realistically be bought at ``planet`` right now.
-
-        True when a standing ask exists, or when the market has a real price
-        signal AND recent fuel volume (asks come and go between turns on an
-        actively supplied market, so recent trades count as availability).
-        """
-        fuel_commodity = self._fuel_commodity()
-        if fuel_commodity is None:
-            return False
-        market = planet.market
-        _, ask = market.get_bid_ask_spread(fuel_commodity)
-        if ask is not None:
-            return True
-        if not market.has_price_signal(fuel_commodity):
-            return False
-        recent_volumes = market.volume_history.get(fuel_commodity, [])[
-            -FUEL_MARKET_RECENCY_TURNS:
-        ]
-        return any(v > 0 for v in recent_volumes)
+        """Whether nova_fuel can realistically be bought at ``planet`` right now."""
+        return self._nav.fuel_purchasable_at(planet)
 
     def _min_escape_fuel(self, from_planet: Planet) -> Optional[int]:
         """Fuel needed to reach the nearest fuel-selling planet from ``from_planet``.
 
         Returns None if fuel is not purchasable anywhere else in the galaxy.
+        Fuel burn is monotone in distance, so the nearest source (cached by
+        the navigator) minimizes this ship's escape cost too.
         """
-        costs = [
-            self.ship.fuel_required(Ship.calculate_distance(from_planet, planet))
-            for planet in self.ship.simulation.planets
-            if planet is not from_planet and self._fuel_purchasable_at(planet)
-        ]
-        return min(costs) if costs else None
+        distance = self._nav.nearest_fuel_source_distance(from_planet)
+        if distance is None:
+            return None
+        return self.ship.fuel_required(distance)
 
     def _fuel_safe_destination(
         self, destination: Planet, return_planet: Planet, fuel_after_arrival: int
@@ -305,7 +299,7 @@ class TraderBrain(ShipBrain):
         escape_fuel = self._min_escape_fuel(destination)
         if escape_fuel is None:
             return_leg = self.ship.fuel_required(
-                Ship.calculate_distance(destination, return_planet)
+                self._nav.distance(destination, return_planet)
             )
             return fuel_after_arrival >= return_leg
         return fuel_after_arrival >= escape_fuel
@@ -319,14 +313,10 @@ class TraderBrain(ShipBrain):
         current_planet = self.ship.planet
         if current_planet is None:
             return 0
-        distances = [
-            Ship.calculate_distance(current_planet, planet)
-            for planet in self.ship.simulation.planets
-            if planet is not current_planet
-        ]
-        if not distances:
+        nearest = self._nav.nearest_other_distance(current_planet)
+        if nearest is None:
             return 0
-        return 2 * self.ship.fuel_required(min(distances))
+        return 2 * self.ship.fuel_required(nearest)
 
     def _fuel_sell_reserve(self) -> int:
         """Fuel units to withhold from any sale so the ship can still leave.
@@ -359,30 +349,9 @@ class TraderBrain(ShipBrain):
     def _fuel_value_reference(self) -> Optional[float]:
         """Cheapest believable fuel valuation anywhere in the galaxy.
 
-        Minimum over every planet's current ask and its 30-day average price
-        (where real trades back it). During a local scarcity spike the rolling
-        averages stay near the pre-spike level, so this reference is what
-        keeps a ship from filling its whole tank at panic prices. Returns
-        None when no planet has any signal.
+        See :meth:`Navigator.fuel_value_reference` for the rationale.
         """
-        fuel_commodity = self._fuel_commodity()
-        if fuel_commodity is None:
-            return None
-        best: Optional[float] = None
-        for planet in self.ship.simulation.planets:
-            market = planet.market
-            _, ask = market.get_bid_ask_spread(fuel_commodity)
-            candidates = []
-            if ask is not None and ask > 0:
-                candidates.append(float(ask))
-            if market.has_price_signal(fuel_commodity):
-                avg_30 = market.get_30_day_average_price(fuel_commodity)
-                if avg_30 > 0:
-                    candidates.append(avg_30)
-            for value in candidates:
-                if best is None or value < best:
-                    best = value
-        return best
+        return self._nav.fuel_value_reference()
 
     def _fuel_delivery_in_progress(self) -> bool:
         """Whether the ship is at the destination of an active fuel-run plan.
@@ -413,15 +382,7 @@ class TraderBrain(ShipBrain):
         highest_bid, _ = planet.market.get_bid_ask_spread(fuel_commodity)
         if highest_bid is None:
             return False
-        cheapest_ask: Optional[int] = None
-        for source in self.ship.simulation.planets:
-            _, ask = source.market.get_bid_ask_spread(fuel_commodity)
-            if (
-                ask is not None
-                and ask > 0
-                and (cheapest_ask is None or ask < cheapest_ask)
-            ):
-                cheapest_ask = ask
+        cheapest_ask = self._nav.cheapest_fuel_ask()
         threshold = (
             math.ceil(cheapest_ask * (1.0 + FUEL_BID_MARGIN))
             if cheapest_ask is not None
@@ -582,13 +543,10 @@ class TraderBrain(ShipBrain):
             return FUEL_BID_FALLBACK_FLOOR
 
         best_delivered_cost: Optional[float] = None
-        for source in self.ship.simulation.planets:
+        for source, ask in self._nav.fuel_ask_planets():
             if source is planet:
                 continue
-            _, ask = source.market.get_bid_ask_spread(fuel_commodity)
-            if ask is None or ask <= 0:
-                continue
-            distance = Ship.calculate_distance(source, planet)
+            distance = self._nav.distance(source, planet)
             leg_fuel = math.ceil(
                 Ship.calculate_fuel_needed(distance) / DELIVERER_WORST_FUEL_EFFICIENCY
             )
@@ -693,9 +651,7 @@ class TraderBrain(ShipBrain):
         bid the ship will post, and matching executes at each seller's ask,
         so fills only ever come in at or below it.
         """
-        fuel_commodity = self.ship.simulation.commodity_registry.get_commodity(
-            "nova_fuel"
-        )
+        fuel_commodity = self._fuel_commodity()
         if not fuel_commodity:
             return None
 
@@ -705,7 +661,7 @@ class TraderBrain(ShipBrain):
 
         # Calculate distance and fuel needs (efficiency-adjusted: this must
         # match what start_journey will actually consume)
-        distance = Ship.calculate_distance(origin, destination)
+        distance = self._nav.distance(origin, destination)
         fuel_one_way = self.ship.fuel_required(distance)
         fuel_round_trip = fuel_one_way * 2
 
@@ -839,31 +795,50 @@ class TraderBrain(ShipBrain):
         )
 
     def _find_best_trade_plan(self) -> Optional[TradePlan]:
-        """Survey all possible trades and return the most profitable one.
+        """Survey all possible trades from here and return the most profitable.
 
-        Evaluates trades from the current planet to all other planets
-        for all tradeable commodities.
+        Memoized per (turn, planet): decide_trade_actions runs the survey and,
+        when it finds nothing, decide_travel asks again the same turn before
+        repositioning — the memo answers that second call directly.
         """
-        if not self.ship.planet or not self.ship.simulation.planets:
-            return None
-
         current_planet = self.ship.planet
+        if current_planet is None or not self.ship.simulation.planets:
+            return None
+        memo = self._plan_search_memo
+        turn = self.ship.simulation.current_turn
+        if memo is not None and memo[0] == turn and memo[1] is current_planet:
+            return memo[2]
+        plan = self._best_plan_from(current_planet)
+        self._plan_search_memo = (turn, current_planet, plan)
+        return plan
+
+    def _best_plan_from(self, origin: Planet) -> Optional[TradePlan]:
+        """Most profitable trade plan exporting from ``origin``, if any.
+
+        Only commodities acquirable at the origin AND showing a demand signal
+        at the destination are evaluated (both are superset filters from the
+        navigator; the evaluation itself re-verifies prices).
+        """
+        exportable = self._nav.exportable_commodities(origin)
+        if not exportable:
+            return None
         commodities = self._get_tradeable_commodities()
 
         best_plan: Optional[TradePlan] = None
         best_profit = 0
 
         for destination in self.ship.simulation.planets:
-            if destination == current_planet:
+            if destination is origin:
                 continue
-
+            demandable = self._nav.demandable_commodities(destination)
             for commodity in commodities:
+                if commodity not in exportable or commodity not in demandable:
+                    continue
                 plan = self._evaluate_trade_opportunity(
-                    origin=current_planet,
+                    origin=origin,
                     destination=destination,
                     commodity=commodity,
                 )
-
                 if plan and plan.is_profitable() and plan.expected_profit > best_profit:
                     best_plan = plan
                     best_profit = plan.expected_profit
@@ -886,9 +861,7 @@ class TraderBrain(ShipBrain):
         if planet is None:
             return
         market = planet.market
-        fuel_commodity = self.ship.simulation.commodity_registry.get_commodity(
-            "nova_fuel"
-        )
+        fuel_commodity = self._fuel_commodity()
 
         actions = []
 
@@ -981,10 +954,11 @@ class TraderBrain(ShipBrain):
         if not self.ship.planet:
             return
 
+        # Snapshot the galaxy's market facts for this planning decision.
+        self._nav.refresh_market_facts()
+
         market = self.ship.planet.market
-        fuel_commodity = self.ship.simulation.commodity_registry.get_commodity(
-            "nova_fuel"
-        )
+        fuel_commodity = self._fuel_commodity()
 
         if not fuel_commodity:
             self.ship.last_action = "No trading - fuel commodity not available"
@@ -1077,7 +1051,7 @@ class TraderBrain(ShipBrain):
                     if planet == current_planet:
                         continue
 
-                    distance = Ship.calculate_distance(current_planet, planet)
+                    distance = self._nav.distance(current_planet, planet)
                     fuel_needed = self.ship.fuel_required(distance)
 
                     if fuel_available < fuel_needed:
@@ -1191,9 +1165,10 @@ class TraderBrain(ShipBrain):
         if self._selling_locally:
             return None
 
-        fuel_commodity = self.ship.simulation.commodity_registry.get_commodity(
-            "nova_fuel"
-        )
+        # Snapshot the galaxy's market facts for this planning decision.
+        self._nav.refresh_market_facts()
+
+        fuel_commodity = self._fuel_commodity()
         if not fuel_commodity:
             return None
 
@@ -1209,7 +1184,7 @@ class TraderBrain(ShipBrain):
             if not self._plan_loaded:
                 return None
             fuel_needed = self.ship.fuel_required(
-                Ship.calculate_distance(current_planet, plan.destination)
+                self._nav.distance(current_planet, plan.destination)
             )
             if fuel_available >= fuel_needed and self._fuel_safe_destination(
                 plan.destination, current_planet, fuel_available - fuel_needed
@@ -1252,7 +1227,7 @@ class TraderBrain(ShipBrain):
             if destination == current_planet:
                 continue
 
-            distance = Ship.calculate_distance(current_planet, destination)
+            distance = self._nav.distance(current_planet, destination)
             fuel_needed = self.ship.fuel_required(distance)
 
             # Must have fuel for the journey
@@ -1307,7 +1282,7 @@ class TraderBrain(ShipBrain):
         for planet in self.ship.simulation.planets:
             if planet is current:
                 continue
-            distance = Ship.calculate_distance(current, planet)
+            distance = self._nav.distance(current, planet)
             if fuel_available < self.ship.fuel_required(distance):
                 continue
             if self._fuel_purchasable_at(planet):
@@ -1325,26 +1300,25 @@ class TraderBrain(ShipBrain):
     ) -> Optional[Planet]:
         """Pick a planet to fly to empty when nothing here is worth exporting.
 
-        Surveys every other planet as a candidate origin and finds the best
-        profitable export plan available from it. Returns the reachable origin
-        backing the most profitable opportunity, or None if none is reachable
-        or profitable.
+        Surveys up to REPOSITION_ORIGIN_CANDIDATES reachable planets, nearest
+        first, as candidate origins and finds the best profitable export plan
+        available from each. Returns the origin backing the most profitable
+        opportunity, or None if none is reachable or profitable.
         """
         current_planet = self.ship.planet
         if current_planet is None:
             return None
 
-        commodities = self._get_tradeable_commodities()
         best_origin: Optional[Planet] = None
         best_profit = 0
+        surveyed = 0
 
-        for origin in self.ship.simulation.planets:
-            if origin == current_planet:
-                continue
-
+        for origin in self._nav.planets_by_proximity(current_planet):
+            if surveyed >= REPOSITION_ORIGIN_CANDIDATES:
+                break
             # Must have enough fuel on board to reach this origin empty, and
             # arriving there must leave an escape route.
-            distance_to_origin = Ship.calculate_distance(current_planet, origin)
+            distance_to_origin = self._nav.distance(current_planet, origin)
             fuel_to_origin = self.ship.fuel_required(distance_to_origin)
             if fuel_available < fuel_to_origin:
                 continue
@@ -1353,22 +1327,11 @@ class TraderBrain(ShipBrain):
             ):
                 continue
 
-            for destination in self.ship.simulation.planets:
-                if destination == origin:
-                    continue
-                for commodity in commodities:
-                    plan = self._evaluate_trade_opportunity(
-                        origin=origin,
-                        destination=destination,
-                        commodity=commodity,
-                    )
-                    if (
-                        plan
-                        and plan.is_profitable()
-                        and plan.expected_profit > best_profit
-                    ):
-                        best_profit = plan.expected_profit
-                        best_origin = origin
+            surveyed += 1
+            plan = self._best_plan_from(origin)
+            if plan is not None and plan.expected_profit > best_profit:
+                best_profit = plan.expected_profit
+                best_origin = origin
 
         return best_origin
 

@@ -37,7 +37,7 @@ def _make_world(planet_specs):
     sim = type(
         "MockSim",
         (object,),
-        {"commodity_registry": registry, "planets": planets},
+        {"commodity_registry": registry, "planets": planets, "current_turn": 0},
     )()
     return sim, fuel, food, planets
 
@@ -133,13 +133,18 @@ def test_fuel_safe_destination_requires_escape_route():
     assert ship.brain._fuel_safe_destination(b, a, escape_cost)
 
     # Fuel for sale at A: B is safe only with enough fuel to get back to A.
+    # (Market facts are cached per planning decision; tests that poke the
+    # books between direct helper calls refresh the navigator explicitly —
+    # the brain's decide_* entry points do this themselves.)
     a.market.place_sell_order(supplier, fuel, 50, 10)
+    ship.brain._nav.refresh_market_facts()
     assert not ship.brain._fuel_safe_destination(b, a, escape_cost - 1)
     assert ship.brain._fuel_safe_destination(b, a, escape_cost)
 
     # Fuel for sale at B itself: safe even when arriving empty.
     supplier_b = _make_ship(sim, b, fuel_units=100, name="SupplierB")
     b.market.place_sell_order(supplier_b, fuel, 50, 10)
+    ship.brain._nav.refresh_market_facts()
     assert ship.brain._fuel_safe_destination(b, a, 0)
 
 
