@@ -176,6 +176,29 @@ def _current_turn_events(
     return tail
 
 
+# Field-name tuples shared per metrics class so pickle's memo ships each
+# one once per blob instead of once per actor.
+_METRIC_FIELDS: Dict[type, Tuple[str, ...]] = {}
+
+
+def _metrics_to_wire(metrics: Any) -> Tuple[Tuple[str, ...], Tuple[Any, ...]]:
+    """Compact wire form for a drive's metrics: (field names, values).
+
+    Field order comes from vars() on the live instance, so a metrics class
+    that grows an attribute mid-phase still round-trips; the cached tuple is
+    reused (same object) whenever the field set is unchanged, which is what
+    lets the pickle memo collapse the repeats.
+    """
+    data = vars(metrics)
+    fields = tuple(data)
+    cached = _METRIC_FIELDS.get(type(metrics))
+    if cached == fields:
+        fields = cached
+    else:
+        _METRIC_FIELDS[type(metrics)] = fields
+    return (fields, tuple(data.values()))
+
+
 def _extract_brain_state(actor: Actor) -> Dict[str, Any]:
     """The brain's persistent decision memory.
 
@@ -205,7 +228,7 @@ def _extract_actor_state(actor: Actor) -> Dict[str, Any]:
         "food_consumed_this_turn": actor.food_consumed_this_turn,
         "last_action": actor.last_action,
         "last_market_action": actor.last_market_action,
-        "drive_metrics": [dict(vars(d.metrics)) for d in actor.drives],
+        "drive_metrics": [_metrics_to_wire(d.metrics) for d in actor.drives],
     }
 
 
@@ -243,7 +266,9 @@ def snapshot_planet_states(
 
 
 def _extract_market_state(
-    market: "market_module.Market", base: Dict[str, Any]
+    market: "market_module.Market",
+    base: Dict[str, Any],
+    logged_names: frozenset[str],
 ) -> Dict[str, Any]:
     """The per-market sync manifest: state mutated by place/cancel/modify.
 
@@ -252,10 +277,14 @@ def _extract_market_state(
     ship phase. Books cross as id sequences plus compact tuples for only
     the new/changed orders; the parent reuses its own Order objects for
     unchanged ids and rebuilds orders_by_id from the books (place/cancel/
-    match maintain the two in lockstep).
+    match maintain the two in lockstep). Orders whose terms are unchanged
+    but whose timestamp was refreshed (order-churn pruning restamps kept
+    orders to the current turn) cross as a bare {id: timestamp} instead of
+    a full tuple.
     """
     base_orders: Dict[str, Tuple[int, int, int]] = base["orders"]
     changed: Dict[str, _OrderTuple] = {}
+    restamped: Dict[str, int] = {}
 
     def book_ids(
         book: Dict[CommodityDefinition, List["market_module.Order"]],
@@ -266,12 +295,13 @@ def _extract_market_state(
             for order in orders:
                 ids.append(order.order_id)
                 before = base_orders.get(order.order_id)
-                if before is None or before != (
+                if before is None or (before[0], before[1]) != (
                     order.quantity,
                     order.price,
-                    order.timestamp,
                 ):
                     changed[order.order_id] = _order_to_tuple(order)
+                elif before[2] != order.timestamp:
+                    restamped[order.order_id] = order.timestamp
             wire[commodity] = ids
         return wire
 
@@ -281,19 +311,27 @@ def _extract_market_state(
         "buy_books": book_ids(market.buy_orders),
         "sell_books": book_ids(market.sell_orders),
         "orders_changed": changed,
+        "orders_restamped": restamped,
         "actor_orders": {
             participant: {"buy": list(v["buy"]), "sell": list(v["sell"])}
             for participant, v in market.actor_orders.items()
             if base_actor_orders.get(participant) != (tuple(v["buy"]), tuple(v["sell"]))
         },
-        # Only this turn's events cross the boundary: the forked child and
-        # the parent share all older events already, so the parent appends
-        # these to its own deques (identical eviction on both sides). The
-        # full deques are by far the heaviest state (~75% of a naive blob).
+        # Only this turn's events cross the boundary — and only for actors
+        # the data logger reads: order events have exactly one consumer,
+        # log_actor_market_status, which queries the current turn's events
+        # for logged actors. The parent's deques for unlogged actors will
+        # lack the child-phase events of this turn; they are never read, and
+        # retention is already bounded and lossy by design. (The forked
+        # child and the parent share all older events, so for logged actors
+        # the parent appends these to its own deques and stays identical to
+        # a serial run.) The full deques are by far the heaviest state
+        # (~75% of a naive blob).
         "order_events": {
             name: current
             for name, events in market.order_events_by_actor.items()
-            if (current := _current_turn_events(events, market.current_turn))
+            if name in logged_names
+            and (current := _current_turn_events(events, market.current_turn))
         },
         "quote_cache": dict(market._quote_cache),
         "bid_levels_cache": {
@@ -313,6 +351,7 @@ def extract_planet_states(
     ``baseline`` must be a snapshot_planet_states() result taken before the
     phase ran; per-actor entries carry only the fields that differ from it.
     """
+    logged_names = frozenset(sim.data_logger._actors_to_log)
     payload = []
     for index in planet_indices:
         planet = sim.planets[index]
@@ -326,13 +365,14 @@ def extract_planet_states(
             brain_after = _extract_brain_state(actor)
             if brain_after != brain_before:
                 delta["brain_state"] = brain_after
-            # Inventories are the largest per-actor payload but usually only
-            # a few slots move per turn — send per-key changes plus the
-            # child's full key order. The order matters: brains iterate
-            # these dicts, and a dict patched in place ends up ordered
-            # differently than the child's (a slot emptied and re-acquired
-            # moves to the end), which measurably steers later decisions.
-            for key in ("inv_commodities", "inv_reserved"):
+            # Inventories (and skills) are large per-actor payloads but
+            # usually only a few slots move per turn — send per-key changes
+            # plus the child's full key order. The order matters: brains
+            # iterate these dicts, and a dict patched in place ends up
+            # ordered differently than the child's (a slot emptied and
+            # re-acquired moves to the end), which measurably steers later
+            # decisions.
+            for key in ("inv_commodities", "inv_reserved", "skills"):
                 if key in delta:
                     old = before[key]
                     new = delta.pop(key)
@@ -350,7 +390,7 @@ def extract_planet_states(
             {
                 "planet_index": index,
                 "actors": actor_deltas,
-                "market": _extract_market_state(planet.market, base),
+                "market": _extract_market_state(planet.market, base, logged_names),
                 "logs": log_shard,
             }
         )
@@ -364,7 +404,6 @@ _ACTOR_PLAIN_FIELDS = frozenset(
     {
         "money",
         "reserved_money",
-        "skills",
         "skills_version",
         "active_orders",
         "market_history",
@@ -392,6 +431,13 @@ def _apply_actor_state(actor: Actor, state: Dict[str, Any]) -> None:
             actor.inventory.reserved_commodities = {
                 c: changed[c] if c in changed else old[c] for c in key_order
             }
+        elif key == "skills_delta":
+            changed_skills, skill_order = value
+            old_skills = actor.skills
+            actor.skills = {
+                s: changed_skills[s] if s in changed_skills else old_skills[s]
+                for s in skill_order
+            }
         elif key == "inv_version":
             actor.inventory.version = value
         elif key == "brain_state":
@@ -400,8 +446,8 @@ def _apply_actor_state(actor: Actor, state: Dict[str, Any]) -> None:
         elif key == "drive_metrics":
             if len(value) != len(actor.drives):
                 raise ValueError(f"Drive count mismatch for actor {actor.name}")
-            for drive, metric_values in zip(actor.drives, value):
-                for field_name, metric in metric_values.items():
+            for drive, (field_names, metric_values) in zip(actor.drives, value):
+                for field_name, metric in zip(field_names, metric_values):
                     setattr(drive.metrics, field_name, metric)
         elif key == "name":
             if actor.name != value:
@@ -441,6 +487,12 @@ def _apply_market_state(market: "market_module.Market", state: Dict[str, Any]) -
     market.buy_orders = rebuild_book(state["buy_books"])
     market.sell_orders = rebuild_book(state["sell_books"])
     market.orders_by_id = orders_by_id
+
+    # Kept orders whose terms didn't change but whose timestamp was
+    # refreshed (order-churn pruning restamps them to the current turn).
+    # By construction they still rest in a book, so the id is present.
+    for order_id, timestamp in state["orders_restamped"].items():
+        orders_by_id[order_id].timestamp = timestamp
 
     # Partial update: only participants whose id lists changed were sent.
     market.actor_orders.update(state["actor_orders"])

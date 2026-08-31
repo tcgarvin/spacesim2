@@ -78,12 +78,26 @@ def _actor_state(actor: Actor) -> Any:
     return state
 
 
-def _market_state(market: Market) -> Any:
-    return {
+def _market_state(market: Market, logged_names: frozenset[str] = frozenset()) -> Any:
+    """Comparable market state.
+
+    order_events_by_actor is filtered to logged actors: the sync manifest
+    deliberately drops unlogged actors' events (they have no consumer), so
+    only logged actors' deques are expected to match a serial twin.
+    """
+    state = {
         name: _normalize(value)
         for name, value in vars(market).items()
-        if name != "commodity_registry"
+        if name not in ("commodity_registry", "order_events_by_actor")
     }
+    state["order_events_by_actor"] = _normalize(
+        {
+            name: events
+            for name, events in market.order_events_by_actor.items()
+            if name in logged_names
+        }
+    )
+    return state
 
 
 def _make_sim(num_planets: int = 4) -> Simulation:
@@ -132,16 +146,103 @@ def test_extract_apply_round_trip_covers_all_actor_phase_state() -> None:
     blob = extract_planet_states(twin, indices, baseline)
     apply_planet_states(sim, blob)
 
+    logged = frozenset(sim.data_logger._actors_to_log)
     for planet, twin_planet in zip(sim.planets, twin.planets):
         for actor, twin_actor in zip(planet.actors, twin_planet.actors):
             assert actor.name == twin_actor.name
             assert _actor_state(actor) == _actor_state(twin_actor)
-        assert _market_state(planet.market) == _market_state(twin_planet.market)
+        assert _market_state(planet.market, logged) == _market_state(
+            twin_planet.market, logged
+        )
 
     # DataLogger shard came across for the logged actors.
     twin_keys = set(twin.data_logger._actor_turn_logs)
     assert set(sim.data_logger._actor_turn_logs) == twin_keys
     assert len(twin_keys) == 2
+
+
+def test_restamped_orders_cross_as_bare_timestamps() -> None:
+    """Kept orders (unchanged terms, refreshed timestamp) must use the
+    compact {id: timestamp} wire path, not full order tuples, and must
+    round-trip the refreshed timestamp exactly."""
+    import io
+
+    from spacesim2.core.parallel import _StateUnpickler
+
+    sim = _make_sim()
+    for _ in range(5):  # warm enough that brains keep standing orders
+        sim.run_turn()
+
+    twin = copy.deepcopy(sim)
+    _begin_turn(sim)
+    _begin_turn(twin)
+    indices = list(range(len(twin.planets)))
+    baseline = snapshot_planet_states(twin, indices)
+    for actor in twin.actors:
+        actor.take_turn()
+    blob = extract_planet_states(twin, indices, baseline)
+
+    payload = _StateUnpickler(io.BytesIO(blob), twin).load()
+    all_restamped: dict[str, int] = {}
+    for entry in payload:
+        market_state = entry["market"]
+        restamped = market_state["orders_restamped"]
+        # The two paths are disjoint: a restamped order is by definition
+        # not in orders_changed.
+        assert not set(restamped) & set(market_state["orders_changed"])
+        all_restamped.update(restamped)
+    # Order-churn pruning keeps and restamps standing orders every turn in
+    # a warmed economy; the compact path must actually be exercised.
+    assert all_restamped
+    assert all(ts == twin.current_turn for ts in all_restamped.values())
+
+    apply_planet_states(sim, blob)
+    for planet, twin_planet in zip(sim.planets, twin.planets):
+        for order_id, twin_order in twin_planet.market.orders_by_id.items():
+            assert planet.market.orders_by_id[order_id].timestamp == (
+                twin_order.timestamp
+            )
+
+
+def test_unlogged_actor_events_do_not_cross() -> None:
+    """Only logged actors' order events cross the sync boundary."""
+    sim = _make_sim()
+    logged_actor = sim.planets[0].actors[0]
+    sim.data_logger.add_actor_to_log(logged_actor)
+    for _ in range(3):
+        sim.run_turn()
+
+    twin = copy.deepcopy(sim)
+    _begin_turn(sim)
+    _begin_turn(twin)
+    indices = list(range(len(twin.planets)))
+    baseline = snapshot_planet_states(twin, indices)
+    for actor in twin.actors:
+        actor.take_turn()
+    apply_planet_states(sim, extract_planet_states(twin, indices, baseline))
+
+    turn = twin.current_turn
+    twin_current = {
+        name: [e for e in events if e.turn == turn]
+        for planet in twin.planets
+        for name, events in planet.market.order_events_by_actor.items()
+    }
+    # The twin's phase produced current-turn events for unlogged actors.
+    assert any(
+        events for name, events in twin_current.items() if name != logged_actor.name
+    )
+    for planet, twin_planet in zip(sim.planets, twin.planets):
+        for name, events in planet.market.order_events_by_actor.items():
+            current = [e for e in events if e.turn == turn]
+            if name == logged_actor.name:
+                twin_events = [
+                    e
+                    for e in twin_planet.market.order_events_by_actor[name]
+                    if e.turn == turn
+                ]
+                assert len(current) == len(twin_events)
+            else:
+                assert current == []
 
 
 def test_applied_orders_reference_parent_objects() -> None:

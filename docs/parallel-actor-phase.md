@@ -88,10 +88,19 @@ Per-planet blob contents (the sync manifest):
   `inventory.reserved_commodities`, `inventory.version`, `skills`,
   `skills_version`, `active_orders`, `market_history`,
   `food_consumed_this_turn`, `last_action`, `last_market_action`,
-  per-drive `__dict__`.
+  per-drive metrics. Inventories and skills cross as per-key deltas plus
+  the child's full key order; drive metrics cross as compact
+  (field-name tuple, value tuple) pairs with the field-name tuple shared
+  per metrics class so the pickle memo ships it once per blob.
 - **Per market**: `buy_orders`, `sell_orders`, `actor_orders`,
   `order_events_by_actor`, `_quote_cache`, `_bid_levels_cache`,
-  `drive_anchor_cache`, `scarcity_pressure`.
+  `drive_anchor_cache`, `scarcity_pressure`. Orders whose terms are
+  unchanged but whose timestamp was refreshed (order-churn pruning
+  restamps kept orders each turn) cross as a bare `{id: timestamp}` map.
+  Order events cross only for actors the data logger reads (their sole
+  consumer is `log_actor_market_status`); unlogged actors' parent-side
+  deques lack child-phase events — never read, and retention is bounded
+  and lossy by design.
 - **DataLogger shard**: `_actor_turn_logs` entries for this planet's logged
   actors (merged by dict update in the parent).
 
