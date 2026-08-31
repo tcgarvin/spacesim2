@@ -63,3 +63,6 @@ tmp/
 # Promoted runtime sprites under spacesim2/ui/live/assets/ ARE committed.
 tools/assetgen/staging/
 tools/assetgen/.env
+
+# Local Claude Code agent worktrees
+.claude/worktrees/
