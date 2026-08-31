@@ -1,10 +1,12 @@
 import random
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from collections import defaultdict
+from typing import TYPE_CHECKING, Dict, List, Tuple
 
 if TYPE_CHECKING:
     from spacesim2.core.actor import Actor
     from spacesim2.core.commodity import CommodityDefinition
+    from spacesim2.core.market import Market, MarketParticipant
 
 
 class Command(ABC):
@@ -250,3 +252,73 @@ class PlaceSellOrderCommand(MarketCommand):
             return True
 
         return False
+
+
+# Identity of an open order for churn pruning: side, commodity, price, quantity.
+_OrderKey = Tuple[bool, str, int, int]
+
+
+def prune_unchanged_order_commands(
+    market: "Market",
+    actor: "MarketParticipant",
+    commands: List[MarketCommand],
+) -> List[MarketCommand]:
+    """Drop cancel+repost pairs that would recreate an identical order.
+
+    Every actor brain rebuilds its whole book each turn (cancel everything,
+    repost the desired quotes), and measurement shows ~two-thirds of those
+    cancels are followed the same turn by a repost with identical side,
+    commodity, price, AND quantity. Executing such a pair is a no-op for
+    market state — cancel refunds exactly what the repost re-reserves, and no
+    other actor acts between the two commands — so both commands can be
+    dropped and the standing order kept.
+
+    Pairing on full identity keeps this behavior-safe: a kept buy/sell order
+    holds the same reservation the repost would take, so later commands in the
+    list see the same money/inventory. Kept orders get their timestamp
+    refreshed to the current turn, exactly as the repost would have stamped it
+    — without this, stable quotes (market makers) silently gain permanent
+    price-time priority over drive bids whose quantities drift, which
+    measurably starved the thin medicine market. Same-timestamp ties are
+    broken randomly at match time (see ``_match_orders_for_commodity``),
+    mirroring the rotation the per-turn actor shuffle used to provide.
+
+    Only cancels of ``actor``'s own orders in ``market`` are eligible; anything
+    unmatched passes through untouched, in the original relative order.
+    """
+    cancels_by_key: Dict[_OrderKey, List[CancelOrderCommand]] = defaultdict(list)
+    for command in commands:
+        if isinstance(command, CancelOrderCommand):
+            order = market.orders_by_id.get(command.order_id)
+            if order is not None and order.actor is actor:
+                key = (
+                    order.is_buy,
+                    order.commodity_type.id,
+                    order.price,
+                    order.quantity,
+                )
+                cancels_by_key[key].append(command)
+
+    if not cancels_by_key:
+        return commands
+
+    dropped: set = set()
+    for command in commands:
+        if isinstance(command, (PlaceBuyOrderCommand, PlaceSellOrderCommand)):
+            key = (
+                isinstance(command, PlaceBuyOrderCommand),
+                command.commodity_type.id,
+                command.price,
+                command.quantity,
+            )
+            matching_cancels = cancels_by_key.get(key)
+            if matching_cancels:
+                cancel = matching_cancels.pop()
+                dropped.add(id(cancel))
+                dropped.add(id(command))
+                # Stamp the kept order as if it had been reposted this turn.
+                market.orders_by_id[cancel.order_id].timestamp = market.current_turn
+
+    if not dropped:
+        return commands
+    return [c for c in commands if id(c) not in dropped]

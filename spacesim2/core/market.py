@@ -1,4 +1,5 @@
 import itertools
+import random
 import statistics
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -480,16 +481,22 @@ class Market:
         self, commodity_type: "CommodityDefinition"
     ) -> None:
         """Match buy and sell orders for a specific commodity."""
-        # Sort buy orders by price (highest first) and timestamp (oldest first)
+        # Sort buy orders by price (highest first) and timestamp (oldest
+        # first). Exact (price, timestamp) ties are broken randomly each
+        # matching pass: before order-churn pruning, brains reposted their
+        # whole book every turn and the per-turn actor shuffle rotated those
+        # ties; kept orders now sit at a fixed book position, so without the
+        # random key the same actor would win a contested price level every
+        # turn (measurably starving thin markets like medicine).
         buy_orders = sorted(
             self.buy_orders.get(commodity_type, []),
-            key=lambda o: (-o.price, o.timestamp),
+            key=lambda o: (-o.price, o.timestamp, random.random()),
         )
 
         # Sort sell orders by price (lowest first) and timestamp (oldest first)
         sell_orders = sorted(
             self.sell_orders.get(commodity_type, []),
-            key=lambda o: (o.price, o.timestamp),
+            key=lambda o: (o.price, o.timestamp, random.random()),
         )
 
         # Index cursors into the sorted books; advancing a cursor is the O(1)

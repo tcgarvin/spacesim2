@@ -10,10 +10,29 @@
 > per-turn trade-signal index (per-commodity supply/demand candidates,
 > top-8-value ∪ 8-nearest destination shortlists, cold-galaxy early-out):
 > 500×100×1000 went 45 → **8.8 s/turn**, with ships now ~21% of turn cost
-> and actors dominating again. Item 8 (order diffing) deliberately skipped
-> as behavior-risky; Tier 3 (per-planet parallelism) not started — it is
-> the next lever (actor phase is the linear floor, ~6-7 s/turn at target
-> scale, embarrassingly parallel per planet).
+> and actors dominating again. Tier 3 (per-planet parallelism) not started —
+> it is the next lever (actor phase is the linear floor, ~6-7 s/turn at
+> target scale, embarrassingly parallel per planet).
+>
+> **Item 8 landed 2026-08-31** (order churn pruning): measurement showed
+> 66.6% of all cancels were followed the same turn by a repost with
+> identical side/commodity/price/quantity. `prune_unchanged_order_commands`
+> (commands.py, called from `Actor.take_turn`) drops those cancel+repost
+> pairs and keeps the standing order — a market-state no-op, since cancel
+> refunds exactly what the repost re-reserves and no other actor acts
+> between the two commands. Identical-pair churn 66.6% → 2.7% (residual is
+> ship-side direct calls, ~16 pairs/turn, structurally different: ships
+> recompute quantities from live post-cancel money/cargo — left alone).
+> Bench: P=10 37.2→33.3, P=40 161.3→149.1 ms/turn (~8-10%); the larger
+> payoff is ~10x fewer book mutations for the parked
+> `parallel-actor-phase` state-sync blob. Behavior lesson: a first version
+> let kept orders retain their original timestamp, which gave stable quotes
+> (market makers) permanent price-time priority over drive bids whose
+> quantities drift — replicated sims showed health mean_health dropping
+> 0.21→0.14 (n=8 vs n=13, t≈2.8) via the thin medicine market. Fixed by
+> stamping kept orders with the current turn (as a repost would) and
+> breaking exact (price, timestamp) ties randomly at match time, restoring
+> the rotation the per-turn actor shuffle used to provide.
 >
 > **Tier 3 update 2026-08-31**: a fork-per-turn parallel actor phase was
 > built, verified correct, and **parked on branch `parallel-actor-phase`**
@@ -104,6 +123,7 @@ sweeps (driver timing `sim.run_turn()` directly) and a line-level code audit.
    entire book every turn, paying order allocation, uuid4 (market.py:46),
    event recording, and reserve/unreserve for quotes that didn't change.
    Diff against last turn's orders; integer ids via itertools.count.
+   **DONE 2026-08-31** — see progress note at top.
 
 9. **Object churn** — `all_commodities()` (commodity.py:61) and
    `all_processes()` (process.py:144) return fresh lists per call, thousands

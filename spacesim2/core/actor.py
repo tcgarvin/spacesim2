@@ -1,7 +1,11 @@
 import enum
 from typing import TYPE_CHECKING, Dict, List, Optional
 
-from spacesim2.core.commands import PlaceBuyOrderCommand, PlaceSellOrderCommand
+from spacesim2.core.commands import (
+    PlaceBuyOrderCommand,
+    PlaceSellOrderCommand,
+    prune_unchanged_order_commands,
+)
 from spacesim2.core.commodity import Inventory
 from spacesim2.core.planet import Planet
 
@@ -120,8 +124,14 @@ class Actor:
             economic_command.execute(self)
             self.sim.data_logger.log_actor_command(self, economic_command)
 
-        # Step 3: Perform market actions
+        # Step 3: Perform market actions. Brains cancel-and-repost their whole
+        # book; pruning drops the pairs that would recreate an identical order
+        # (a market-state no-op) so unchanged quotes stay resting in the book.
         market_commands = self.brain.decide_market_actions(self)
+        if self.planet and market_commands:
+            market_commands = prune_unchanged_order_commands(
+                self.planet.market, self, market_commands
+            )
         market_actions = []
         for command in market_commands:
             success = command.execute(self)
