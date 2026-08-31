@@ -53,10 +53,13 @@ the CLI checks `sys._is_gil_enabled()` and warns.
 
 ## Open levers
 
-- **Per-planet RNG streams** — thread scaling is only ~2.8x at 12 workers;
-  the global `random` module (internally locked on free-threaded builds,
-  called constantly by actor code) and refcount traffic on shared registries
-  are the contention suspects.
+- **Thread-scaling contention** — thread scaling is only ~2.8x at 12 workers.
+  The global `random` module's lock is **ruled out**: a per-actor-RNG
+  refactor (69ca496, reverted for simplicity in 286c739) measured no change
+  at target scale (3.15 s/turn at `--workers 12` vs 8.71 serial — same
+  ratio). The prime remaining suspect is refcount traffic on shared
+  read-only objects (registries, commodity/process instances); profile
+  (py-spy/perf on 3.14t) before writing code.
 - **Sorted/heap order books** — matching still re-sorts both sides of every
   commodity book per turn (including dead books unioned in via
   `volume_history` keys) and uses O(B) `list.pop(0)` per fill.
