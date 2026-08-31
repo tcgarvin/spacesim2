@@ -9,6 +9,7 @@ A turn-based economic simulation modeling interplanetary trade with actors, mark
 # Build & Run
 uv sync                              # Install dependencies
 uv sync --extra analysis             # Install with analysis features
+uv sync --extra native               # Build+install the Rust kernel backend (needs cargo)
 uv run spacesim2 ui                  # Interactive UI (Pygame)
 uv run spacesim2 run                 # Headless sim with progress bar (default)
 uv run spacesim2 run --quiet         # Suppress all output

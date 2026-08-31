@@ -13,8 +13,8 @@ to ``Market`` (quote reads) and to hand results back to brains (the winning
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
 
 from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
 from spacesim2.core.process import ProcessDefinition, ProcessRegistry
@@ -102,6 +102,11 @@ class EconomyTable:
     # staleness in O(1).
     source_processes: List[ProcessDefinition]
     source_commodities: List[CommodityDefinition]
+    # Slot for the native backend's marshalled twin (see backend_native).
+    # Filled lazily on first native call, so each struct is marshalled across
+    # the FFI boundary at most once per lifetime; always None on the pure-
+    # Python path.
+    native_handle: Any = field(default=None, repr=False, compare=False)
 
 
 @dataclass
@@ -120,6 +125,8 @@ class PlanetSnapshot:
     has_signal: List[bool]  # per commodity
     attr_avail: List[float]  # per attr slot (table.attr_commodities)
     table: EconomyTable  # identity anchor for cache validation
+    # Native backend's marshalled twin (see EconomyTable.native_handle).
+    native_handle: Any = field(default=None, repr=False, compare=False)
 
 
 @dataclass
@@ -136,6 +143,8 @@ class Quotes:
     bid: List[Optional[int]]
     ask: List[Optional[int]]
     table: EconomyTable  # identity anchor for cache validation
+    # Native backend's marshalled twin (see EconomyTable.native_handle).
+    native_handle: Any = field(default=None, repr=False, compare=False)
 
 
 @dataclass
@@ -151,6 +160,8 @@ class ActorPack:
     skills: List[float]  # per skill_idx; default rating 0.5
     inventory_available: List[int]  # per commodity_idx
     amortization_horizon: int  # brain.facility_amortization_horizon
+    # Native backend's marshalled twin (see EconomyTable.native_handle).
+    native_handle: Any = field(default=None, repr=False, compare=False)
 
 
 @dataclass

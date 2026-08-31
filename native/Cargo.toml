@@ -1,0 +1,17 @@
+[package]
+name = "spacesim2-kernel"
+version = "0.1.0"
+edition = "2021"
+description = "Native (Rust) backend for the spacesim2 recipe-evaluation kernel"
+license = "MIT"
+
+[lib]
+name = "spacesim2_kernel"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.29", features = ["extension-module"] }
+
+[profile.release]
+lto = true
+codegen-units = 1

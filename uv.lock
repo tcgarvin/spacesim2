@@ -974,6 +974,9 @@ dev = [
     { name = "ruff" },
     { name = "types-pyyaml" },
 ]
+native = [
+    { name = "spacesim2-kernel" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -991,11 +994,17 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.0.270" },
+    { name = "spacesim2-kernel", marker = "extra == 'native'", directory = "native" },
     { name = "tqdm", specifier = ">=4.66.0" },
     { name = "types-pyyaml", marker = "extra == 'dev'" },
     { name = "typing-extensions", specifier = ">=4.15.0" },
 ]
-provides-extras = ["dev", "analysis", "assetgen"]
+provides-extras = ["dev", "analysis", "assetgen", "native"]
+
+[[package]]
+name = "spacesim2-kernel"
+version = "0.1.0"
+source = { directory = "native" }
 
 [[package]]
 name = "starlette"

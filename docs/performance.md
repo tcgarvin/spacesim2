@@ -51,6 +51,27 @@ need export; verify free-threaded wheels resolve.) Guard rail: importing any
 C extension without free-threaded support silently **re-enables the GIL**;
 the CLI checks `sys._is_gil_enabled()` and warns.
 
+## Native (Rust) kernel backend
+
+The brains' hot valuation math lives in `spacesim2/core/kernel/` behind a
+backend switch: `backend_py` (pure Python, the semantic reference) and
+`backend_native` (glue over the `spacesim2_kernel` PyO3 crate in `native/`,
+built with `uv sync --extra native`; declares free-threaded support). The
+native backend is preferred automatically when installed; force a backend
+with `SPACESIM_KERNEL_BACKEND=python|native` (`native` fails loudly when the
+extension is missing — use it for parity/perf comparisons).
+
+Measured end-to-end gain (2026-08-31, 200-turn default run, n=2 each):
+**1.06x** — far below the ~1.7x ceiling the ~43% kernel share implied.
+Macro parity verified (n=7 per backend at 500 turns; all KPIs within
+python-vs-python spread). The gap between 1.06x and the ceiling points at
+per-call FFI overhead, chiefly: the str-keyed imputation memo is round-
+tripped densely (O(commodities) dict reads *and* write-backs per
+`imputed_unit_cost` call, `native/src/lib.rs` `load_impute_state`/
+`sync_memo_back`), and the batched `evaluate_actor` entry point (one FFI
+round-trip per actor-turn, its design purpose) has no production caller yet.
+Profile before investing further in the Rust path.
+
 ## Open levers
 
 - **Thread-scaling contention** — thread scaling is only ~2.8x at 12 workers.

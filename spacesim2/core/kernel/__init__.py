@@ -6,11 +6,14 @@ imputation, skill/yield expectation — expressed over plain integer-indexed
 data so a native (Rust/PyO3) backend can replace ``backend_py`` behind this
 exact module interface.
 
-Backend selection: a native module named
-``spacesim2.core.kernel.backend_native`` is preferred when importable; the
-pure-Python backend is the fallback (and today the only backend).
+Backend selection: the native (Rust) backend is preferred when its compiled
+extension is importable; the pure-Python backend is the fallback. Override
+with ``SPACESIM_KERNEL_BACKEND=python|native|auto`` — ``native`` fails loudly
+when the extension is missing instead of silently falling back, which is what
+parity and perf comparisons need.
 """
 
+import os
 from typing import TYPE_CHECKING
 
 from spacesim2.core.kernel.adapters import (
@@ -40,10 +43,22 @@ if TYPE_CHECKING:
     # backend must match them exactly.
     from spacesim2.core.kernel import backend_py as _backend
 else:
-    try:
-        from spacesim2.core.kernel import backend_native as _backend  # noqa: F401
-    except ImportError:
+    _requested = os.environ.get("SPACESIM_KERNEL_BACKEND", "auto")
+    if _requested == "python":
         from spacesim2.core.kernel import backend_py as _backend
+    elif _requested == "native":
+        # Deliberately no fallback: a missing extension must fail loudly.
+        from spacesim2.core.kernel import backend_native as _backend
+    elif _requested == "auto":
+        try:
+            from spacesim2.core.kernel import backend_native as _backend
+        except ImportError:
+            from spacesim2.core.kernel import backend_py as _backend
+    else:
+        raise ValueError(
+            f"SPACESIM_KERNEL_BACKEND={_requested!r}: expected "
+            "'python', 'native', or 'auto'"
+        )
 
 best_process_scan = _backend.best_process_scan
 evaluate_actor = _backend.evaluate_actor

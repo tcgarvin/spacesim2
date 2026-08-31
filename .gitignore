@@ -67,3 +67,6 @@ tools/assetgen/.env
 
 # Local Claude Code agent worktrees
 .claude/worktrees/
+
+# Rust build artifacts (native kernel backend)
+native/target/

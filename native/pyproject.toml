@@ -1,0 +1,17 @@
+# Optional native backend for spacesim2.core.kernel. Build into the active
+# venv with `uvx maturin develop --release` (from this directory), or install
+# via the parent project's `native` extra. The simulation runs without it —
+# spacesim2/core/kernel/__init__.py falls back to the pure-Python backend when
+# this module is absent.
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "spacesim2-kernel"
+version = "0.1.0"
+description = "Native (Rust) backend for the spacesim2 recipe-evaluation kernel"
+requires-python = ">=3.13"
+
+[tool.maturin]
+module-name = "spacesim2_kernel"

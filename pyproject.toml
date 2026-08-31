@@ -36,6 +36,14 @@ analysis = [
 assetgen = [
     "pillow>=10.0.0", # post-processing raw provider output into sprites
 ]
+# Native (Rust) kernel backend. Optional: the sim falls back to the pure-
+# Python kernel when absent. Requires a Rust toolchain to build (maturin).
+native = [
+    "spacesim2-kernel",
+]
+
+[tool.uv.sources]
+spacesim2-kernel = { path = "native" }
 
 [build-system]
 requires = ["setuptools>=61.0"]
@@ -60,6 +68,8 @@ testpaths = ["tests"]
 
 [tool.mypy]
 python_version = "3.13"
+# Hand-written stubs for compiled extensions (spacesim2_kernel).
+mypy_path = "stubs"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
