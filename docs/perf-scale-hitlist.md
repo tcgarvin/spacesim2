@@ -14,6 +14,19 @@
 > as behavior-risky; Tier 3 (per-planet parallelism) not started — it is
 > the next lever (actor phase is the linear floor, ~6-7 s/turn at target
 > scale, embarrassingly parallel per planet).
+>
+> **Tier 3 update 2026-08-31**: a fork-per-turn parallel actor phase was
+> built, verified correct, and **parked on branch `parallel-actor-phase`**
+> (commit 227cba5) rather than merged: at target scale it only breaks even
+> (8.9 → ~8.4 s/turn) because cancel-and-repost brains make the per-turn
+> state-sync blob ~55 MB and parent-side apply eats the parallel win.
+> **Item 8 (order diffing in the brains) is the prerequisite** for that
+> branch to pay (~10x blob shrink); land item 8 first, then revisit the
+> branch. Design + postmortem: `docs/parallel-actor-phase.md` on the
+> branch. Hard-won findings that survive regardless: brains carry
+> cross-turn decision state (recipe choice, learned price brackets), and
+> macro behavior is measurably sensitive to inventory-dict iteration
+> order in brains.
 
 Analysis date: 2026-08-30, against main @ 178f998. Sources: cProfile + scaling
 sweeps (driver timing `sim.run_turn()` directly) and a line-level code audit.
