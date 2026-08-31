@@ -1,8 +1,8 @@
+import itertools
 import statistics
-import uuid
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Deque, Dict, List, Optional, Tuple, Union
 
 from spacesim2.core.actor import Actor
 
@@ -26,6 +26,29 @@ SCARCITY_PRESSURE_STEP = 0.5
 SCARCITY_PRESSURE_DECAY = 0.9
 SCARCITY_PRESSURE_MAX = 3.0
 
+# Bounded-history sizes. Consumers of price/volume history read at most a
+# 30-turn window (get_30_day_*), a 10-turn flow window (FLOW_RECENCY_TURNS in
+# navigation/ship planning), or just the last entry, so retaining the last
+# HISTORY_KEEP entries is more than enough. Trimming happens only when a series
+# exceeds HISTORY_TRIM_THRESHOLD, keeping the amortized cost per append O(1).
+HISTORY_KEEP = 120
+HISTORY_TRIM_THRESHOLD = 240
+
+# Per-actor order-event retention. The only live consumer is the data logger's
+# per-turn snapshot (Actor.get_market_activity_this_turn), which needs the
+# current turn's events for one actor (~20 events/actor/turn at the high end).
+# The deque bound exists purely to stop unbounded growth over long runs.
+ORDER_EVENTS_PER_ACTOR = 100
+
+# Global/per-actor transaction retention (unchanged policy from the historical
+# per-turn trim: last 1000 market-wide, last 100 per actor name).
+TRANSACTIONS_KEEP_GLOBAL = 1000
+TRANSACTIONS_KEEP_PER_ACTOR = 100
+
+# Monotonic order-id source. Cheap replacement for the former per-order uuid4;
+# module-level so ids are unique across every market in the process.
+_ORDER_ID_COUNTER = itertools.count(1)
+
 
 @dataclass
 class Order:
@@ -43,7 +66,7 @@ class Order:
     def __post_init__(self) -> None:
         """Generate a unique order ID if not provided."""
         if not self.order_id:
-            self.order_id = str(uuid.uuid4())[:8]  # Short UUID
+            self.order_id = str(next(_ORDER_ID_COUNTER))
 
 
 @dataclass
@@ -92,9 +115,15 @@ class Market:
         self.transaction_history: List[Transaction] = []
         self.actor_transaction_history: Dict[str, List[Transaction]] = defaultdict(list)
 
-        # Track order lifecycle events
-        self.order_events: List[OrderEvent] = []  # Chronologically ordered
-        self.order_events_by_actor: Dict[str, List[OrderEvent]] = defaultdict(list)
+        # Track recent order lifecycle events per actor, bounded so long runs
+        # cannot accumulate events (each event pins its Order object). The only
+        # in-repo consumer reads the current turn's events for one actor via
+        # get_actor_order_events, which ORDER_EVENTS_PER_ACTOR comfortably
+        # covers. (The old market-wide chronological list had no readers and
+        # was removed.)
+        self.order_events_by_actor: Dict[str, Deque[OrderEvent]] = defaultdict(
+            lambda: deque(maxlen=ORDER_EVENTS_PER_ACTOR)
+        )
 
         # Track current turn for timestamping orders
         self.current_turn = 0
@@ -112,6 +141,11 @@ class Market:
             list
         )  # Daily trading volumes
 
+        # Lifetime count of turns with nonzero traded volume per commodity.
+        # Backs has_history() in O(1); the histories above are trimmed to a
+        # recent window, so this counter is the durable record.
+        self._active_volume_days: Dict["CommodityDefinition", int] = defaultdict(int)
+
         # Per-commodity scarcity pressure (see SCARCITY_PRESSURE_* constants).
         self.scarcity_pressure: Dict["CommodityDefinition", float] = defaultdict(float)
 
@@ -122,28 +156,40 @@ class Market:
         self.drive_anchor_cache: Dict[str, Tuple[int, float]] = {}
 
         # Cache of (highest_bid, lowest_ask) per commodity for get_bid_ask_spread,
-        # by far the hottest market read. Invalidated (entry dropped) on any
-        # mutation of that commodity's order books and recomputed lazily on the
-        # next read. This is mutation-invalidated, NOT turn-scoped: orders placed
+        # by far the hottest market read. Maintained INCREMENTALLY where cheap
+        # and exact: placing an order can only improve the cached best (O(1)
+        # max/min update); cancelling or filling an order only invalidates the
+        # cache when the removed order sat at the cached best, in which case the
+        # entry is dropped and lazily recomputed by one O(book) rescan on the
+        # next read. This is mutation-tracked, NOT turn-scoped: orders placed
         # mid-turn are visible to later-acting actors (matching is deferred to
-        # end of turn), so any per-turn cache would change behavior. Dropping the
-        # entry on every place/cancel/match/modify keeps reads exact.
+        # end of turn), so any per-turn cache would change behavior. The cached
+        # value, when present, always equals the true best bid/ask.
         self._quote_cache: Dict[
             "CommodityDefinition", Tuple[Optional[int], Optional[int]]
         ] = {}
+
+        # Sorted (price, quantity) bid levels per commodity, dropped on any
+        # buy-book mutation (place/cancel/modify/match). Backs get_bid_levels:
+        # ship planners call it repeatedly between mutations, so repeat calls
+        # avoid a per-call re-sort of the book.
+        self._bid_levels_cache: Dict["CommodityDefinition", List[Tuple[int, int]]] = {}
 
         # Reference to commodity registry (will be set by simulation)
         self.commodity_registry: Optional["CommodityRegistry"] = None
 
     def _trim_transaction_history(self) -> None:
-        """Trim the transaction history to the last 1000 transactions for global transactions and last 100 transactions for actor transactions."""
-        if len(self.transaction_history) > 1000:
-            self.transaction_history = self.transaction_history[-1000:]
+        """Trim transaction histories in place (last 1000 global, 100 per actor).
 
-        # Also trim actor transaction histories
+        Uses ``del list[:-keep]`` rather than slice-and-copy so an untrimmed
+        list costs only a length check and a trimmed one a single memmove.
+        """
+        if len(self.transaction_history) > TRANSACTIONS_KEEP_GLOBAL:
+            del self.transaction_history[:-TRANSACTIONS_KEEP_GLOBAL]
+
         for actor_transactions in self.actor_transaction_history.values():
-            if len(actor_transactions) > 100:
-                actor_transactions[:] = actor_transactions[-100:]
+            if len(actor_transactions) > TRANSACTIONS_KEEP_PER_ACTOR:
+                del actor_transactions[:-TRANSACTIONS_KEEP_PER_ACTOR]
 
     def get_actor_transaction_history(
         self, actor: MarketParticipant
@@ -152,7 +198,7 @@ class Market:
         return self.actor_transaction_history.get(actor.name, [])
 
     def _record_order_event(self, event_type: str, order: Order) -> None:
-        """Internal: record order lifecycle events."""
+        """Internal: record an order lifecycle event for the order's actor."""
         event = OrderEvent(
             order_id=order.order_id,
             actor_name=order.actor.name,
@@ -160,7 +206,6 @@ class Market:
             turn=self.current_turn,
             order=order,
         )
-        self.order_events.append(event)
         self.order_events_by_actor[order.actor.name].append(event)
 
     def get_actor_current_orders(self, actor: MarketParticipant) -> Dict[str, Dict]:
@@ -199,7 +244,12 @@ class Market:
         since_turn: int = 0,
         until_turn: Optional[int] = None,
     ) -> List[OrderEvent]:
-        """Efficient time-range query for actor order events using chronological ordering."""
+        """Efficient time-range query for actor order events using chronological ordering.
+
+        Retention is bounded (the most recent ORDER_EVENTS_PER_ACTOR events per
+        actor), so queries reaching far into the past may be truncated; the
+        current-turn window used by the data logger is always complete.
+        """
         actor_events = self.order_events_by_actor[actor.name]
 
         if until_turn is None:
@@ -286,7 +336,12 @@ class Market:
 
         # Add order to various tracking collections
         self.buy_orders[commodity_type].append(order)
-        self._quote_cache.pop(commodity_type, None)
+        self._on_buy_book_changed(commodity_type)
+        cached = self._quote_cache.get(commodity_type)
+        if cached is not None:
+            best_bid, best_ask = cached
+            if best_bid is None or price > best_bid:
+                self._quote_cache[commodity_type] = (price, best_ask)
         self.orders_by_id[order.order_id] = order
         self.actor_orders[actor]["buy"].append(order.order_id)
 
@@ -341,7 +396,11 @@ class Market:
 
         # Add order to various tracking collections
         self.sell_orders[commodity_type].append(order)
-        self._quote_cache.pop(commodity_type, None)
+        cached = self._quote_cache.get(commodity_type)
+        if cached is not None:
+            best_bid, best_ask = cached
+            if best_ask is None or price < best_ask:
+                self._quote_cache[commodity_type] = (best_bid, price)
         self.orders_by_id[order.order_id] = order
         self.actor_orders[actor]["sell"].append(order.order_id)
 
@@ -366,42 +425,56 @@ class Market:
 
         # Process orders
         for commodity_type in all_commodities:
+            buy_book = self.buy_orders.get(commodity_type)
+            sell_book = self.sell_orders.get(commodity_type)
+
             # Capture buy demand standing before matching consumes it.
-            requested_buy_qty = sum(
-                o.quantity for o in self.buy_orders.get(commodity_type, [])
-            )
+            requested_buy_qty = sum(o.quantity for o in buy_book) if buy_book else 0
 
-            before_count = len(self.transaction_history)
-            self._match_orders_for_commodity(commodity_type)
-            after_count = len(self.transaction_history)
-
-            # Record daily volumes for each commodity
             daily_volume = 0
             average_price_numerator = 0
 
-            # Calculate volume and prices for this turn
-            new_transactions = self.transaction_history[before_count:after_count]
-            for tx in new_transactions:
-                if tx.commodity_type == commodity_type:
-                    daily_volume += tx.quantity
-                    average_price_numerator += tx.total_amount
+            # Matching can only produce fills when both sides exist and the
+            # best bid crosses the best ask; skipping the sort-and-scan
+            # otherwise is behavior-neutral (an uncrossed book yields no
+            # transactions, and order books are untouched by a no-fill match).
+            if buy_book and sell_book:
+                best_bid, best_ask = self.get_bid_ask_spread(commodity_type)
+                if (
+                    best_bid is not None
+                    and best_ask is not None
+                    and (best_bid >= best_ask)
+                ):
+                    before_count = len(self.transaction_history)
+                    self._match_orders_for_commodity(commodity_type)
+
+                    # Calculate volume and prices for this turn
+                    for tx in self.transaction_history[before_count:]:
+                        if tx.commodity_type == commodity_type:
+                            daily_volume += tx.quantity
+                            average_price_numerator += tx.total_amount
 
             self._update_scarcity_pressure(
                 commodity_type, requested_buy_qty, daily_volume
             )
 
+            price_series = self.price_history[commodity_type]
+            volume_series = self.volume_history[commodity_type]
             if daily_volume > 0:
-                self.volume_history[commodity_type].append(daily_volume)
-                self.price_history[commodity_type].append(
-                    average_price_numerator // daily_volume
-                )
-
-            elif len(self.volume_history[commodity_type]) > 0:
+                volume_series.append(daily_volume)
+                price_series.append(average_price_numerator // daily_volume)
+                self._active_volume_days[commodity_type] += 1
+            elif volume_series:
                 # Append 0 volume and last known price
-                self.volume_history[commodity_type].append(0)
-                self.price_history[commodity_type].append(
-                    self.price_history[commodity_type][-1]
-                )
+                volume_series.append(0)
+                price_series.append(price_series[-1])
+
+            # Keep the per-turn series bounded; consumers only read recent
+            # windows (<=30 turns) or the latest entry. Trimming with del on
+            # threshold keeps the amortized cost O(1) per turn.
+            if len(volume_series) > HISTORY_TRIM_THRESHOLD:
+                del volume_series[:-HISTORY_KEEP]
+                del price_series[:-HISTORY_KEEP]
 
     def _match_orders_for_commodity(
         self, commodity_type: "CommodityDefinition"
@@ -419,10 +492,15 @@ class Market:
             key=lambda o: (o.price, o.timestamp),
         )
 
+        # Index cursors into the sorted books; advancing a cursor is the O(1)
+        # equivalent of the old list.pop(0) on a fully filled order.
+        buy_index = 0
+        sell_index = 0
+
         # Continue matching as long as there are both buy and sell orders
-        while buy_orders and sell_orders:
-            buy_order = buy_orders[0]
-            sell_order = sell_orders[0]
+        while buy_index < len(buy_orders) and sell_index < len(sell_orders):
+            buy_order = buy_orders[buy_index]
+            sell_order = sell_orders[sell_index]
 
             # Check if the orders can be matched (bid >= ask)
             if buy_order.price >= sell_order.price:
@@ -478,8 +556,8 @@ class Market:
                     if buy_order.order_id in buyer.active_orders:
                         del buyer.active_orders[buy_order.order_id]
 
-                    # Remove from orders list
-                    buy_orders.pop(0)
+                    # Advance past the filled order
+                    buy_index += 1
 
                 if sell_order.quantity <= 0:
                     # Record filled event before removing
@@ -501,16 +579,17 @@ class Market:
                     if sell_order.order_id in seller.active_orders:
                         del seller.active_orders[sell_order.order_id]
 
-                    # Remove from orders list
-                    sell_orders.pop(0)
+                    # Advance past the filled order
+                    sell_index += 1
             else:
                 # No more matches possible (highest bid < lowest ask)
                 break
 
         # Update remaining orders
-        self.buy_orders[commodity_type] = buy_orders
-        self.sell_orders[commodity_type] = sell_orders
+        self.buy_orders[commodity_type] = buy_orders[buy_index:]
+        self.sell_orders[commodity_type] = sell_orders[sell_index:]
         self._quote_cache.pop(commodity_type, None)
+        self._on_buy_book_changed(commodity_type)
 
     def _update_scarcity_pressure(
         self,
@@ -689,6 +768,10 @@ class Market:
         self._quote_cache[commodity_type] = result
         return result
 
+    def _on_buy_book_changed(self, commodity_type: "CommodityDefinition") -> None:
+        """Internal: note a buy-book mutation, invalidating the bid-levels cache."""
+        self._bid_levels_cache.pop(commodity_type, None)
+
     def get_bid_levels(
         self, commodity_type: "CommodityDefinition"
     ) -> List[Tuple[int, int]]:
@@ -698,12 +781,19 @@ class Market:
         units than the book holds at acceptable prices means walking down the
         levels (or not filling at all), so revenue projected from the top bid
         alone systematically overestimates.
+
+        The sorted levels are cached until the next buy-book mutation: ship
+        planners call this many times per turn between mutations, so repeat
+        calls cost one list copy instead of a re-sort.
         """
-        levels = [
-            (o.price, o.quantity) for o in self.buy_orders.get(commodity_type, [])
-        ]
-        levels.sort(key=lambda level: -level[0])
-        return levels
+        cached = self._bid_levels_cache.get(commodity_type)
+        if cached is None:
+            cached = [
+                (o.price, o.quantity) for o in self.buy_orders.get(commodity_type, [])
+            ]
+            cached.sort(key=lambda level: -level[0])
+            self._bid_levels_cache[commodity_type] = cached
+        return list(cached)
 
     def get_30_day_average_price(self, commodity_type: "CommodityDefinition") -> float:
         """Get the 30-day moving average price for a commodity."""
@@ -743,10 +833,14 @@ class Market:
             return 1.0  # Default in case of error
 
     def has_history(self, commodity_type: "CommodityDefinition") -> bool:
-        """Check if there is sufficient price history for sophisticated market making."""
-        # Need activity in any 5 of the last 30 days
-        commodity_volume_history = self.volume_history[commodity_type]
-        return len([v for v in commodity_volume_history if v > 0]) >= 5
+        """Check if there is sufficient price history for sophisticated market making.
+
+        True after the commodity has traded on at least 5 turns over the
+        market's lifetime, answered in O(1) from a counter maintained as
+        volume history is appended (the raw series is trimmed to a recent
+        window, so it cannot be recounted).
+        """
+        return self._active_volume_days.get(commodity_type, 0) >= 5
 
     def set_current_turn(self, turn: int) -> None:
         """Update the current turn for timestamping new orders."""
@@ -771,8 +865,15 @@ class Market:
         # Record order cancellation event before removing
         self._record_order_event("cancelled", order)
 
-        # Removing this order can change the best bid/ask for its commodity.
-        self._quote_cache.pop(commodity_type, None)
+        # Removing this order only disturbs the cached best bid/ask when it
+        # sat AT the cached best price; any other removal leaves the cached
+        # quote exact, so the cache survives the common cancel-and-repost
+        # churn of non-best orders.
+        cached = self._quote_cache.get(commodity_type)
+        if cached is not None:
+            cached_bid, cached_ask = cached
+            if order.price == (cached_bid if order.is_buy else cached_ask):
+                self._quote_cache.pop(commodity_type, None)
 
         # Remove from orders by ID
         del self.orders_by_id[order_id]
@@ -783,6 +884,7 @@ class Market:
             self.buy_orders[commodity_type] = [
                 o for o in buy_orders if o.order_id != order_id
             ]
+            self._on_buy_book_changed(commodity_type)
 
             # Return reserved money to actor
             actor.reserved_money -= order.quantity * order.price
@@ -851,6 +953,8 @@ class Market:
         order.price = new_price
         order.timestamp = self.current_turn  # Reset timestamp for priority
         self._quote_cache.pop(order.commodity_type, None)
+        if order.is_buy:
+            self._on_buy_book_changed(order.commodity_type)
 
         return True
 
@@ -908,3 +1012,4 @@ class Market:
         self.orders_by_id.clear()
         self.actor_orders.clear()
         self._quote_cache.clear()
+        self._bid_levels_cache.clear()
