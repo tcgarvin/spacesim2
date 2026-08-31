@@ -56,29 +56,26 @@ uv run spacesim2 run --turns 10
 uv run spacesim2 run --turns 50 --planets 3 --actors 75
 ```
 
-### Batch Analysis Mode
+### Analysis
 
-Run simulations with data export for analysis in notebooks:
+Get a quick behavioral readout, or export data for deeper analysis:
 
 ```bash
-# Run with comprehensive logging and export to Parquet
-uv run spacesim2 analyze --turns 100 --log-all-actors --progress
+# Compact KPI summary with PASS/WARN/FAIL verdict
+uv run spacesim2 run --turns 200 --no-export --quiet --summary
 
-# Run and automatically open Marimo notebook
-uv run spacesim2 analyze --turns 100 --notebook
+# Run an ad-hoc analysis script against the latest exported run
+uv run spacesim2 dev analyze notebooks/healthcheck_probe.py
 
-# Customize logging and output
-uv run spacesim2 analyze --turns 200 --log-sample 20 --output data/my_run
+# Run with data export and open the Marimo dashboard notebook
+uv run spacesim2 run --notebook
 ```
 
 ### Development Tools
 
-Validate and visualize simulation behavior:
+Visualize simulation behavior:
 
 ```bash
-# Validate market maker behavior
-uv run spacesim2 dev validate-market --turns 20
-
 # Generate commodity/process dependency graph
 uv run spacesim2 dev graph --out diagram --format png
 ```
@@ -91,7 +88,6 @@ uv run spacesim2 --help
 
 # View command-specific options
 uv run spacesim2 run --help
-uv run spacesim2 analyze --help
 ```
 
 ## Development
@@ -126,5 +122,5 @@ uv run -m mypy .
 uv run -m ruff check .
 
 # Formatting
-uv run -m black .
+uv run -m ruff format .
 ```

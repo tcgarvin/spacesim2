@@ -32,21 +32,22 @@ Each turn executes in this order:
 
 ## Testing Simulation Behavior
 
-When debugging AI or market mechanics, **use marimo notebooks** to examine simulation state:
+When debugging AI or market mechanics, start with the KPI summary and Tier-1
+analysis scripts (see the `sim-evaluation` skill):
 
 ```bash
-# Run simulation with data export
-uv run spacesim2 analyze --turns 100 --notebook
+# Compact KPI summary with PASS/WARN/FAIL verdict
+uv run spacesim2 run --turns 200 --no-export --quiet --summary
 
-# Or use specific notebook for ship analysis
-uv run spacesim2 analyze --turns 100 --notebook --notebook-path notebooks/ship_economics.py
+# Run an ad-hoc analysis script against the latest exported run
+uv run spacesim2 dev analyze my_probe.py
 ```
 
-Notebooks let you:
-- Interactively explore actor/ship state across turns
-- Visualize market price dynamics
-- Compare different simulation runs
-- Preserve analysis for future reference
+For interactive human-facing exploration, the marimo dashboard is available:
+
+```bash
+uv run spacesim2 run --notebook   # exports data and opens notebooks/analysis_template.py
+```
 
 See `docs/dev-guide-notebooks.md` for notebook development patterns.
 

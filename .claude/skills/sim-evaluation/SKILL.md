@@ -67,12 +67,13 @@ and exposes `.actor_turns`, `.actor_drives`, `.market_transactions`,
 
 ## Tier 2 — marimo notebook (human-facing, zero agent tokens)
 
-For persistent, interactive dashboards a human will explore. Build/extend a
-marimo notebook and hand off the open command — do **not** read its HTML
-export back into context.
+Optional human dashboard, not part of the agent loop. The maintained dashboard
+is `notebooks/analysis_template.py`; extend it (or a copy) only when a human
+wants interactive charts, and hand off the open command — do **not** read its
+HTML export back into context.
 
 ```bash
-uv run marimo edit --no-token notebooks/<dashboard>.py
+uv run marimo edit --no-token notebooks/analysis_template.py
 ```
 
 Use the `simulation-analyst` subagent for substantial notebook work.

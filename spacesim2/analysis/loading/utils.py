@@ -67,7 +67,7 @@ def find_most_recent_run(base_path: Optional[Path | str] = None) -> Path:
     if not runs_dir.exists():
         raise NoRunsFoundError(
             f"Runs directory not found: {runs_dir}\n"
-            f"Run 'spacesim2 analyze' to create simulation data."
+            f"Run 'spacesim2 run' (with export enabled) to create simulation data."
         )
 
     # Find all directories with parseable timestamps
@@ -83,7 +83,7 @@ def find_most_recent_run(base_path: Optional[Path | str] = None) -> Path:
     if not runs_with_times:
         raise NoRunsFoundError(
             f"No valid runs found in: {runs_dir}\n"
-            f"Run 'spacesim2 analyze' to create simulation data.\n"
+            f"Run 'spacesim2 run' (with export enabled) to create simulation data.\n"
             f"Expected directory pattern: run_YYYYMMDD_HHMMSS"
         )
 

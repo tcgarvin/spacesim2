@@ -24,7 +24,6 @@ uv run ruff format .                           # Format
 uv run ruff check .                            # Lint
 
 # Dev Tools
-uv run spacesim2 dev validate-market   # Market maker validation
 uv run spacesim2 dev graph             # Commodity/process dependency graph (outputs to tmp/)
 uv run spacesim2 dev graph --out foo   # Custom output path (creates foo.svg and foo.mmd)
 uv run spacesim2 dev graph -f png      # Alternative formats: svg (default), png, pdf
@@ -275,71 +274,39 @@ for commodity in (food, fuel, wood):  # hardcoded list
     # ... trade logic
 ```
 
-## Running Simulations - Notebook-First Approach
+## Running Simulations for Analysis
 
-**IMPORTANT**: When running simulations for analysis, testing, or debugging, ALWAYS use marimo notebooks instead of test scripts or one-off Python invocations.
+The primary analysis loop is the one in "The Dev Loop" above: Tier-0
+`--summary` for the KPI verdict, Tier-1 `dev analyze` probe scripts for
+open-ended questions (see the `sim-evaluation` skill). Marimo notebooks are an
+**optional human-facing dashboard**, not the default workflow.
 
-### Standard Workflow
+### Optional: Marimo Dashboard (human-facing)
 
 ```bash
-# 1. Run simulation with data export (auto-opens notebook)
-uv run spacesim2 run --notebook
+# Run simulation with data export and auto-open the dashboard
+uv run spacesim2 run --notebook          # opens notebooks/analysis_template.py
 
-# 2. Or run without auto-opening, then open manually
+# Or run first, then open manually (auto-detects latest run via SPACESIM_RUN_PATH)
 uv run spacesim2 run
-uv run marimo edit --no-token notebooks/analysis_template.py  # Auto-detects latest run
+uv run marimo edit --no-token notebooks/analysis_template.py
 
-# 3. Use specific notebook for specialized analysis
-uv run spacesim2 run --notebook --notebook-path notebooks/ship_economics.py
-
-# 4. Quick sanity check without export
-uv run spacesim2 run --turns 10 --no-export --verbose
-```
-
-### Creating New Analysis Notebooks
-
-```bash
-# Copy template
-cp notebooks/analysis_template.py notebooks/my_analysis.py
-
-# Run simulation and open your notebook
+# A custom notebook path also works
 uv run spacesim2 run --notebook --notebook-path notebooks/my_analysis.py
 ```
 
-### Notebook Validation and Delivery
+If you deliver a notebook to the user, validate it first with
+`uv run marimo check notebooks/my_notebook.py` and start the server for them.
+Common marimo pitfalls: use `_` prefix for cell-local variables (`_fig`),
+assign conditional outputs to a named variable before displaying, don't return
+unused variables.
 
-**Always validate notebooks before delivering them:**
-```bash
-uv run marimo check notebooks/my_notebook.py
-```
+### When to Use What
 
-Common issues to avoid:
-- **Multiple definitions**: Use `_` prefix for cell-local variables (`_fig`, `_data`)
-- **Branch expressions**: Assign conditional outputs to a named variable, then display it at cell end
-- **Unused returns**: Don't return variables that aren't used by other cells
-
-**When user requests a notebook, always:**
-1. Run `marimo check` to validate
-2. Start the notebook server for them: `uv run marimo edit --no-token notebooks/notebook.py`
-
-### Why Notebooks?
-
-- **Persistent**: Results survive between runs, easy to revisit
-- **Interactive**: Modify analysis without re-running expensive simulations
-- **Integrated**: Auto-connects to simulation data via `SPACESIM_RUN_PATH`
-- **Reproducible**: Version-controlled, shareable analysis workflows
-- **MCP-friendly**: `--no-token` flag enables MCP server integration
-
-### When to Use Notebooks vs Tests
-
-**Use notebooks** anytime you want to examine the way the simulation is functioning:
-- Exploring actor behavior, market dynamics, or ship trading patterns
-- Debugging unexpected simulation outcomes
-- Performance analysis and optimization
-- Validating game mechanics
-- Economic analysis and visualization
-
-**Use pytest** for automated assertions on expected behavior:
+- **Tier-0 `--summary`**: "did my change break the economy?" — cheap, token-efficient
+- **Tier-1 `dev analyze` script**: open-ended behavioral questions, debugging
+- **Marimo notebook**: interactive charts a human wants to explore
+- **pytest**: automated assertions on expected behavior:
 ```python
 # tests/test_component.py
 def test_specific_behavior():

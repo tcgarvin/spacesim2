@@ -1,17 +1,21 @@
 # Notebook Development Guide
 
-This guide covers developing and debugging marimo notebooks for simulation analysis.
+This guide covers the optional marimo dashboard workflow. The default
+change→verify loop is `--summary` + `dev analyze` (see the `sim-evaluation`
+skill); marimo notebooks are for interactive human-facing exploration. The
+maintained dashboard is `notebooks/analysis_template.py`.
 
 ## Quick Reference
 
 | Task | Command |
 |------|---------|
-| Debug notebook | `uv run marimo export html notebooks/file.py -o /tmp/test.html` |
-| Interactive edit | `uv run marimo edit --no-token notebooks/file.py` |
+| Run sim + open dashboard | `uv run spacesim2 run --notebook` |
+| Interactive edit | `uv run marimo edit --no-token notebooks/analysis_template.py` |
 | Lint notebook | `uv run marimo check notebooks/file.py` |
-| Validate data | `python dev-tools/validate_run_data.py data/runs/run_name` |
+| Debug notebook | `uv run marimo export html notebooks/file.py -o /tmp/test.html` |
 
-**Note**: Always use `uv run marimo` to ensure the correct environment.
+**Note**: Always use `uv run marimo` to ensure the correct environment, and
+install the analysis extras first: `uv sync --extra analysis`.
 
 ## Debugging Notebooks
 
@@ -20,9 +24,6 @@ This guide covers developing and debugging marimo notebooks for simulation analy
 ```bash
 # Debug with specific run data
 SPACESIM_RUN_PATH=data/runs/test_run uv run marimo export html notebooks/analysis_template.py -o /tmp/test.html
-
-# Quick notebook test (validation + export)
-./dev-tools/test_notebook.sh data/runs/test_run
 ```
 
 ## Run Path Management
@@ -48,25 +49,28 @@ Notebooks automatically detect the most recent simulation run.
 ## Typical Workflow
 
 ```bash
-# 1. Generate data
-uv run spacesim2 analyze --turns 100 --progress
+# 1. Generate data (export is on by default)
+uv run spacesim2 run --turns 100
 
-# 2. Analyze in notebook (auto-detects most recent)
+# 2. Analyze in notebook (auto-detects most recent run)
 uv run marimo edit --no-token notebooks/analysis_template.py
+
+# Or do both in one step
+uv run spacesim2 run --turns 100 --notebook
 ```
 
 ## Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
-| "No valid runs found" | Run `spacesim2 analyze` first |
+| "No valid runs found" | Run `spacesim2 run` (with export enabled) first |
 | Wrong run selected | Check directory timestamps or use `SPACESIM_RUN_PATH` |
 | Import errors | Run `uv sync --extra analysis` to install dependencies |
 | "No module named 'polars'" | Analysis extras not installed |
 
 ## Data Files
 
-The `spacesim2 analyze` command exports Parquet files to `data/runs/run_TIMESTAMP/`:
+An exporting `spacesim2 run` writes Parquet files to `data/runs/run_TIMESTAMP/`:
 
 - Market data per turn
 - Actor states

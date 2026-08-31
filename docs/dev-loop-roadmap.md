@@ -56,11 +56,10 @@ total transactions / volume per commodity and bid-ask spread health, either by
 tracking a running counter on the sim or by reading the exported Parquet in a
 post-run pass. Helps catch "market froze but drives look fine" regressions.
 
-### 8. Retire one-off diagnostic notebooks
-`notebooks/` has ~16 files, many single-use diagnoses
-(`shelter_supply_chain_diagnosis`, `ship_trading_diagnosis`, …). Fold the
-durable insights into Tier-1 scripts or smoke-test assertions and delete the
-rest, so the notebook dir reads as "reusable dashboards" not "scratch history".
+### 8. Retire one-off diagnostic notebooks — DONE
+`notebooks/` had ~16 files, many single-use diagnoses. Pruned to the marimo
+dashboard (`analysis_template.py`), the Tier-1 scratch template, and a handful
+of reference probes; `scripts/` and `dev-tools/` were removed outright.
 
 ## Larger / speculative
 

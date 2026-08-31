@@ -5,11 +5,9 @@ description = "A turn-based economic simulation modeling interplanetary trade"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "altair>=6.0.0",
     "marimo>=0.18.4",
     "matplotlib>=3.10.1",
     "numpy>=1.26.0",
-    "pandas>=2.3.3",
     "pygame>=2.5.0; platform_system != 'Windows' or python_version < '3.12'",
     "pyyaml>=6.0.2",
     "scipy>=1.15.2",
@@ -32,6 +30,7 @@ analysis = [
     "polars>=0.20.0", # Fast DataFrame library
     "pyarrow>=14.0.0", # Parquet support
     "plotly>=5.18.0", # Interactive visualizations
+    "pandas>=2.3.3", # plotly/marimo interop (polars .to_pandas() in notebooks)
     "marimo>=0.1.0", # Modern reactive notebook
 ]
 # Offline asset-generation pipeline (tools/assetgen). Dev-only; the shipped
@@ -68,9 +67,9 @@ warn_unused_configs = true
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 # Notebooks use marimo's cross-cell variable model, which mypy can't follow
-# (same reason they're exempt from ruff lint); dev-tools are scratch scripts.
-# Neither is an importable package, so they're excluded by path, not module.
-exclude = "^(notebooks|dev-tools)/"
+# (same reason they're exempt from ruff lint). Not an importable package, so
+# they're excluded by path, not module.
+exclude = "^notebooks/"
 
 # Tests aren't held to the annotation bar yet.
 [[tool.mypy.overrides]]

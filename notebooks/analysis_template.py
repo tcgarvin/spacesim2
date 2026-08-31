@@ -61,7 +61,7 @@ def _(mo, os, Path):
 def _(Path, SimulationData, mo, run_selector):
     # Only load if path is valid
     if not run_selector.value:
-        mo.md("⚠️ No run path specified. Run `spacesim2 analyze` first.")
+        mo.md("⚠️ No run path specified. Run `spacesim2 run` first.")
         data = None
     else:
         try:
