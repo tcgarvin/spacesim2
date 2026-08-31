@@ -45,7 +45,9 @@
 > branch. Hard-won findings that survive regardless: brains carry
 > cross-turn decision state (recipe choice, learned price brackets), and
 > macro behavior is measurably sensitive to inventory-dict iteration
-> order in brains.
+> order in brains. Also surfaced: `ORDER_EVENTS_PER_ACTOR=100` retention
+> costs ~1 GB at target scale though only current-turn events are ever
+> read.
 
 Analysis date: 2026-08-30, against main @ 178f998. Sources: cProfile + scaling
 sweeps (driver timing `sim.run_turn()` directly) and a line-level code audit.

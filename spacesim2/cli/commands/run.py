@@ -53,6 +53,14 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
         "--ships", type=int, default=1, help="Number of ships per planet"
     )
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Actor-phase worker processes (POSIX only; 1 = serial). "
+        "Planets are split across a fork-per-turn pool; see "
+        "docs/parallel-actor-phase.md",
+    )
+    parser.add_argument(
         "--no-planet-attributes",
         action="store_false",
         dest="planet_attributes",
@@ -192,6 +200,9 @@ def execute(args: argparse.Namespace) -> int:
     )
     if not args.planet_attributes:
         print("  Planet attributes: DISABLED")
+    if args.workers > 1:
+        sim.parallel_workers = args.workers
+        print(f"  Actor phase: {args.workers} worker processes")
 
     # Configure logging
     print("Configuring actor logging...")

@@ -1,4 +1,5 @@
 import math
+import os
 import random
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
@@ -114,6 +115,12 @@ class Simulation:
         # O(actors) status summary — headless/large runs pay no per-turn
         # string-formatting cost. The CLI's --verbose path sets this to True.
         self.verbose: bool = False
+
+        # Actor-phase worker count. At > 1 (POSIX only, 2+ planets) run_turn
+        # forks a per-turn worker pool that splits planets across processes;
+        # see core/parallel.py and docs/parallel-actor-phase.md. The serial
+        # path is untouched at the default of 1.
+        self.parallel_workers: int = 1
 
         # Initialize registries
         # base_dir = Path(__file__).parent.parent.parent
@@ -636,12 +643,17 @@ class Simulation:
             # Market is guaranteed to exist
             planet.market.set_current_turn(self.current_turn)
 
-        # Randomize actor order
-        random.shuffle(self.actors)
+        if self._use_parallel_actor_phase():
+            from spacesim2.core.parallel import run_actor_phase_parallel
 
-        # Each actor takes their turn
-        for actor in self.actors:
-            actor.take_turn()
+            run_actor_phase_parallel(self, self.parallel_workers)
+        else:
+            # Randomize actor order
+            random.shuffle(self.actors)
+
+            # Each actor takes their turn
+            for actor in self.actors:
+                actor.take_turn()
 
         # Randomize ship order
         random.shuffle(self.ships)
@@ -661,6 +673,12 @@ class Simulation:
         # several full passes over all actors just to build strings)
         if self.verbose:
             self._print_status()
+
+    def _use_parallel_actor_phase(self) -> bool:
+        """Whether run_turn should fork the per-planet actor-phase pool."""
+        return (
+            self.parallel_workers > 1 and len(self.planets) >= 2 and os.name == "posix"
+        )
 
     def _process_markets(self) -> None:
         """Process all markets at the end of the turn."""
