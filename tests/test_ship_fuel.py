@@ -208,10 +208,13 @@ def test_tank_fuel_sold_into_scarcity_bid():
     ship.brain.decide_trade_actions()
 
     sells = [o for o in b.market.sell_orders[fuel] if o.actor is ship]
-    assert len(sells) == 1
+    assert sells
     reserve = ship.brain._fuel_sell_reserve()
     assert reserve > 0
-    assert sells[0].quantity == 40 - reserve
+    # The load may be split across bid-level orders; the total is the excess
+    # above the travel reserve, and every order sells into the rescue bid.
+    assert sum(o.quantity for o in sells) == 40 - reserve
+    assert all(o.price == 30 for o in sells)
 
 
 # ---------------------------------------------------------------------------

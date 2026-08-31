@@ -9,6 +9,7 @@ from spacesim2.core.planet import Planet
 
 if TYPE_CHECKING:
     from spacesim2.core.drives.actor_drive import ActorDrive
+    from spacesim2.core.market import Market
     from spacesim2.core.simulation import Simulation
 
 # Margin over the delivered cost used when a stranded ship posts a standing
@@ -44,6 +45,25 @@ FUEL_BUNKER_BUDGET_FRACTION = 0.5
 # (revenue is then estimated from the avg price, which often fails to
 # realize; unbounded speculation on it was a reliable money-loser).
 SPECULATIVE_PLAN_CAP = 10
+
+# Flow-based planning. With deferred end-of-turn matching, the resting book
+# holds only what the local auction REJECTED: no asks for goods in local
+# demand, lowball leftover bids. Real supply and demand clear in the per-turn
+# flow, so plans must estimate from recent traded prices/volume, bid into the
+# auction, and fill over several docked turns — trading only against residual
+# orders moved ~1.6 units/trip in 100-unit holds and could not pay for fuel.
+#
+# Turns of destination flow a plan expects to sell into (sizes cargo without
+# dumping a hold into a market that clears one unit a turn).
+DEMAND_HORIZON_TURNS = 15
+# Window of volume history that counts as "this good trades here".
+FLOW_RECENCY_TURNS = 10
+# Docked turns a ship keeps a resting buy order open to fill its plan before
+# departing with whatever it has (or replanning if nothing filled).
+ACCUMULATION_PATIENCE = 8
+# Confidence discount on avg-price revenue estimates and resting asks: the
+# flow price is a forecast, not a resting order.
+SELL_PRICE_HAIRCUT = 0.9
 
 # Chance per departure that a ship rolls a maintenance stop, and the fuel
 # units the legacy maintenance tier consumes. Used both by
@@ -168,6 +188,13 @@ class TraderBrain(ShipBrain):
         self.commodity_purchase_prices: Dict[str, float] = {}
         # Active trade plan (if any)
         self._current_plan: Optional[TradePlan] = None
+        # True once the plan's cargo is aboard (fully or after patience ran
+        # out with a partial load) and the ship should fly to the plan's
+        # destination rather than keep buying or sell locally.
+        self._plan_loaded = False
+        # Docked turns left in the current plan phase (accumulating, or
+        # loaded-but-unable-to-depart) before the plan is given up on.
+        self._plan_turns_left = 0
         # Set while local sell orders from this turn are pending so
         # decide_travel doesn't depart and strand them in the book.
         self._selling_locally = False
@@ -196,6 +223,25 @@ class TraderBrain(ShipBrain):
         total_quantity = sum(t.quantity for t in recent_purchases)
 
         return total_cost / total_quantity if total_quantity > 0 else None
+
+    def _recent_flow_per_turn(
+        self, market: "Market", commodity: CommodityDefinition
+    ) -> float:
+        """Mean traded units per turn over the recent volume window."""
+        volumes = market.volume_history.get(commodity, [])[-FLOW_RECENCY_TURNS:]
+        return sum(volumes) / len(volumes) if volumes else 0.0
+
+    def _flow_value(
+        self, market: "Market", commodity: CommodityDefinition
+    ) -> Optional[int]:
+        """Recent clearing price, or None when the good has never traded here.
+
+        The avg-price default of 10 for a never-traded good is fabricated and
+        must not back a valuation.
+        """
+        if not market.has_price_signal(commodity):
+            return None
+        return market.get_avg_price(commodity)
 
     def _get_tradeable_commodities(self) -> List[CommodityDefinition]:
         """Get list of commodities that can be traded between planets."""
@@ -408,6 +454,47 @@ class TraderBrain(ShipBrain):
             reserve = max(reserve, self.ship.fuel_capacity)
         return max(0, quantity - reserve)
 
+    def _place_flow_sell_orders(
+        self, market: "Market", commodity: CommodityDefinition, quantity: int
+    ) -> List[str]:
+        """Sell ``quantity`` into both the resting bids and the flow.
+
+        Matching executes at the SELL order's price, so a single ask at the
+        top bid liquidates the entire load at that one price — historically
+        including whole cargoes dumped into 1-credit probe bids. Instead:
+        premium resting bids (above the haircut flow price) are captured by
+        an ask priced at each level, and the remainder rests near the recent
+        clearing price to be absorbed by the turn flow.
+
+        Returns action strings for the placed orders.
+        """
+        actions: List[str] = []
+        flow_value = self._flow_value(market, commodity)
+        flow_px = int(flow_value * SELL_PRICE_HAIRCUT) if flow_value else 0
+        remaining = quantity
+        for price, level_qty in market.get_bid_levels(commodity):
+            if remaining <= 0 or price <= flow_px:
+                break
+            take = min(level_qty, remaining)
+            order_id = market.place_sell_order(self.ship, commodity, take, price)
+            if order_id:
+                actions.append(f"Selling {take} {commodity.name} at {price}")
+                self.ship.active_orders[order_id] = f"sell {commodity.id}"
+                remaining -= take
+        if remaining > 0:
+            if flow_px > 0:
+                rest_price = flow_px
+            else:
+                best_bid, _ = market.get_bid_ask_spread(commodity)
+                rest_price = max(1, best_bid or market.get_avg_price(commodity) or 1)
+            order_id = market.place_sell_order(
+                self.ship, commodity, remaining, rest_price
+            )
+            if order_id:
+                actions.append(f"Offering {remaining} {commodity.name} at {rest_price}")
+                self.ship.active_orders[order_id] = f"sell {commodity.id}"
+        return actions
+
     def _opportunistic_fuel_topup(
         self, pending_fuel: int = 0, reserved_cargo: int = 0
     ) -> Optional[str]:
@@ -595,10 +682,16 @@ class TraderBrain(ShipBrain):
 
         Returns a TradePlan if the trade is feasible, None otherwise.
         Feasibility checks:
-        - Can actually buy commodity at origin
+        - Commodity is actually acquirable at origin (resting ask, or an
+          active local flow the ship can bid into)
         - Have enough money for purchase + fuel
         - Have enough cargo space
         - Have/can buy enough fuel for round trip
+
+        Prices and quantities come from the FLOW (recent clearing prices and
+        volume) as well as the resting book: the plan's purchase price is the
+        bid the ship will post, and matching executes at each seller's ask,
+        so fills only ever come in at or below it.
         """
         fuel_commodity = self.ship.simulation.commodity_registry.get_commodity(
             "nova_fuel"
@@ -616,11 +709,26 @@ class TraderBrain(ShipBrain):
         fuel_one_way = self.ship.fuel_required(distance)
         fuel_round_trip = fuel_one_way * 2
 
-        # Get prices at origin
-        _, buy_price = origin_market.get_bid_ask_spread(commodity)
-        if buy_price is None:
-            # No one selling at origin
+        # Acquisition price at origin: the bid the ship will post. A resting
+        # ask is directly takeable; an active local flow (recent volume with
+        # a real price signal) is biddable-into at the clearing price. Bid
+        # the higher of the two — matching executes at each seller's ask, so
+        # a generous bid captures more of the flow without paying more for
+        # the cheap fills; the margin gate below already prices the worst
+        # case (every unit at the bid).
+        _, origin_ask = origin_market.get_bid_ask_spread(commodity)
+        origin_flow_px = self._flow_value(origin_market, commodity)
+        if origin_flow_px is not None and (
+            self._recent_flow_per_turn(origin_market, commodity) <= 0
+        ):
+            origin_flow_px = None  # a price with no recent volume buys nothing
+        price_candidates = [
+            p for p in (origin_ask, origin_flow_px) if p is not None and p > 0
+        ]
+        if not price_candidates:
+            # Nothing for sale and no active flow to bid into.
             return None
+        buy_price = max(price_candidates)
 
         _, fuel_ask = origin_market.get_bid_ask_spread(fuel_commodity)
         fuel_price = (
@@ -631,22 +739,31 @@ class TraderBrain(ShipBrain):
         if fuel_price is None or fuel_price <= 0:
             fuel_price = 10  # Default fuel price if no market data
 
-        # Destination demand: resting bids that beat the purchase price.
-        # Planning revenue from the top bid alone overestimates — selling
-        # more units than the book holds means walking down the levels.
+        # Destination demand: resting bids that beat the purchase price...
         bid_levels = [
             (price, qty)
             for price, qty in dest_market.get_bid_levels(commodity)
             if price > buy_price
         ]
-        speculative = not bid_levels
-        avg_fallback = 0
-        if speculative:
-            # No profitable resting demand visible; the avg price is a guess
+        depth = sum(qty for _, qty in bid_levels)
+        # ...plus the flow: recent clearing volume at the recent clearing
+        # price (haircut — it is a forecast, not a resting order).
+        dest_flow_px = self._flow_value(dest_market, commodity)
+        flow_px = int(dest_flow_px * SELL_PRICE_HAIRCUT) if dest_flow_px else 0
+        flow_qty = 0
+        if flow_px > buy_price:
+            flow_qty = int(
+                self._recent_flow_per_turn(dest_market, commodity)
+                * DEMAND_HORIZON_TURNS
+            )
+        if depth + flow_qty > 0:
+            sellable = depth + flow_qty
+        elif flow_px > buy_price:
+            # Price signal but no recent volume: latent demand is a guess
             # that often fails to realize, so such plans are capped small.
-            avg_fallback = dest_market.get_avg_price(commodity)
-            if avg_fallback <= buy_price:
-                return None
+            sellable = SPECULATIVE_PLAN_CAP
+        else:
+            return None
 
         # Calculate how much we can trade
         current_fuel = self.ship.cargo.get_quantity(fuel_commodity)
@@ -654,9 +771,10 @@ class TraderBrain(ShipBrain):
 
         # Reserve money for fuel purchase if needed
         fuel_to_buy = max(0, fuel_round_trip - current_fuel)
-        if fuel_to_buy > 0 and fuel_ask is None:
-            # The plan needs fuel that cannot actually be bought at the
-            # origin; committing to it would strand the ship with cargo.
+        if fuel_to_buy > 0 and not self._fuel_purchasable_at(origin):
+            # The plan needs fuel that cannot realistically be bought at the
+            # origin (no ask AND no recent flow); committing to it would
+            # strand the ship with cargo.
             return None
         fuel_cost = fuel_to_buy * fuel_price
 
@@ -690,29 +808,22 @@ class TraderBrain(ShipBrain):
         max_by_cargo = cargo_space - fuel_to_buy  # Account for fuel taking cargo space
         max_quantity = max(0, min(max_by_money, max_by_cargo))
 
-        if speculative:
-            quantity = min(max_quantity, SPECULATIVE_PLAN_CAP)
-            sell_price = avg_fallback
-        else:
-            # Cap at the visible profitable depth and project revenue by
-            # walking the book for the units actually taken.
-            depth = sum(qty for _, qty in bid_levels)
-            quantity = min(max_quantity, depth)
-            if quantity > 0:
-                remaining = quantity
-                revenue = 0
-                for price, qty in bid_levels:
-                    take = min(qty, remaining)
-                    revenue += price * take
-                    remaining -= take
-                    if remaining == 0:
-                        break
-                sell_price = revenue // quantity
-            else:
-                sell_price = 0
-
+        # Project revenue by walking the resting bids first (their prices are
+        # firm), then valuing the remainder at the haircut flow price.
+        quantity = min(max_quantity, sellable)
         if quantity <= 0:
             return None
+        remaining = quantity
+        revenue = 0
+        for price, qty in bid_levels:
+            take = min(qty, remaining)
+            revenue += price * take
+            remaining -= take
+            if remaining == 0:
+                break
+        if remaining > 0:
+            revenue += flow_px * remaining
+        sell_price = revenue // quantity
 
         return TradePlan(
             origin=origin,
@@ -766,7 +877,10 @@ class TraderBrain(ShipBrain):
         1. Buying fuel (if needed for round trip)
         2. Buying the commodity
 
-        Orders are placed at market prices to ensure execution.
+        Buy orders are posted at the plan's bid price and rest in the book,
+        filling from the turn's flow of asks (matching executes at each
+        seller's ask, never above the bid). Called every accumulating turn,
+        it re-posts for whatever the plan still lacks.
         """
         planet = self.ship.planet
         if planet is None:
@@ -793,23 +907,32 @@ class TraderBrain(ShipBrain):
             if current_fuel < fuel_needed:
                 fuel_to_buy = fuel_needed - current_fuel
                 _, fuel_ask = market.get_bid_ask_spread(fuel_commodity)
+                fuel_bid = (
+                    fuel_ask
+                    if fuel_ask is not None
+                    else self._flow_value(market, fuel_commodity)
+                )
 
-                if fuel_ask is not None:
-                    affordable_fuel = min(fuel_to_buy, self.ship.money // fuel_ask)
+                if fuel_bid is not None and fuel_bid > 0:
+                    affordable_fuel = min(fuel_to_buy, self.ship.money // fuel_bid)
                     if affordable_fuel > 0:
                         order_id = market.place_buy_order(
-                            self.ship, fuel_commodity, affordable_fuel, fuel_ask
+                            self.ship, fuel_commodity, affordable_fuel, fuel_bid
                         )
                         if order_id:
                             actions.append(
-                                f"Buying {affordable_fuel} fuel at {fuel_ask}"
+                                f"Buying {affordable_fuel} fuel at {fuel_bid}"
                             )
                             self.ship.active_orders[order_id] = "buy fuel"
                             pending_fuel = affordable_fuel
 
-        # Step 2: Buy commodity
-        _, commodity_ask = market.get_bid_ask_spread(plan.commodity)
-        if commodity_ask is not None:
+        # Step 2: Buy the plan's remaining cargo at the plan's bid price.
+        # The order rests in the book and fills from the flow at sellers'
+        # ask prices (never above the bid).
+        bid_price = plan.purchase_price_per_unit
+        already_held = self._sellable_quantity(plan.commodity)
+        still_needed = plan.quantity - already_held
+        if bid_price > 0 and still_needed > 0:
             # Recalculate affordable quantity after fuel purchase
             money_available = int(self.ship.money * 0.9)  # Keep 10% reserve
             cargo_available = (
@@ -818,17 +941,15 @@ class TraderBrain(ShipBrain):
                 - pending_fuel
             )
 
-            quantity = min(
-                plan.quantity, money_available // commodity_ask, cargo_available
-            )
+            quantity = min(still_needed, money_available // bid_price, cargo_available)
 
             if quantity > 0:
                 order_id = market.place_buy_order(
-                    self.ship, plan.commodity, quantity, commodity_ask
+                    self.ship, plan.commodity, quantity, bid_price
                 )
                 if order_id:
                     actions.append(
-                        f"Buying {quantity} {plan.commodity.name} at {commodity_ask} "
+                        f"Bidding for {quantity} {plan.commodity.name} at {bid_price} "
                         f"(plan: sell at {plan.destination.name} for ~{plan.expected_sell_price_per_unit})"
                     )
                     self.ship.active_orders[order_id] = f"buy {plan.commodity.id}"
@@ -885,8 +1006,54 @@ class TraderBrain(ShipBrain):
 
         placed_fuel_sell = False
 
+        # --- Plan lifecycle -------------------------------------------------
+        # Flow-based plans fill a resting bid over several docked turns, then
+        # fly the load to the plan's destination.
+        plan = self._current_plan
+        if plan is not None:
+            if self.ship.planet is plan.destination:
+                # Arrived: the sell logic below disposes of the cargo. The
+                # plan lingers only to mark a fuel delivery's tank contents
+                # as trade cargo (_fuel_delivery_in_progress), and is dropped
+                # once the cargo is gone.
+                self._plan_loaded = False
+                if self._sellable_quantity(plan.commodity) <= 0:
+                    self._current_plan = None
+            elif self.ship.planet is not plan.origin:
+                # Diverted (maintenance/survival reposition): abandon.
+                self._current_plan = None
+                self._plan_loaded = False
+            elif not self._plan_loaded:
+                held = self._sellable_quantity(plan.commodity)
+                if held >= plan.quantity:
+                    self._plan_loaded = True
+                    self._plan_turns_left = ACCUMULATION_PATIENCE
+                elif self._plan_turns_left > 0:
+                    # Keep accumulating: refresh the resting bid, stay docked.
+                    self._plan_turns_left -= 1
+                    self._execute_trade_plan(plan)
+                    return
+                elif held > 0:
+                    # Patience exhausted: depart with the partial load.
+                    self._plan_loaded = True
+                    self._plan_turns_left = ACCUMULATION_PATIENCE
+                else:
+                    # Patience exhausted, nothing filled: replan from scratch.
+                    self._current_plan = None
+            else:
+                # Loaded at origin. Departure happens in decide_travel; being
+                # here next turn means it was blocked (usually on fuel). Wait
+                # a bounded while, then release the cargo to the legacy
+                # sell-or-fly logic.
+                if self._plan_turns_left > 0:
+                    self._plan_turns_left -= 1
+                else:
+                    self._current_plan = None
+                    self._plan_loaded = False
+
         # Priority 1: If we have cargo, decide whether to sell here or travel
-        if has_trade_cargo:
+        # (unless it is a loaded plan's cargo, which flies to plan.destination)
+        if has_trade_cargo and not self._plan_loaded:
             # Check if there's a better destination to sell
             should_sell_here = True
             current_planet = self.ship.planet
@@ -898,8 +1065,11 @@ class TraderBrain(ShipBrain):
                     continue
 
                 local_bid, _ = market.get_bid_ask_spread(commodity)
-                local_price = (
-                    local_bid if local_bid else market.get_avg_price(commodity)
+                # Value at the better of the top resting bid and the recent
+                # clearing price: the residual book alone undervalues any
+                # good the local auction actually clears.
+                local_price = max(
+                    local_bid or 0, self._flow_value(market, commodity) or 0
                 )
 
                 # Check other planets for better prices
@@ -923,8 +1093,9 @@ class TraderBrain(ShipBrain):
                         continue
 
                     dest_bid, _ = planet.market.get_bid_ask_spread(commodity)
-                    dest_price = (
-                        dest_bid if dest_bid else planet.market.get_avg_price(commodity)
+                    dest_price = max(
+                        dest_bid or 0,
+                        self._flow_value(planet.market, commodity) or 0,
                     )
 
                     if not dest_price or not local_price:
@@ -950,45 +1121,25 @@ class TraderBrain(ShipBrain):
                 for commodity in self._get_tradeable_commodities():
                     quantity = self._sellable_quantity(commodity)
                     if quantity > 0:
-                        highest_bid, _ = market.get_bid_ask_spread(commodity)
-                        if highest_bid is not None:
-                            order_id = market.place_sell_order(
-                                self.ship, commodity, quantity, highest_bid
-                            )
-                            if order_id:
-                                actions.append(
-                                    f"Selling {quantity} {commodity.name} at {highest_bid}"
-                                )
-                                self.ship.active_orders[order_id] = (
-                                    f"sell {commodity.id}"
-                                )
-                                self._selling_locally = True
-                                if commodity.id == "nova_fuel":
-                                    placed_fuel_sell = True
-                        else:
-                            avg_price = max(1, market.get_avg_price(commodity) or 1)
-                            order_id = market.place_sell_order(
-                                self.ship, commodity, quantity, avg_price
-                            )
-                            if order_id:
-                                actions.append(
-                                    f"Offering {quantity} {commodity.name} at {avg_price} (no buyers)"
-                                )
-                                self.ship.active_orders[order_id] = (
-                                    f"sell {commodity.id}"
-                                )
-                                self._selling_locally = True
-                                if commodity.id == "nova_fuel":
-                                    placed_fuel_sell = True
+                        sell_actions = self._place_flow_sell_orders(
+                            market, commodity, quantity
+                        )
+                        if sell_actions:
+                            actions.extend(sell_actions)
+                            self._selling_locally = True
+                            if commodity.id == "nova_fuel":
+                                placed_fuel_sell = True
             else:
                 # Better price elsewhere - will travel in decide_travel()
                 actions.append("Holding cargo for better price elsewhere")
 
         if not has_trade_cargo:
-            # Priority 3: Find and execute best trade plan
+            # Priority 3: Find and adopt the best trade plan
             plan = self._find_best_trade_plan()
             if plan:
                 self._current_plan = plan
+                self._plan_loaded = False
+                self._plan_turns_left = ACCUMULATION_PATIENCE
                 self._execute_trade_plan(plan)
                 return  # _execute_trade_plan sets last_action
             self._current_plan = None
@@ -1049,6 +1200,23 @@ class TraderBrain(ShipBrain):
         current_planet = self.ship.planet
         fuel_available = self.ship.cargo.get_quantity(fuel_commodity)
 
+        # Plan-driven travel: while a plan is accumulating, stay docked; once
+        # loaded, fly to the plan's destination if fuel and safety allow
+        # (otherwise stay and let fuel upkeep work — the loaded-phase patience
+        # in decide_trade_actions bounds the wait).
+        plan = self._current_plan
+        if plan is not None and current_planet is plan.origin:
+            if not self._plan_loaded:
+                return None
+            fuel_needed = self.ship.fuel_required(
+                Ship.calculate_distance(current_planet, plan.destination)
+            )
+            if fuel_available >= fuel_needed and self._fuel_safe_destination(
+                plan.destination, current_planet, fuel_available - fuel_needed
+            ):
+                return plan.destination
+            return None
+
         # Check if we have any cargo to sell (reserve fuel is not cargo)
         commodities = self._get_tradeable_commodities()
         cargo_to_sell = {
@@ -1103,10 +1271,9 @@ class TraderBrain(ShipBrain):
 
             for commodity, quantity in cargo_to_sell.items():
                 bid, _ = dest_market.get_bid_ask_spread(commodity)
-                if bid is None:
-                    bid = dest_market.get_avg_price(commodity)
-                if bid and bid > 0:
-                    total_value += bid * quantity
+                price = max(bid or 0, self._flow_value(dest_market, commodity) or 0)
+                if price > 0:
+                    total_value += price * quantity
 
             # Subtract fuel cost (using origin fuel prices)
             origin_fuel_price = (
