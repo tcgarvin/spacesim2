@@ -190,6 +190,7 @@ def execute(args: argparse.Namespace) -> int:
 
     if args.verbose:
         # Use HeadlessUI for detailed per-turn output
+        sim.verbose = True
         ui = HeadlessUI(sim)
         ui.run(args.turns)
     else:

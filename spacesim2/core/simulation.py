@@ -24,6 +24,75 @@ from spacesim2.core.skill import SkillsRegistry
 if TYPE_CHECKING:
     from spacesim2.analysis.export.exporter import SimulationExporter
 
+# Baseline spatial feel: the historical 5-planet galaxy lived on a 100x100 map.
+# We keep that density (area per planet) constant as galaxies grow, so travel
+# distances — and therefore fuel economics — feel the same at any scale.
+BASE_MAP_SIZE = 100.0
+BASE_PLANET_COUNT = 5
+AREA_PER_PLANET = (BASE_MAP_SIZE * BASE_MAP_SIZE) / BASE_PLANET_COUNT
+MIN_PLANET_DISTANCE = 10.0
+
+# Syllable pools for procedural planet names, used once the curated list of
+# fictional names is exhausted (it has ~100 entries).
+_NAME_ONSETS = [
+    "Kar",
+    "Vel",
+    "Thal",
+    "Zor",
+    "Mira",
+    "Ques",
+    "Dra",
+    "Sol",
+    "Nem",
+    "Ory",
+    "Bel",
+    "Xan",
+    "Tyr",
+    "Hal",
+    "Jun",
+    "Kel",
+    "Vor",
+    "Ash",
+    "Ryn",
+    "Ost",
+]
+_NAME_MIDDLES = [
+    "a",
+    "e",
+    "i",
+    "o",
+    "u",
+    "ar",
+    "en",
+    "ir",
+    "or",
+    "un",
+    "al",
+    "eth",
+]
+_NAME_CODAS = [
+    "dor",
+    "vex",
+    "mir",
+    "thos",
+    "rin",
+    "nax",
+    "lis",
+    "gar",
+    "von",
+    "tis",
+    "kar",
+    "dune",
+    "prime",
+    "moor",
+    "reth",
+    "sil",
+    "quor",
+    "bane",
+    "loth",
+    "wyn",
+]
+
 # Market makers must provide two-sided liquidity across *every* transportable
 # commodity, including illiquid upper-tier goods that have no organic supply yet.
 # Their starting capital is therefore scaled to the number of markets they serve
@@ -41,6 +110,10 @@ class Simulation:
         self.ships: List[Ship] = []
         self.current_turn = 0
         self.market_stats: Dict = {}  # Track market statistics
+        # When False (the default), run_turn skips its per-turn banner and the
+        # O(actors) status summary — headless/large runs pay no per-turn
+        # string-formatting cost. The CLI's --verbose path sets this to True.
+        self.verbose: bool = False
 
         # Initialize registries
         # base_dir = Path(__file__).parent.parent.parent
@@ -178,15 +251,26 @@ class Simulation:
             "Thaelkor",
         ]
 
-        # Ensure we don't request more planets than we have names
-        num_planets = min(num_planets, len(fictional_names))
+        if num_planets < 1:
+            raise ValueError(f"num_planets must be >= 1, got {num_planets}")
 
-        # Randomly select planet names
-        selected_names = random.sample(fictional_names, num_planets)
+        # Use the curated names first, then fall back to procedural names so
+        # any galaxy size gets unique, readable names.
+        if num_planets <= len(fictional_names):
+            selected_names = random.sample(fictional_names, num_planets)
+        else:
+            selected_names = random.sample(fictional_names, len(fictional_names))
+            used = set(selected_names)
+            while len(selected_names) < num_planets:
+                name = self._generate_procedural_name(used)
+                used.add(name)
+                selected_names.append(name)
 
-        # Generate positions with minimum 10 unit separation
+        # Generate positions, scaling the map with planet count so spatial
+        # density (and travel/fuel economics) stays constant.
+        map_size = max(BASE_MAP_SIZE, math.sqrt(AREA_PER_PLANET * num_planets))
         positions = self._generate_separated_positions(
-            num_planets, min_distance=10.0, map_size=100.0
+            num_planets, min_distance=MIN_PLANET_DISTANCE, map_size=map_size
         )
 
         return list(
@@ -197,46 +281,148 @@ class Simulation:
             )
         )
 
+    @staticmethod
+    def _generate_procedural_name(used: set[str]) -> str:
+        """Generate a unique, readable procedural planet name.
+
+        Combines onset/middle/coda syllables (e.g. "Karendor", "Velvex");
+        collisions retry with fresh syllables, and after a bounded number of
+        attempts a numeric suffix guarantees uniqueness.
+
+        Args:
+            used: Names already taken; the returned name is not in this set.
+
+        Returns:
+            A unique planet name.
+        """
+        for _ in range(100):
+            name = random.choice(_NAME_ONSETS)
+            if random.random() < 0.5:
+                name += random.choice(_NAME_MIDDLES)
+            name += random.choice(_NAME_CODAS)
+            name = name.capitalize()
+            if name not in used:
+                return name
+        # Extremely unlikely fallback: append a counter for guaranteed uniqueness.
+        base = name
+        suffix = 2
+        while f"{base}-{suffix}" in used:
+            suffix += 1
+        return f"{base}-{suffix}"
+
     def _generate_separated_positions(
         self, num_positions: int, min_distance: float, map_size: float
     ) -> List[Tuple[float, float]]:
-        """Generate positions with minimum distance separation using Poisson disc sampling approach.
+        """Generate positions with guaranteed minimum pairwise separation.
+
+        Rejection sampling is tried first: it reproduces the historical spatial
+        distribution (uniform with clustering allowed down to ``min_distance``),
+        which the fuel/travel economics were tuned against. Because the caller
+        scales the map area with the position count, rejection almost always
+        succeeds quickly. If it cannot complete within its attempt budget, a
+        jittered-grid sampler takes over — O(n) and guaranteed to fit whenever
+        the grid cells are at least ``min_distance`` wide.
 
         Args:
-            num_positions: Number of positions to generate
-            min_distance: Minimum distance between positions
-            map_size: Size of the map (square area from 0 to map_size)
+            num_positions: Number of positions to generate.
+            min_distance: Minimum pairwise distance between positions.
+            map_size: Side length of the square map (coordinates in [0, map_size]).
 
         Returns:
-            List of (x, y) positions
+            List of exactly ``num_positions`` (x, y) positions.
+
+        Raises:
+            ValueError: If the requested count cannot fit on the map with the
+                given minimum distance.
         """
-        positions: list[tuple[float, float]] = []
-        max_attempts = 1000  # Prevent infinite loops
-        attempts = 0
+        if num_positions < 1:
+            raise ValueError(f"num_positions must be >= 1, got {num_positions}")
 
-        while len(positions) < num_positions and attempts < max_attempts:
-            # Generate random position
-            x = random.uniform(min_distance, map_size - min_distance)
-            y = random.uniform(min_distance, map_size - min_distance)
+        rejection = self._rejection_sample_positions(
+            num_positions, min_distance, map_size
+        )
+        if len(rejection) == num_positions:
+            return rejection
 
-            # Check distance to all existing positions
-            valid = True
-            for existing_x, existing_y in positions:
-                distance = math.sqrt((x - existing_x) ** 2 + (y - existing_y) ** 2)
-                if distance < min_distance:
-                    valid = False
-                    break
+        return self._jittered_grid_positions(num_positions, min_distance, map_size)
 
-            if valid:
+    @staticmethod
+    def _rejection_sample_positions(
+        num_positions: int, min_distance: float, map_size: float
+    ) -> List[Tuple[float, float]]:
+        """Rejection-sample separated positions; may return fewer than requested.
+
+        Candidates are drawn uniformly from [min_distance, map_size - min_distance]
+        (matching the legacy sampler) and kept if at least ``min_distance`` from
+        every accepted position. Gives up after a bounded attempt budget so a
+        too-dense request degrades to the caller's fallback instead of spinning.
+
+        Args:
+            num_positions: Number of positions requested.
+            min_distance: Minimum pairwise distance between positions.
+            map_size: Side length of the square map.
+
+        Returns:
+            List of up to ``num_positions`` (x, y) positions.
+        """
+        low, high = min_distance, map_size - min_distance
+        if high <= low:
+            return []
+
+        positions: List[Tuple[float, float]] = []
+        max_attempts = max(1000, 40 * num_positions)
+        for _ in range(max_attempts):
+            x = random.uniform(low, high)
+            y = random.uniform(low, high)
+            if all(math.hypot(x - ex, y - ey) >= min_distance for ex, ey in positions):
                 positions.append((x, y))
+                if len(positions) == num_positions:
+                    break
+        return positions
 
-            attempts += 1
+    @staticmethod
+    def _jittered_grid_positions(
+        num_positions: int, min_distance: float, map_size: float
+    ) -> List[Tuple[float, float]]:
+        """Place separated positions on a jittered grid; guaranteed to fit or raise.
 
-        # If we couldn't generate enough positions, warn and return what we have
-        if len(positions) < num_positions:
-            print(
-                f"Warning: Could only generate {len(positions)} positions out of {num_positions} requested with min_distance={min_distance}"
+        The map is divided into a k x k grid (k = ceil(sqrt(num_positions))),
+        ``num_positions`` cells are chosen at random, and one point is jittered
+        inside each cell while keeping a margin of ``min_distance / 2`` from the
+        cell edges. Points in distinct cells are then at least ``min_distance``
+        apart, so generation is O(n) with no retry loop.
+
+        Args:
+            num_positions: Number of positions to generate.
+            min_distance: Minimum pairwise distance between positions.
+            map_size: Side length of the square map.
+
+        Returns:
+            List of exactly ``num_positions`` (x, y) positions.
+
+        Raises:
+            ValueError: If the grid cells would be narrower than ``min_distance``,
+                i.e. the requested count cannot fit on the map.
+        """
+        grid_side = math.ceil(math.sqrt(num_positions))
+        cell_size = map_size / grid_side
+        margin = min_distance / 2.0
+
+        if cell_size < min_distance:
+            raise ValueError(
+                f"Cannot place {num_positions} positions with "
+                f"min_distance={min_distance} on a {map_size}x{map_size} map: "
+                f"grid cells ({cell_size:.2f}) are smaller than min_distance. "
+                f"Increase map_size or reduce the position count."
             )
+
+        chosen_cells = random.sample(range(grid_side * grid_side), num_positions)
+        positions: List[Tuple[float, float]] = []
+        for cell in chosen_cells:
+            col, row = cell % grid_side, cell // grid_side
+            x = col * cell_size + random.uniform(margin, cell_size - margin)
+            y = row * cell_size + random.uniform(margin, cell_size - margin)
+            positions.append((x, y))
 
         return positions
 
@@ -318,81 +504,37 @@ class Simulation:
         num_colonists = num_regular_actors // 2
         num_industrialists = num_regular_actors - num_colonists
 
-        # Create Colonist actors
-        for i in range(1, num_colonists + 1):
-            # Generate random initial skills
-            initial_skills = {}
+        # Invariant across all actors on this planet — hoisted out of the
+        # per-actor loops so setup stays cheap at large populations.
+        all_skills = list(self.skills_registry._skills.keys())
 
-            # Pick 1-3 skills to specialize in (skills above 1.0)
-            num_specialties = random.randint(1, 3)
-            all_skills = list(self.skills_registry._skills.keys())
-            specialty_skills = random.sample(all_skills, num_specialties)
+        # Create Colonist and Industrialist actors
+        regular_actor_specs = [
+            ("Colonist", ColonistBrain, num_colonists),
+            ("Industrialist", IndustrialistBrain, num_industrialists),
+        ]
+        for role_name, brain_class, count in regular_actor_specs:
+            for i in range(1, count + 1):
+                initial_skills = self._random_initial_skills(all_skills)
 
-            # Give each actor random skill levels
-            for skill_id in all_skills:
-                if skill_id in specialty_skills:
-                    # Specialties get higher ratings (1.0 to 2.0)
-                    initial_skills[skill_id] = random.uniform(1.0, 2.0)
-                else:
-                    # Other skills get lower ratings (0.5 to 1.0)
-                    initial_skills[skill_id] = random.uniform(0.5, 1.0)
+                # Initialize actor drives
+                drives: list[ActorDrive] = [
+                    Drive(commodity_registry=self.commodity_registry)
+                    for Drive in (FoodDrive, ClothingDrive, ShelterDrive, HealthDrive)
+                ]
 
-            # Initialize actor drives
-            drives: list[ActorDrive] = [
-                Drive(commodity_registry=self.commodity_registry)
-                for Drive in (FoodDrive, ClothingDrive, ShelterDrive, HealthDrive)
-            ]
-
-            actor = Actor(
-                name=f"{actor_name_prefix}Colonist-{i}",
-                sim=self,
-                planet=planet,
-                actor_type=ActorType.REGULAR,
-                brain=ColonistBrain(),
-                drives=drives,
-                initial_money=50,
-                initial_skills=initial_skills,
-            )
-            self.actors.append(actor)
-            planet.add_actor(actor)
-
-        # Create Industrialist actors
-        for i in range(1, num_industrialists + 1):
-            # Generate random initial skills
-            initial_skills = {}
-
-            # Pick 1-3 skills to specialize in (skills above 1.0)
-            num_specialties = random.randint(1, 3)
-            all_skills = list(self.skills_registry._skills.keys())
-            specialty_skills = random.sample(all_skills, num_specialties)
-
-            # Give each actor random skill levels
-            for skill_id in all_skills:
-                if skill_id in specialty_skills:
-                    # Specialties get higher ratings (1.0 to 2.0)
-                    initial_skills[skill_id] = random.uniform(1.0, 2.0)
-                else:
-                    # Other skills get lower ratings (0.5 to 1.0)
-                    initial_skills[skill_id] = random.uniform(0.5, 1.0)
-
-            # Initialize actor drives
-            drives = [
-                Drive(commodity_registry=self.commodity_registry)
-                for Drive in (FoodDrive, ClothingDrive, ShelterDrive, HealthDrive)
-            ]
-
-            actor = Actor(
-                name=f"{actor_name_prefix}Industrialist-{i}",
-                sim=self,
-                planet=planet,
-                actor_type=ActorType.REGULAR,
-                brain=IndustrialistBrain(),
-                drives=drives,
-                initial_money=50,
-                initial_skills=initial_skills,
-            )
-            self.actors.append(actor)
-            planet.add_actor(actor)
+                actor = Actor(
+                    name=f"{actor_name_prefix}{role_name}-{i}",
+                    sim=self,
+                    planet=planet,
+                    actor_type=ActorType.REGULAR,
+                    brain=brain_class(),
+                    drives=drives,
+                    initial_money=50,
+                    initial_skills=initial_skills,
+                )
+                self.actors.append(actor)
+                planet.add_actor(actor)
 
         # Create market makers with balanced skills
         num_markets = sum(
@@ -402,9 +544,7 @@ class Simulation:
 
         for i in range(num_market_makers):
             # Market makers get average skill levels
-            initial_skills = {
-                skill_id: 1.0 for skill_id in self.skills_registry._skills.keys()
-            }
+            initial_skills = {skill_id: 1.0 for skill_id in all_skills}
 
             # Initialize actor drives
             drives = [
@@ -424,6 +564,27 @@ class Simulation:
             )
             self.actors.append(actor)
             planet.add_actor(actor)
+
+    @staticmethod
+    def _random_initial_skills(all_skills: List[str]) -> Dict[str, float]:
+        """Roll random initial skill levels with 1-3 specialties.
+
+        Specialty skills rate 1.0-2.0; the rest 0.5-1.0.
+
+        Args:
+            all_skills: All skill ids in the registry.
+
+        Returns:
+            Mapping of skill id to initial skill level.
+        """
+        num_specialties = random.randint(1, min(3, len(all_skills)))
+        specialty_skills = set(random.sample(all_skills, num_specialties))
+        return {
+            skill_id: random.uniform(1.0, 2.0)
+            if skill_id in specialty_skills
+            else random.uniform(0.5, 1.0)
+            for skill_id in all_skills
+        }
 
     def _setup_ships(self, num_ships: int) -> None:
         """Set up ships for the simulation.
@@ -467,7 +628,8 @@ class Simulation:
         """Run a single turn of the simulation."""
         self.current_turn += 1
         self.data_logger.set_turn(self.current_turn)
-        print(f"\n=== Turn {self.current_turn} ===")
+        if self.verbose:
+            print(f"\n=== Turn {self.current_turn} ===")
 
         # Update market turn counters
         for planet in self.planets:
@@ -495,8 +657,10 @@ class Simulation:
         if self.exporter:
             self.exporter.export_turn(self, self.current_turn)
 
-        # Print status after the turn
-        self._print_status()
+        # Print status after the turn (skipped unless verbose: it makes
+        # several full passes over all actors just to build strings)
+        if self.verbose:
+            self._print_status()
 
     def _process_markets(self) -> None:
         """Process all markets at the end of the turn."""
