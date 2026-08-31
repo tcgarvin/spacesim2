@@ -53,6 +53,15 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
         "--ships", type=int, default=1, help="Number of ships per planet"
     )
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help=(
+            "Actor-phase threads (1 = serial). Real speedup needs a "
+            "free-threaded interpreter; see docs/threaded-actor-phase.md"
+        ),
+    )
+    parser.add_argument(
         "--no-planet-attributes",
         action="store_false",
         dest="planet_attributes",
@@ -192,6 +201,15 @@ def execute(args: argparse.Namespace) -> int:
     )
     if not args.planet_attributes:
         print("  Planet attributes: DISABLED")
+    if args.workers > 1:
+        sim.parallel_workers = args.workers
+        print(f"  Actor phase: {args.workers} threads")
+        if sys._is_gil_enabled():
+            print_warning(
+                "GIL is enabled: --workers runs correctly but gives no "
+                "speedup. Use a free-threaded interpreter (e.g. 3.14t); "
+                "see docs/threaded-actor-phase.md"
+            )
 
     # Configure logging
     print("Configuring actor logging...")

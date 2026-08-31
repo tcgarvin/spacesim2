@@ -3,9 +3,6 @@
 import argparse
 import random
 
-import matplotlib.pyplot as plt
-from scipy.stats import norm
-
 from spacesim2.cli.common import create_and_setup_simulation
 from spacesim2.cli.output import print_success
 from spacesim2.core.actor import ActorType
@@ -87,6 +84,10 @@ def _plot_market_maker_behavior(simulation, num_turns: int, output_path: str):  
         num_turns: Number of turns to simulate
         output_path: Path to save the plot
     """
+    # Imported here, not at module top: matplotlib is an optional extra and
+    # an eager import breaks the whole CLI on environments without it.
+    import matplotlib.pyplot as plt
+
     # Get RAW_FOOD commodity
     raw_food = simulation.commodity_registry.get_commodity("RAW_FOOD")
     if not raw_food:
@@ -212,6 +213,8 @@ def _plot_market_maker_behavior(simulation, num_turns: int, output_path: str):  
 
 def _test_normal_distribution() -> None:
     """Test the normal distribution price calculations."""
+    from scipy.stats import norm
+
     # Sample parameters
     average_price = 10
     price_sigma = 2

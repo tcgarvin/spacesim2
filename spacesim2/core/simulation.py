@@ -1,5 +1,6 @@
 import math
 import random
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
@@ -114,6 +115,13 @@ class Simulation:
         # O(actors) status summary — headless/large runs pay no per-turn
         # string-formatting cost. The CLI's --verbose path sets this to True.
         self.verbose: bool = False
+
+        # Threaded actor phase (core/parallel.py). >1 shards planets across
+        # a thread pool; real speedup needs a free-threaded interpreter.
+        # See docs/threaded-actor-phase.md.
+        self.parallel_workers: int = 1
+        self._actor_phase_pool: Optional[ThreadPoolExecutor] = None
+        self._actor_phase_pool_size: int = 0
 
         # Initialize registries
         # base_dir = Path(__file__).parent.parent.parent
@@ -636,12 +644,17 @@ class Simulation:
             # Market is guaranteed to exist
             planet.market.set_current_turn(self.current_turn)
 
-        # Randomize actor order
-        random.shuffle(self.actors)
+        if self.parallel_workers > 1 and len(self.planets) >= 2:
+            from spacesim2.core.parallel import run_actor_phase_threaded
 
-        # Each actor takes their turn
-        for actor in self.actors:
-            actor.take_turn()
+            run_actor_phase_threaded(self, self.parallel_workers)
+        else:
+            # Randomize actor order
+            random.shuffle(self.actors)
+
+            # Each actor takes their turn
+            for actor in self.actors:
+                actor.take_turn()
 
         # Randomize ship order
         random.shuffle(self.ships)

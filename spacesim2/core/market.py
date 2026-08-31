@@ -1,6 +1,7 @@
 import itertools
 import random
 import statistics
+import threading
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Deque, Dict, List, Optional, Tuple, Union
@@ -46,9 +47,22 @@ ORDER_EVENTS_PER_ACTOR = 100
 TRANSACTIONS_KEEP_GLOBAL = 1000
 TRANSACTIONS_KEEP_PER_ACTOR = 100
 
+
 # Monotonic order-id source. Cheap replacement for the former per-order uuid4;
-# module-level so ids are unique across every market in the process.
-_ORDER_ID_COUNTER = itertools.count(1)
+# module-level so ids are unique across every market in the process. Lock-
+# wrapped because the threaded actor phase (core/parallel.py) places orders
+# from multiple threads; itertools.count alone is only atomic under the GIL.
+class _LockedCounter:
+    def __init__(self, start: int) -> None:
+        self._it = itertools.count(start)
+        self._lock = threading.Lock()
+
+    def __next__(self) -> int:
+        with self._lock:
+            return next(self._it)
+
+
+_ORDER_ID_COUNTER = _LockedCounter(1)
 
 
 @dataclass

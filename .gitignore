@@ -27,6 +27,7 @@ wheels/
 # Environments
 .env
 .venv
+.venv-ft
 env/
 venv/
 ENV/

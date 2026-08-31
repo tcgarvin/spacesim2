@@ -16,7 +16,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from spacesim2.analysis.loading import NoRunsFoundError, get_run_path_with_fallback
 from spacesim2.cli.output import print_error, print_success
 
 
@@ -61,6 +60,15 @@ def execute(args: argparse.Namespace) -> int:
     if not script.exists():
         print_error(f"Analysis script not found: {script}")
         return 1
+
+    # Imported here, not at module top: the analysis stack (polars et al.)
+    # is an optional extra, and importing it eagerly would break the whole
+    # CLI — including plain `run` — on environments without it (e.g. the
+    # free-threaded side venv, docs/threaded-actor-phase.md).
+    from spacesim2.analysis.loading import (
+        NoRunsFoundError,
+        get_run_path_with_fallback,
+    )
 
     # Resolve the run directory.
     if args.run is not None:

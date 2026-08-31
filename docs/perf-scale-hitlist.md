@@ -39,13 +39,23 @@
 > (commit 227cba5) rather than merged: at target scale it only breaks even
 > (8.9 → ~8.4 s/turn) because cancel-and-repost brains make the per-turn
 > state-sync blob ~55 MB and parent-side apply eats the parallel win.
-> **Item 8 (order diffing in the brains) is the prerequisite** for that
-> branch to pay (~10x blob shrink); land item 8 first, then revisit the
-> branch. Design + postmortem: `docs/parallel-actor-phase.md` on the
-> branch. Hard-won findings that survive regardless: brains carry
+> Hard-won findings that survive regardless: brains carry
 > cross-turn decision state (recipe choice, learned price brackets), and
 > macro behavior is measurably sensitive to inventory-dict iteration
 > order in brains.
+>
+> **Tier 3 LANDED 2026-08-31 — threaded actor phase** (`--workers N`,
+> `core/parallel.py`, docs/threaded-actor-phase.md). Post-item-8
+> measurement showed the fork branch's blob did NOT shrink (~53 MB; churn
+> was never dominant, and pruning's timestamp restamps counted as changes);
+> a targeted shrink pass (53→38 MB, checkpointed on the branch) got it to
+> 6.05 s/turn vs 8.1 serial. A free-threaded probe then beat that outright:
+> plain threads over the same per-planet shards on CPython 3.14t, no
+> serialization at all — **3.2 s/turn at 12 threads** (actor phase 7.3 →
+> 2.65 s), ~zero single-thread penalty, books consistent. That design is
+> now on main; the fork branch is superseded. Scaling is ~2.8x at 12
+> threads — global-`random` lock contention and shared-object refcount
+> traffic are the suspects; per-planet RNG streams are the next lever.
 
 Analysis date: 2026-08-30, against main @ 178f998. Sources: cProfile + scaling
 sweeps (driver timing `sim.run_turn()` directly) and a line-level code audit.
