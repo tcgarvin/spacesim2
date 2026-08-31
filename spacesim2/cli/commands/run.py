@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -129,6 +130,39 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
     return parser
 
 
+class _TailCapture(io.TextIOBase):
+    """A write-only text stream that retains only the last ``max_chars``.
+
+    Used to swallow simulation stdout during non-verbose runs with bounded
+    memory (the old ``io.StringIO`` grew without limit). Only rare warnings
+    (e.g. failed market settlements) write to stdout in quiet runs; the
+    retained tail is echoed after the run so they are not lost.
+    """
+
+    def __init__(self, max_chars: int = 64_000) -> None:
+        super().__init__()
+        self._max_chars = max_chars
+        self._chunks: deque[str] = deque()
+        self._size = 0
+        self.truncated = False
+
+    def write(self, s: str) -> int:
+        """Append text, evicting the oldest chunks beyond the size cap."""
+        self._chunks.append(s)
+        self._size += len(s)
+        while self._size > self._max_chars and len(self._chunks) > 1:
+            self._size -= len(self._chunks.popleft())
+            self.truncated = True
+        return len(s)
+
+    def writable(self) -> bool:
+        return True
+
+    def getvalue(self) -> str:
+        """Return the retained tail of everything written."""
+        return "".join(self._chunks)
+
+
 def execute(args: argparse.Namespace) -> int:
     """Execute the run command.
 
@@ -194,9 +228,11 @@ def execute(args: argparse.Namespace) -> int:
         ui = HeadlessUI(sim)
         ui.run(args.turns)
     else:
-        # Suppress simulation stdout (turn-by-turn prints)
+        # Suppress simulation stdout, keeping a bounded tail of any warnings
+        # (only rare warnings print in non-verbose runs; memory stays capped).
+        captured = _TailCapture()
         old_stdout = sys.stdout
-        sys.stdout = io.StringIO()
+        sys.stdout = captured
 
         try:
             # Default: progress bar (unless --quiet)
@@ -211,6 +247,13 @@ def execute(args: argparse.Namespace) -> int:
                 sim.run_turn()
         finally:
             sys.stdout = old_stdout
+
+        tail = captured.getvalue().strip()
+        if tail and not args.quiet:
+            header = "Simulation warnings"
+            if captured.truncated:
+                header += " (truncated to last 64KB)"
+            print(f"\n{header}:\n{tail}")
 
     # Emit compact behavioral summary (Tier-0 readout) if requested.
     if args.summary:

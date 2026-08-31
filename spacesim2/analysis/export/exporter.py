@@ -9,7 +9,42 @@ from spacesim2.analysis.export import schema
 from spacesim2.analysis.export.streaming_writer import StreamingParquetWriter
 
 if TYPE_CHECKING:
+    from spacesim2.core.commodity import CommodityDefinition
+    from spacesim2.core.market import Market, Transaction
     from spacesim2.core.simulation import Simulation
+
+
+def transactions_for_turn(market: "Market", turn: int) -> list["Transaction"]:
+    """Return the market's transactions for one turn, in execution order.
+
+    ``transaction_history`` is appended in turn order, so this turn's
+    transactions form a suffix; scanning backwards from the end makes this
+    O(this turn's transactions) instead of O(full history).
+
+    Args:
+        market: The market whose history to slice.
+        turn: The turn to select.
+
+    Returns:
+        This turn's transactions, oldest first.
+    """
+    result: list[Transaction] = []
+    for tx in reversed(market.transaction_history):
+        if tx.turn != turn:
+            break
+        result.append(tx)
+    result.reverse()
+    return result
+
+
+def volume_by_commodity(
+    transactions: list["Transaction"],
+) -> dict["CommodityDefinition", int]:
+    """Sum traded quantity per commodity over a list of transactions."""
+    volumes: dict[CommodityDefinition, int] = {}
+    for tx in transactions:
+        volumes[tx.commodity_type] = volumes.get(tx.commodity_type, 0) + tx.quantity
+    return volumes
 
 
 class SimulationExporter:
@@ -116,34 +151,31 @@ class SimulationExporter:
         for planet in simulation.planets:
             market = planet.market
 
-            # Market transactions (from this turn's history)
-            # Filter transactions by turn
-            for tx in market.transaction_history:
-                if tx.turn == turn:
-                    self.writers["market_transactions"].write_row(
-                        {
-                            "simulation_id": self.simulation_id,
-                            "turn": turn,
-                            "planet_name": planet.name,
-                            "commodity_id": tx.commodity_type.id,
-                            "buyer_id": f"actor-{tx.buyer.name}",
-                            "buyer_name": tx.buyer.name,
-                            "seller_id": f"actor-{tx.seller.name}",
-                            "seller_name": tx.seller.name,
-                            "quantity": tx.quantity,
-                            "price": tx.price,
-                            "total_amount": tx.quantity * tx.price,
-                        }
-                    )
+            # Market transactions: single pass over this turn's suffix of the
+            # history, which also yields per-commodity volume for snapshots.
+            turn_transactions = transactions_for_turn(market, turn)
+            for tx in turn_transactions:
+                self.writers["market_transactions"].write_row(
+                    {
+                        "simulation_id": self.simulation_id,
+                        "turn": turn,
+                        "planet_name": planet.name,
+                        "commodity_id": tx.commodity_type.id,
+                        "buyer_id": f"actor-{tx.buyer.name}",
+                        "buyer_name": tx.buyer.name,
+                        "seller_id": f"actor-{tx.seller.name}",
+                        "seller_name": tx.seller.name,
+                        "quantity": tx.quantity,
+                        "price": tx.price,
+                        "total_amount": tx.quantity * tx.price,
+                    }
+                )
+
+            turn_volumes = volume_by_commodity(turn_transactions)
 
             # Market snapshots (aggregated state)
             for commodity in simulation.commodity_registry.all_commodities():
-                # Calculate volume for this turn
-                turn_volume = sum(
-                    tx.quantity
-                    for tx in market.transaction_history
-                    if tx.turn == turn and tx.commodity_type == commodity
-                )
+                turn_volume = turn_volumes.get(commodity, 0)
 
                 # Get bid/ask spread
                 best_bid, best_ask = market.get_bid_ask_spread(commodity)

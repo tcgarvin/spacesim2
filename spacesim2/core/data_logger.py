@@ -29,14 +29,24 @@ class ActorTurnLog:
 
 
 class DataLogger:
+    """Collects per-turn logs for a selected subset of actors.
+
+    Only the current turn's logs are retained: every consumer (headless UI,
+    exporter) reads a turn's data before the next turn begins, so ``set_turn``
+    discards the previous turn's entries. This keeps memory bounded at
+    O(logged actors) instead of O(turns x logged actors).
+    """
+
     def __init__(self) -> None:
-        self._actor_sim_log: dict[tuple[int, str], ActorTurnLog] = defaultdict(
-            ActorTurnLog
-        )
+        # Logs for the current turn only, keyed by actor sim-log key.
+        self._actor_turn_logs: dict[str, ActorTurnLog] = defaultdict(ActorTurnLog)
         self.current_turn: int = 0
         self._actors_to_log: dict[str, LoggableActor] = {}
 
     def set_turn(self, turn: int) -> None:
+        """Advance to a new turn, discarding the previous turn's logs."""
+        if turn != self.current_turn:
+            self._actor_turn_logs.clear()
         self.current_turn = turn
 
     def _get_actor_sim_log_key(self, actor: LoggableActor) -> str:
@@ -51,40 +61,34 @@ class DataLogger:
     def add_actor_to_log(self, actor: LoggableActor) -> None:
         self._actors_to_log[actor.name] = actor
 
+    def _turn_log(self, actor: LoggableActor) -> ActorTurnLog:
+        """Get (creating if needed) the current turn's log for an actor."""
+        return self._actor_turn_logs[self._get_actor_sim_log_key(actor)]
+
     def log_actor_metrics(self, actor: LoggableActor) -> None:
         if not self.is_actor_logged(actor):
             return
 
-        turn_log = self._actor_sim_log[
-            (self.current_turn, self._get_actor_sim_log_key(actor))
-        ]
+        turn_log = self._turn_log(actor)
         turn_log.metrics = [replace(d.metrics) for d in actor.drives]
 
     def log_actor_note(self, actor: LoggableActor, note: str) -> None:
         if not self.is_actor_logged(actor):
             return
 
-        turn_log = self._actor_sim_log[
-            (self.current_turn, self._get_actor_sim_log_key(actor))
-        ]
-        turn_log.notes.append(note)
+        self._turn_log(actor).notes.append(note)
 
     def log_actor_command(self, actor: LoggableActor, action: Command) -> None:
         if not self.is_actor_logged(actor):
             return
 
-        turn_log = self._actor_sim_log[
-            (self.current_turn, self._get_actor_sim_log_key(actor))
-        ]
-        turn_log.commands.append(action)
+        self._turn_log(actor).commands.append(action)
 
     def log_actor_inventory(self, actor: LoggableActor) -> None:
         if not self.is_actor_logged(actor):
             return
 
-        turn_log = self._actor_sim_log[
-            (self.current_turn, self._get_actor_sim_log_key(actor))
-        ]
+        turn_log = self._turn_log(actor)
         # Convert inventory to dict with commodity names as keys
         turn_log.inventory = {
             commodity.id: quantity
@@ -99,9 +103,7 @@ class DataLogger:
         market_data = actor.get_market_activity_this_turn()
 
         # Serialize the data for logging
-        turn_log = self._actor_sim_log[
-            (self.current_turn, self._get_actor_sim_log_key(actor))
-        ]
+        turn_log = self._turn_log(actor)
         turn_log.market_status = {
             "current_orders": market_data.get("current_orders", {}),
             "events_this_turn": [
@@ -152,7 +154,21 @@ class DataLogger:
     def get_actor_turn_log(
         self, actor: LoggableActor, turn: int | None = None
     ) -> ActorTurnLog:
-        if turn is None:
-            turn = self.current_turn
-        turn_log_key = (turn, self._get_actor_sim_log_key(actor))
-        return self._actor_sim_log[turn_log_key]
+        """Return the actor's log for the current turn.
+
+        Only the current turn is retained (older turns are discarded by
+        ``set_turn``), so requesting a past turn is an error.
+
+        Args:
+            actor: The actor whose log to fetch.
+            turn: Must be the current turn or None (defaults to current).
+
+        Raises:
+            ValueError: If ``turn`` is not the current turn.
+        """
+        if turn is not None and turn != self.current_turn:
+            raise ValueError(
+                f"Only the current turn ({self.current_turn}) is retained; "
+                f"requested turn {turn}."
+            )
+        return self._turn_log(actor)
