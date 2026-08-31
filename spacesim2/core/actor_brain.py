@@ -522,12 +522,26 @@ class ActorBrain:
                     break
             if out_qty <= 0:
                 continue
+            # Local resource availability scales expected yield: "output"
+            # shrinks the quantity produced, "success" makes the whole turn
+            # fail with probability (1 - attr). Either way the expected unit
+            # cost divides by attr, so a resource-poor planet imputes
+            # extraction as genuinely expensive instead of assuming full
+            # yield (the mispricing that clustered refiners on ore-poor
+            # planets).
+            attribute_modifier = 1.0
+            if process.resource_attribute and actor.planet and actor.planet.attributes:
+                attribute_modifier = actor.planet.attributes.get_availability(
+                    process.resource_attribute.commodity
+                )
+            if attribute_modifier <= 0.0:
+                continue  # resource absent here -> can't make it locally
             recipe_cost = self._impute_recipe_cost(
                 actor, market, process, depth, visiting, memo
             )
             if math.isinf(recipe_cost):
                 continue
-            best = min(best, recipe_cost / out_qty)
+            best = min(best, recipe_cost / (out_qty * attribute_modifier))
 
         if not math.isinf(best):
             memo[commodity.id] = best

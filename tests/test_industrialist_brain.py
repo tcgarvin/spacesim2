@@ -429,6 +429,7 @@ class TestImputedProcurementBids:
         process.outputs = {refined: 1}
         process.tools_required = []
         process.facilities_required = []
+        process.resource_attribute = None
         actor.sim.process_registry.all_processes.return_value = [process]
         return refined, chem
 
@@ -567,6 +568,7 @@ class TestDriveBidReference:
         process.outputs = {refined: 1}
         process.tools_required = []
         process.facilities_required = []
+        process.resource_attribute = None
         actor.sim.process_registry.all_processes.return_value = [process]
         return refined, chem
 
