@@ -27,12 +27,12 @@ class ColonistBrain(ActorBrain):
 
     def decide_economic_action(self, actor: Actor) -> Optional[EconomicCommand]:
         """Decide which economic action to take this turn."""
-        # Per-call memoization: market quotes and process cost/yield figures
-        # are invariant for the whole of this call (nothing executes until
-        # the returned command is run by Actor.take_turn), so a single cache
-        # here avoids rescanning the process registry when both the tool
-        # willingness-to-pay path and the profitability search below run.
-        cache = BrainCache()
+        # Per-actor-turn memoization: market quotes and process cost/yield
+        # figures are shared with decide_market_actions later this turn (the
+        # market can't move in between), while inventory/skill-dependent
+        # entries auto-invalidate if the economic command changes actor
+        # state. See BrainCache for the invalidation rule.
+        cache = self._turn_cache(actor)
 
         # First, try to satisfy basic needs (food, clothing, shelter)
         registry = actor.sim.commodity_registry
@@ -155,13 +155,14 @@ class ColonistBrain(ActorBrain):
         ``_calculate_turn_opportunity_cost`` reports as the opportunity cost
         of a turn.
 
-        Memoized in ``cache.best_result`` for the lifetime of one decide_*
-        call: both callers below (the tool willingness-to-pay path and the
-        direct profitability search) ask this same question against the same
-        frozen market/inventory state, so a single scan answers both.
+        Memoized in ``cache.best_result``: both callers below (the tool
+        willingness-to-pay path and the direct profitability search) ask this
+        same question against the same frozen market/inventory state, so a
+        single scan answers both; the entry survives into later calls this
+        turn unless the actor's inventory or skills change (see BrainCache).
         """
         if cache is not None and cache.best_result is not None:
-            return cache.best_result  # type: ignore[return-value]
+            return cache.best_result
 
         best_process: Optional["ProcessDefinition"] = None
         best_discounted_profit = 10.0  # Must exceed government work profit
@@ -281,11 +282,12 @@ class ColonistBrain(ActorBrain):
         for order in existing_orders["buy"] + existing_orders["sell"]:
             commands.append(CancelOrderCommand(order.order_id))
 
-        # Per-call memoization: nothing executes until Actor.take_turn runs
-        # the returned commands afterward, so market quotes, replacement
-        # costs, and the profitability scan are stable for this whole call
-        # and safe to share across the three phases below.
-        cache = BrainCache()
+        # Per-actor-turn memoization, shared with decide_economic_action
+        # earlier this turn: market quotes carry over unconditionally (the
+        # economic command can't move the order books), while replacement
+        # costs and the profitability scan are reused only if the economic
+        # command left inventory/skills untouched. See BrainCache.
+        cache = self._turn_cache(actor)
 
         # Buy drive materials (food/clothing/shelter/health) at willingness-to-pay.
         commands.extend(self._drive_buy_commands(actor, market, cache))

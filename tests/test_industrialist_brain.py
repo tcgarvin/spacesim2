@@ -14,6 +14,20 @@ from spacesim2.core.commodity import CommodityDefinition, Inventory
 from spacesim2.core.process import ProcessDefinition
 
 
+def _wire_producer_index(sim_mock):
+    """Make the mocked registry's get_processes_producing consistent with the
+    list configured on all_processes.return_value (evaluated lazily, so tests
+    may set the list after the fixture runs). Mirrors the id-keyed producer
+    index in ProcessRegistry.
+    """
+    registry = sim_mock.process_registry
+    registry.get_processes_producing.side_effect = lambda commodity: [
+        p
+        for p in registry.all_processes.return_value
+        if any(out.id == commodity.id for out in p.outputs)
+    ]
+
+
 class _StubDrive:
     """Minimal drive implementing the interface ActorBrain pricing relies on."""
 
@@ -50,6 +64,7 @@ class TestIndustrialistBrain:
         actor.planet = Mock()
         actor.planet.market = Mock()
         actor.sim = Mock()
+        _wire_producer_index(actor.sim)
         actor.inventory = Mock(spec=Inventory)
         actor.drives = []
         return actor
@@ -413,6 +428,7 @@ class TestImputedProcurementBids:
         actor.money = money
         actor.planet = Mock()
         actor.sim = Mock()
+        _wire_producer_index(actor.sim)
         actor.inventory = Mock(spec=Inventory)
         return actor
 
@@ -551,6 +567,7 @@ class TestDriveBidReference:
     def _actor():
         actor = Mock(spec=Actor)
         actor.sim = Mock()
+        _wire_producer_index(actor.sim)
         actor.inventory = Mock(spec=Inventory)
         actor.inventory.has_quantity.return_value = False
         return actor

@@ -21,6 +21,10 @@ class ActorType(enum.Enum):
 class Actor:
     """Represents an economic actor in the simulation."""
 
+    # Class-level default so the attribute is part of the class contract
+    # (visible to Mock(spec=Actor) in tests); instances shadow it.
+    skills_version: int = 0
+
     def __init__(
         self,
         name: str,
@@ -56,6 +60,10 @@ class Actor:
 
         # Initialize skills
         self.skills: Dict[str, float] = {}
+        # Monotonic change counter, bumped whenever a skill rating is set.
+        # Together with Inventory.version it lets per-turn brain caches
+        # detect actor-state changes cheaply (see actor_brain.BrainCache).
+        self.skills_version: int = 0
 
         # Apply any initial skills provided
         if initial_skills:
@@ -86,6 +94,7 @@ class Actor:
             rating: The new rating for the skill
         """
         self.skills[skill_id] = max(0.5, min(3.0, rating))  # Clamp between 0.5 and 3.0
+        self.skills_version += 1
 
     def improve_skill(self, skill_id: str, amount: float) -> None:
         """Improve the actor's rating for a specific skill.

@@ -19,6 +19,20 @@ from spacesim2.core.planet_attributes import PlanetAttributes
 from spacesim2.core.process import ProcessDefinition, ResourceAttribute
 
 
+def _wire_producer_index(sim_mock):
+    """Make the mocked registry's get_processes_producing consistent with the
+    list configured on all_processes.return_value (evaluated lazily, so tests
+    may set the list after the fixture runs). Mirrors the id-keyed producer
+    index in ProcessRegistry.
+    """
+    registry = sim_mock.process_registry
+    registry.get_processes_producing.side_effect = lambda commodity: [
+        p
+        for p in registry.all_processes.return_value
+        if any(out.id == commodity.id for out in p.outputs)
+    ]
+
+
 def _commodity(cid: str) -> Mock:
     c = Mock(spec=CommodityDefinition)
     c.id = cid
@@ -30,6 +44,7 @@ def _actor(attributes: PlanetAttributes | None) -> Mock:
     """Actor on a planet; ``attributes=None`` models the feature being off."""
     actor = Mock(spec=Actor)
     actor.sim = Mock()
+    _wire_producer_index(actor.sim)
     actor.planet = Mock()
     actor.planet.attributes = attributes
     actor.inventory = Mock(spec=Inventory)

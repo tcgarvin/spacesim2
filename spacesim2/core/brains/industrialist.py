@@ -6,6 +6,8 @@ from spacesim2.core.actor_brain import (
     GOVERNMENT_WAGE,
     ActorBrain,
     BrainCache,
+    _get_avg_price,
+    _get_bid_ask,
 )
 from spacesim2.core.commands import (
     CancelOrderCommand,
@@ -55,10 +57,14 @@ class IndustrialistBrain(ActorBrain):
 
     def decide_economic_action(self, actor: "Actor") -> Optional[EconomicCommand]:
         """Decide which economic action to take this turn."""
+        # Per-actor-turn memoization shared with decide_market_actions later
+        # this turn; see BrainCache for the invalidation rule.
+        cache = self._turn_cache(actor)
+
         # First check if we need to re-evaluate our recipe (1% chance per turn)
         self.turns_since_recipe_evaluation += 1
         if self._should_reevaluate_recipe():
-            self.chosen_recipe_id = self._select_new_recipe(actor)
+            self.chosen_recipe_id = self._select_new_recipe(actor, cache)
             self.turns_since_recipe_evaluation = 0
         elif (
             self.chosen_recipe_id
@@ -71,7 +77,11 @@ class IndustrialistBrain(ActorBrain):
             process = actor.sim.process_registry.get_process(self.chosen_recipe_id)
             if process:
                 score = self._calculate_recipe_score(
-                    actor, actor.planet.market, process, require_entry_margin=False
+                    actor,
+                    actor.planet.market,
+                    process,
+                    memo=cache.imputed_cost,
+                    require_entry_margin=False,
                 )
                 if score <= 0:
                     self.chosen_recipe_id = None
@@ -79,7 +89,7 @@ class IndustrialistBrain(ActorBrain):
 
         # If we don't have a recipe yet, select one
         if not self.chosen_recipe_id:
-            self.chosen_recipe_id = self._select_new_recipe(actor)
+            self.chosen_recipe_id = self._select_new_recipe(actor, cache)
             self.turns_since_recipe_evaluation = 0
 
         registry = actor.sim.commodity_registry
@@ -154,11 +164,11 @@ class IndustrialistBrain(ActorBrain):
         for order in existing_orders["buy"] + existing_orders["sell"]:
             commands.append(CancelOrderCommand(order.order_id))
 
-        # Per-call memoization shared across both phases below: nothing
-        # executes until Actor.take_turn runs the returned commands
-        # afterward, so market quotes and replacement costs are stable for
-        # this whole call (see BrainCache).
-        cache = BrainCache()
+        # Per-actor-turn memoization shared with decide_economic_action
+        # earlier this turn: market quotes carry over unconditionally, and
+        # replacement/imputed costs are reused unless the economic command
+        # changed inventory or skills (see BrainCache).
+        cache = self._turn_cache(actor)
 
         # 1. Buy commodities for personal consumption at willingness-to-pay.
         #    Industrialists specialize in production and rely on the market for
@@ -177,7 +187,9 @@ class IndustrialistBrain(ActorBrain):
         """1% chance per turn to re-evaluate recipe choice."""
         return random.random() < 0.01
 
-    def _select_new_recipe(self, actor: "Actor") -> Optional[str]:
+    def _select_new_recipe(
+        self, actor: "Actor", cache: Optional[BrainCache] = None
+    ) -> Optional[str]:
         """Select a new recipe based on market viability and expected profit.
 
         Weights recipes by expected profit margin, preferring more profitable ones.
@@ -189,9 +201,10 @@ class IndustrialistBrain(ActorBrain):
         market = actor.planet.market
         recipe_scores: list[tuple[str, float]] = []
 
-        # One memo shared across the whole pass: imputed unit costs depend only
-        # on (fixed) market state and this actor's facility ownership/horizon.
-        memo: Dict[str, float] = {}
+        # One memo shared across the whole pass (and, via BrainCache, the
+        # rest of this actor-turn): imputed unit costs depend only on (fixed)
+        # market state and this actor's facility ownership/horizon.
+        memo: Dict[str, float] = cache.imputed_cost if cache is not None else {}
         for process in actor.sim.process_registry.all_processes():
             score = self._calculate_recipe_score(actor, market, process, memo)
             if score > 0:
@@ -284,7 +297,7 @@ class IndustrialistBrain(ActorBrain):
         return total_output_value - total_input_cost
 
     def _calculate_tool_willingness_to_pay(
-        self, actor: "Actor", market: "Market"
+        self, actor: "Actor", market: "Market", cache: Optional[BrainCache] = None
     ) -> int:
         """Calculate max price industrialist would pay for a tool.
 
@@ -297,8 +310,10 @@ class IndustrialistBrain(ActorBrain):
         if not common_metal:
             return GOVERNMENT_WAGE * 10  # Fallback
 
-        bid, ask = market.get_bid_ask_spread(common_metal)
-        metal_price = ask if ask is not None else market.get_avg_price(common_metal)
+        bid, ask = _get_bid_ask(market, common_metal, cache)
+        metal_price = (
+            ask if ask is not None else _get_avg_price(market, common_metal, cache)
+        )
         input_cost = int(metal_price * 2)
 
         # Opportunity cost: recipe profit if we have one, else govt wage
@@ -306,7 +321,12 @@ class IndustrialistBrain(ActorBrain):
         if self.chosen_recipe_id:
             process = actor.sim.process_registry.get_process(self.chosen_recipe_id)
             if process:
-                score = self._calculate_recipe_score(actor, market, process)
+                score = self._calculate_recipe_score(
+                    actor,
+                    market,
+                    process,
+                    memo=cache.imputed_cost if cache is not None else None,
+                )
                 if score > GOVERNMENT_WAGE:
                     opportunity_cost = int(score)
 
@@ -318,6 +338,7 @@ class IndustrialistBrain(ActorBrain):
         market: "Market",
         commodity: "CommodityDefinition",
         quantity_to_buy: int,
+        cache: Optional[BrainCache] = None,
     ) -> List[MarketCommand]:
         """Acquire ``quantity_to_buy`` units of ``commodity``: lift the cheapest
         resting ask, or, if none exists, rest a bid at the reference price so a
@@ -354,8 +375,9 @@ class IndustrialistBrain(ActorBrain):
             # threshold - the standoff just moves one tier up the chain.
             # Paying a small premium to bootstrap a local supplier is rational:
             # the alternative is producing nothing at all.
+            memo = cache.imputed_cost if cache is not None else {}
             imputed = self._imputed_unit_cost(
-                actor, market, commodity, 0, frozenset(), {}
+                actor, market, commodity, 0, frozenset(), memo
             )
             if math.isinf(imputed):
                 price = market.get_avg_price(commodity)
@@ -397,7 +419,9 @@ class IndustrialistBrain(ActorBrain):
             return commands
 
         # Calculate willingness to pay for tools upfront
-        tool_willingness_to_pay = self._calculate_tool_willingness_to_pay(actor, market)
+        tool_willingness_to_pay = self._calculate_tool_willingness_to_pay(
+            actor, market, cache
+        )
 
         # Buy required tools (maintain buffer of 2)
         TOOL_BUFFER = 2
@@ -443,7 +467,7 @@ class IndustrialistBrain(ActorBrain):
             current_quantity = actor.inventory.get_quantity(commodity)
             commands.extend(
                 self._buy_command(
-                    actor, market, commodity, needed_quantity - current_quantity
+                    actor, market, commodity, needed_quantity - current_quantity, cache
                 )
             )
 
@@ -472,7 +496,11 @@ class IndustrialistBrain(ActorBrain):
                 current_quantity = actor.inventory.get_quantity(commodity)
                 commands.extend(
                     self._buy_command(
-                        actor, market, commodity, needed_quantity - current_quantity
+                        actor,
+                        market,
+                        commodity,
+                        needed_quantity - current_quantity,
+                        cache,
                     )
                 )
 

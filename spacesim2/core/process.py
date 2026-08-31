@@ -56,6 +56,12 @@ class ProcessRegistry:
     def __init__(self, commodity_registry: CommodityRegistry):
         self._processes: Dict[str, ProcessDefinition] = {}
         self._commodity_registry = commodity_registry
+        # Lazily built caches. The registry is populated during setup and
+        # immutable afterward; both caches are dropped whenever a load adds
+        # processes, and rebuilt on next access. Returned lists are shared —
+        # callers must treat them as read-only.
+        self._all_cache: Optional[List[ProcessDefinition]] = None
+        self._producers_index: Optional[Dict[str, List[ProcessDefinition]]] = None
 
     def load_from_file(self, filepath: str | Path) -> None:
         """Load process definitions from a YAML file."""
@@ -134,6 +140,8 @@ class ProcessRegistry:
                     resource_attribute=resource_attribute,
                 )
                 self._processes[process_def.id] = process_def
+            self._all_cache = None
+            self._producers_index = None
         except Exception as e:
             print(f"Error loading processes from {filepath}: {e}")
 
@@ -142,18 +150,35 @@ class ProcessRegistry:
         return self._processes.get(process_id)
 
     def all_processes(self) -> List[ProcessDefinition]:
-        """Get all process definitions."""
-        return list(self._processes.values())
+        """Get all process definitions.
+
+        Returns a cached list (this is called on hot decision paths every
+        turn). Callers must treat the returned list as read-only.
+        """
+        if self._all_cache is None:
+            self._all_cache = list(self._processes.values())
+        return self._all_cache
 
     def get_processes_producing(
         self, commodity: CommodityDefinition
     ) -> List[ProcessDefinition]:
         """Get all processes that produce a specific commodity.
 
+        Backed by a commodity-id -> producers index built once per registry
+        load, so lookups are O(1) instead of a full registry scan. The
+        returned list is shared with the index; callers must treat it as
+        read-only.
+
         Args:
             commodity: A CommodityDefinition object
         """
-        return [p for p in self._processes.values() if commodity in p.outputs]
+        if self._producers_index is None:
+            index: Dict[str, List[ProcessDefinition]] = {}
+            for process in self._processes.values():
+                for output in process.outputs:
+                    index.setdefault(output.id, []).append(process)
+            self._producers_index = index
+        return self._producers_index.get(commodity.id, [])
 
     def get_processes_consuming(
         self, commodity: CommodityDefinition

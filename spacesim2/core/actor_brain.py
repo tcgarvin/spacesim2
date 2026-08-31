@@ -39,24 +39,39 @@ DEFAULT_FACILITY_AMORTIZATION_HORIZON = 300
 
 
 class BrainCache:
-    """Per-call memoization for market quotes and process cost/yield math.
+    """Per-actor-turn memoization for market quotes and cost/yield math.
 
-    Scoped to the lifetime of a single top-level ``decide_economic_action``
-    or ``decide_market_actions`` call. Within one such call nothing mutates
-    actor state or market order books: commands built during the call are
-    only *returned*, not executed - ``Actor.take_turn`` executes the
-    economic command and then the market commands afterward, in separate
-    steps. That makes market quotes, per-process expected-yield/skill
-    factors, and per-commodity replacement costs provably invariant for the
-    call's duration, so caching them here can never let an actor see stale
-    data mid-decision.
+    Each brain owns one ``BrainCache`` (created lazily by
+    ``ActorBrain._turn_cache``) that lives for a whole actor-turn — i.e.
+    across both ``decide_economic_action`` and ``decide_market_actions``.
 
-    Callers must create a **fresh** ``BrainCache`` at the top of each
-    top-level ``decide_*`` call and must never reuse one across a call
-    boundary where an economic command actually executes (that's where
-    inventory/skills can change). Keys are commodity/process ``id`` strings
-    rather than the objects themselves, since object identity/hashing is
-    outside this module's concern.
+    **Invalidation rule.** ``refresh`` compares a snapshot key on every
+    top-level ``decide_*`` entry:
+
+    * ``sim.current_turn`` changed -> everything is cleared. Between sim
+      turns other actors trade, orders match, and prices move, so nothing
+      cached here survives a turn boundary.
+    * Same turn but the actor's state key ``(id(actor), inventory.version,
+      skills_version)`` changed -> only the actor-state group is cleared.
+      Within one actor-turn the *market* never mutates between the two
+      ``decide_*`` calls (``Actor.take_turn`` executes the economic command
+      in between, and economic commands touch only inventory/skills/money,
+      never the order books), so quotes stay valid; but a ``ProcessCommand``
+      does change inventory and skills, which is exactly what the version
+      counters detect.
+
+    Cached values fall into two groups:
+
+    * Market-derived, valid for the whole sim turn: ``bid_ask``,
+      ``avg_price``, and ``yield_modifier`` (planet attributes are fixed for
+      the run; scoped per turn only to keep lifetime rules uniform).
+    * Actor-state-derived, additionally invalidated when inventory or skills
+      change: ``skill_factor``, ``replacement_cost``, ``imputed_cost``, and
+      ``best_result`` (they read tool/facility ownership, skill ratings, or
+      ``can_execute_process``).
+
+    Money and drive metrics are deliberately *not* cached anywhere here, so
+    they need no versioning. Keys are commodity/process ``id`` strings.
     """
 
     __slots__ = (
@@ -65,19 +80,49 @@ class BrainCache:
         "yield_modifier",
         "skill_factor",
         "replacement_cost",
+        "imputed_cost",
         "best_result",
+        "_turn",
+        "_actor_key",
     )
 
     def __init__(self) -> None:
+        self._turn: int = -1
+        self._actor_key: Tuple[int, int, int] = (-1, -1, -1)
+        self._reset_market_group()
+        self._reset_actor_group()
+
+    def _reset_market_group(self) -> None:
         self.bid_ask: Dict[str, Tuple[Optional[int], Optional[int]]] = {}
         self.avg_price: Dict[str, float] = {}
         self.yield_modifier: Dict[str, float] = {}
+
+    def _reset_actor_group(self) -> None:
         self.skill_factor: Dict[str, float] = {}
         self.replacement_cost: Dict[str, Optional[float]] = {}
+        # Shared memo for make-or-buy imputation (see _imputed_unit_cost).
+        self.imputed_cost: Dict[str, float] = {}
         # Colonist-specific: memoized (best_process, raw_profit) for the
-        # whole-registry profitability scan. Opaque here; colonist.py owns
-        # the type, this is just a slot to hold it.
-        self.best_result: Optional[Tuple[object, float]] = None
+        # whole-registry profitability scan (see colonist.py).
+        self.best_result: Optional[Tuple[Optional["ProcessDefinition"], float]] = None
+
+    def refresh(self, actor: "Actor") -> "BrainCache":
+        """Validate the cache against ``actor``'s current turn/state.
+
+        Call at the top of every top-level ``decide_*`` call; see the class
+        docstring for the invalidation rule. Returns ``self`` for chaining.
+        """
+        turn = actor.sim.current_turn
+        actor_key = (id(actor), actor.inventory.version, actor.skills_version)
+        if turn != self._turn:
+            self._turn = turn
+            self._actor_key = actor_key
+            self._reset_market_group()
+            self._reset_actor_group()
+        elif actor_key != self._actor_key:
+            self._actor_key = actor_key
+            self._reset_actor_group()
+        return self
 
 
 def _get_bid_ask(
@@ -113,6 +158,21 @@ class ActorBrain:
 
     # Subclasses may override per-instance (IndustrialistBrain randomizes it).
     facility_amortization_horizon: int = DEFAULT_FACILITY_AMORTIZATION_HORIZON
+
+    # Per-brain memo cache; created lazily by _turn_cache. Class-level default
+    # so subclasses need not call a base __init__.
+    _cache: Optional[BrainCache] = None
+
+    def _turn_cache(self, actor: "Actor") -> BrainCache:
+        """The brain's per-actor-turn ``BrainCache``, freshly validated.
+
+        Call once at the top of each ``decide_*`` entry point; the cache is
+        created lazily on first use and invalidated per the rule documented
+        on ``BrainCache``.
+        """
+        if self._cache is None:
+            self._cache = BrainCache()
+        return self._cache.refresh(actor)
 
     def decide_economic_action(self, actor: "Actor") -> Optional[EconomicCommand]:
         """Decide which economic action to take this turn."""
@@ -176,7 +236,7 @@ class ActorBrain:
             else:
                 # No affordable local supply: post a standing bid that escalates
                 # toward the ceiling under scarcity pressure to attract imports.
-                ref = self._drive_bid_reference(actor, market, target_commodity)
+                ref = self._drive_bid_reference(actor, market, target_commodity, cache)
                 pressure = market.scarcity_pressure_for(target_commodity)
                 bid = min(wtp, int(round(ref * (1.0 + pressure))))
 
@@ -191,7 +251,11 @@ class ActorBrain:
         return commands
 
     def _drive_bid_reference(
-        self, actor: "Actor", market: "Market", commodity: "CommodityDefinition"
+        self,
+        actor: "Actor",
+        market: "Market",
+        commodity: "CommodityDefinition",
+        cache: Optional[BrainCache] = None,
     ) -> float:
         """Reference price a standing drive bid escalates from.
 
@@ -217,7 +281,10 @@ class ActorBrain:
         cached = market.drive_anchor_cache.get(commodity.id)
         if cached is not None and cached[0] == market.current_turn:
             return cached[1]
-        imputed = self._imputed_unit_cost(actor, market, commodity, 0, frozenset(), {})
+        memo = cache.imputed_cost if cache is not None else {}
+        imputed = self._imputed_unit_cost(
+            actor, market, commodity, 0, frozenset(), memo
+        )
         anchor = (
             float(market.get_avg_price(commodity)) if math.isinf(imputed) else imputed
         )
@@ -339,15 +406,14 @@ class ActorBrain:
         actor has no way to make the good, in which case there is no
         make-it-yourself ceiling.
 
-        Memoized per commodity in ``cache`` for the duration of one decide_*
-        call (market state and this actor's inventory/skills are frozen for
-        that whole call — see ``BrainCache``).
+        Memoized per commodity in ``cache``; entries live until the turn ends
+        or the actor's inventory/skills change (see ``BrainCache``).
         """
         if cache is not None and commodity.id in cache.replacement_cost:
             return cache.replacement_cost[commodity.id]
 
         best: Optional[float] = None
-        for process in actor.sim.process_registry.all_processes():
+        for process in actor.sim.process_registry.get_processes_producing(commodity):
             out_qty = process.outputs.get(commodity, 0)
             if out_qty <= 0:
                 continue
@@ -405,8 +471,8 @@ class ActorBrain:
 
         Memoized per process in ``cache`` (see ``BrainCache``); a planet's
         attributes never change during a run, so this is even safe to reuse
-        beyond a single call, but we scope it to the call for simplicity and
-        to keep cache lifetime rules uniform across all cached quantities.
+        beyond a turn, but we scope it to the turn to keep cache lifetime
+        rules uniform across all cached quantities.
         """
         if cache is not None and process.id in cache.yield_modifier:
             return cache.yield_modifier[process.id]
@@ -434,10 +500,9 @@ class ActorBrain:
         (and waste the turn) proportionally; ratings above 1.0 sometimes
         double the run. Always positive (ratings are clamped to >= 0.5).
 
-        Memoized per process in ``cache`` for the duration of one decide_*
-        call; the actor's skills don't change mid-call (skill improvement
-        happens only when a ProcessCommand executes, which is after
-        decide_economic_action returns).
+        Memoized per process in ``cache``; entries are dropped whenever the
+        actor's skills change (skill improvement bumps ``skills_version``
+        when a ProcessCommand executes — see ``BrainCache``).
         """
         if cache is not None and process.id in cache.skill_factor:
             return cache.skill_factor[process.id]
@@ -514,7 +579,7 @@ class ActorBrain:
         # 2. Make it: cheapest producing recipe, costed recursively.
         visiting = visiting | {commodity.id}
         best = math.inf
-        for process in actor.sim.process_registry.all_processes():
+        for process in actor.sim.process_registry.get_processes_producing(commodity):
             out_qty = 0
             for out_commodity, qty in process.outputs.items():
                 if out_commodity.id == commodity.id:

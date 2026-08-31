@@ -32,6 +32,11 @@ class CommodityRegistry:
 
     def __init__(self) -> None:
         self._commodities: Dict[str, CommodityDefinition] = {}
+        # Cached snapshot returned by all_commodities(); rebuilt after any
+        # registration. The registry is append-only during setup and immutable
+        # afterward, so handing out one shared list is safe as long as callers
+        # never mutate it (see all_commodities docstring).
+        self._all_cache: Optional[List[CommodityDefinition]] = None
 
     def load_from_file(self, filepath: str | Path) -> None:
         """Load commodity definitions from a YAML file."""
@@ -47,20 +52,28 @@ class CommodityRegistry:
                     description=commodity_data["description"],
                 )
                 self._commodities[commodity_def.id] = commodity_def
+            self._all_cache = None
         except Exception as e:
             print(f"Error loading commodities from {filepath}: {e}")
 
     def add_commodity(self, commodity_def: CommodityDefinition) -> None:
         """Add a commodity definition to the registry."""
         self._commodities[commodity_def.id] = commodity_def
+        self._all_cache = None
 
     def get_commodity(self, commodity_id: str) -> Optional[CommodityDefinition]:
         """Get a commodity definition by ID."""
         return self._commodities.get(commodity_id)
 
     def all_commodities(self) -> List[CommodityDefinition]:
-        """Get all commodity definitions."""
-        return list(self._commodities.values())
+        """Get all commodity definitions.
+
+        Returns a cached list (this is called thousands of times per turn on
+        hot paths). Callers must treat the returned list as read-only.
+        """
+        if self._all_cache is None:
+            self._all_cache = list(self._commodities.values())
+        return self._all_cache
 
     def __getitem__(self, commodity_id: str) -> CommodityDefinition:
         """Get a commodity definition by ID using dictionary-like access."""
@@ -73,12 +86,20 @@ class CommodityRegistry:
 class Inventory:
     """Manages an actor's inventory of commodities."""
 
+    # Class-level default so the attribute is part of the class contract
+    # (visible to Mock(spec=Inventory) in tests); instances shadow it.
+    version: int = 0
+
     def __init__(self) -> None:
         # Only store CommodityDefinition objects
         self.commodities: Dict[CommodityDefinition, int] = {}
         self.reserved_commodities: Dict[
             CommodityDefinition, int
         ] = {}  # For market orders
+        # Monotonic change counter, bumped on every mutation (add/remove/
+        # reserve/unreserve). Lets caches (see actor_brain.BrainCache) detect
+        # "inventory changed since I was computed" with one int comparison.
+        self.version: int = 0
 
     def add_commodity(self, commodity: CommodityDefinition, quantity: int) -> None:
         """Add a quantity of a commodity to the inventory."""
@@ -88,6 +109,7 @@ class Inventory:
         # Only handle CommodityDefinition objects
         current_quantity = self.commodities.get(commodity, 0)
         self.commodities[commodity] = current_quantity + quantity
+        self.version += 1
 
     def remove_commodity(self, commodity: CommodityDefinition, quantity: int) -> bool:
         """
@@ -105,6 +127,7 @@ class Inventory:
             return False
 
         self.commodities[commodity] = current_quantity - quantity
+        self.version += 1
 
         # Remove the entry if quantity is zero
         if self.commodities[commodity] == 0:
@@ -134,6 +157,7 @@ class Inventory:
         if self.commodities[commodity] == 0:
             del self.commodities[commodity]
 
+        self.version += 1
         return True
 
     def unreserve_commodity(
@@ -160,6 +184,7 @@ class Inventory:
             # Clean up if reserved is zero
             if self.reserved_commodities[commodity] == 0:
                 del self.reserved_commodities[commodity]
+            self.version += 1
 
     def get_quantity(self, commodity: CommodityDefinition) -> int:
         """Get the total quantity of a commodity in the inventory (available + reserved)."""
