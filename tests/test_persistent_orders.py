@@ -21,8 +21,6 @@ def food_commodity():
 def test_order_reservation_system(food_commodity, mock_sim) -> None:
     """Test that resources are properly reserved when placing orders."""
     market = Market()
-    market.commodity_registry = CommodityRegistry()
-    market.commodity_registry._commodities["food"] = food_commodity
 
     # Create buyer with 100 money
     buyer = get_actor("Buyer", mock_sim, initial_money=100)
@@ -76,8 +74,6 @@ def test_order_reservation_system(food_commodity, mock_sim) -> None:
 def test_cancel_order(food_commodity, mock_sim) -> None:
     """Test that orders can be canceled and resources unreserved."""
     market = Market()
-    market.commodity_registry = CommodityRegistry()
-    market.commodity_registry._commodities["food"] = food_commodity
 
     # Create buyer with 100 money
     buyer = get_actor("Buyer", mock_sim, initial_money=100)
@@ -122,8 +118,6 @@ def test_cancel_order(food_commodity, mock_sim) -> None:
 def test_order_persistence(food_commodity, mock_sim) -> None:
     """Test that orders persist across market cycles."""
     market = Market()
-    market.commodity_registry = CommodityRegistry()
-    market.commodity_registry._commodities["food"] = food_commodity
 
     # Create buyer and seller
     buyer = get_actor("Buyer", mock_sim, initial_money=100)
@@ -161,8 +155,6 @@ def test_order_persistence(food_commodity, mock_sim) -> None:
 def test_actor_order_tracking(food_commodity, mock_sim) -> None:
     """Test that actors can track their orders."""
     market = Market()
-    market.commodity_registry = CommodityRegistry()
-    market.commodity_registry._commodities["food"] = food_commodity
 
     # Create buyer
     buyer = get_actor("Buyer", mock_sim, initial_money=100)
@@ -214,7 +206,6 @@ def test_integrated_market_simulation(mock_sim) -> None:
     )
     commodity_registry._commodities["food"] = food_commodity
     commodity_registry._commodities["nova_fuel"] = fuel_commodity
-    market.commodity_registry = commodity_registry
 
     # Create a planet
     planet = Planet("Test Planet", market)

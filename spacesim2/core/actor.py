@@ -6,8 +6,9 @@ from spacesim2.core.commands import (
     PlaceSellOrderCommand,
     prune_unchanged_order_commands,
 )
-from spacesim2.core.commodity import Inventory
+from spacesim2.core.commodity import CommodityRegistry, Inventory
 from spacesim2.core.planet import Planet
+from spacesim2.core.process import ProcessRegistry
 
 if TYPE_CHECKING:
     from spacesim2.core.actor_brain import ActorBrain
@@ -77,6 +78,27 @@ class Actor:
         self.last_market_check_turn: int = (
             0  # Track when actor last checked market status
         )
+
+    @property
+    def commodity_registry(self) -> "CommodityRegistry":
+        """The commodity registry this actor should read.
+
+        Planet-local when the actor is on a planet — actor-phase worker
+        threads then touch their own shard's definition copies instead of
+        contending on one shared set (see Planet's docstring). Falls back to
+        the sim-level registry for planetless actors (tests); the two are
+        interchangeable because definitions hash/compare by id.
+        """
+        if self.planet is not None:
+            return self.planet.commodity_registry
+        return self.sim.commodity_registry
+
+    @property
+    def process_registry(self) -> "ProcessRegistry":
+        """The process registry this actor should read (see commodity_registry)."""
+        if self.planet is not None:
+            return self.planet.process_registry
+        return self.sim.process_registry
 
     def get_skill_rating(self, skill_id: str) -> float:
         """Get the actor's rating for a specific skill.
@@ -165,7 +187,7 @@ class Actor:
         """Check if actor can execute a process without actually executing it."""
         # Actor always has sim reference
 
-        process = self.sim.process_registry.get_process(process_id)
+        process = self.process_registry.get_process(process_id)
         if not process:
             return False
 

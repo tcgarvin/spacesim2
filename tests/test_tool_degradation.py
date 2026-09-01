@@ -62,7 +62,12 @@ def test_tool_not_consumed_on_successful_process():
 
     # Create planet
     market = Market()
-    planet = Planet("Test Planet", market)
+    planet = Planet(
+        "Test Planet",
+        market,
+        commodity_registry=sim.commodity_registry,
+        process_registry=sim.process_registry,
+    )
 
     # Create actor with inputs and tools
     actor = get_actor("Test Actor", sim, planet=planet)
@@ -87,7 +92,12 @@ def test_tool_breaks_when_random_below_threshold():
 
     # Create planet
     market = Market()
-    planet = Planet("Test Planet", market)
+    planet = Planet(
+        "Test Planet",
+        market,
+        commodity_registry=sim.commodity_registry,
+        process_registry=sim.process_registry,
+    )
 
     # Create actor with inputs and tools
     actor = get_actor("Test Actor", sim, planet=planet)
@@ -116,7 +126,12 @@ def test_tool_break_logged_when_data_logger_present():
 
     # Create planet
     market = Market()
-    planet = Planet("Test Planet", market)
+    planet = Planet(
+        "Test Planet",
+        market,
+        commodity_registry=sim.commodity_registry,
+        process_registry=sim.process_registry,
+    )
 
     # Create actor with inputs and tools
     actor = get_actor("Test Actor", sim, planet=planet)
@@ -146,7 +161,12 @@ def test_tool_degradation_only_after_successful_process():
 
     # Create planet
     market = Market()
-    planet = Planet("Test Planet", market)
+    planet = Planet(
+        "Test Planet",
+        market,
+        commodity_registry=sim.commodity_registry,
+        process_registry=sim.process_registry,
+    )
 
     # Create actor with tools but NO inputs - process should fail
     actor = get_actor("Test Actor", sim, planet=planet)
@@ -213,7 +233,12 @@ def test_tool_degradation_probability_is_independent_per_tool():
 
     # Create planet
     market = Market()
-    planet = Planet("Test Planet", market)
+    planet = Planet(
+        "Test Planet",
+        market,
+        commodity_registry=sim.commodity_registry,
+        process_registry=sim.process_registry,
+    )
 
     # Create actor
     actor = get_actor("Test Actor", sim, planet=planet)
@@ -265,7 +290,12 @@ def test_process_without_tools_has_no_degradation():
 
     # Create planet
     market = Market()
-    planet = Planet("Test Planet", market)
+    planet = Planet(
+        "Test Planet",
+        market,
+        commodity_registry=sim.commodity_registry,
+        process_registry=sim.process_registry,
+    )
 
     # Create actor
     actor = get_actor("Test Actor", sim, planet=planet)
@@ -284,7 +314,12 @@ def test_statistical_tool_degradation_rate():
 
     # Create planet
     market = Market()
-    planet = Planet("Test Planet", market)
+    planet = Planet(
+        "Test Planet",
+        market,
+        commodity_registry=sim.commodity_registry,
+        process_registry=sim.process_registry,
+    )
 
     # Run many processes and count degradation events
     num_runs = 10000

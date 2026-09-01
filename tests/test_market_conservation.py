@@ -29,7 +29,6 @@ def market_with_actors(
 ) -> Tuple[Market, Actor, Actor]:
     """Set up a market with buyer and seller actors."""
     market = Market()
-    market.commodity_registry = commodity_registry
 
     buyer = get_actor("Buyer", mock_sim, initial_money=1000)
     seller = get_actor("Seller", mock_sim, initial_money=500)

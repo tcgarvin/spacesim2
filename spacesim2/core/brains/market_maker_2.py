@@ -143,7 +143,7 @@ class MarketMakerBrain(ActorBrain):
 
         # Market maker trades all transportable commodities
         all_commodities = [
-            c for c in actor.sim.commodity_registry.all_commodities() if c.transportable
+            c for c in actor.commodity_registry.all_commodities() if c.transportable
         ]
 
         # Split the buy-side capital pool evenly across every market so each one

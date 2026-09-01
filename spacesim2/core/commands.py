@@ -52,7 +52,7 @@ class ProcessCommand(EconomicCommand):
         Returns:
             bool: True if process was executed successfully, False otherwise
         """
-        process = actor.sim.process_registry.get_process(self.process_id)
+        process = actor.process_registry.get_process(self.process_id)
         if not process:
             return False
 

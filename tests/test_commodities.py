@@ -210,7 +210,12 @@ def test_actor_execute_process(monkeypatch):
 
     # Create planet
     market = Market()
-    planet = Planet("Test Planet", market)
+    planet = Planet(
+        "Test Planet",
+        market,
+        commodity_registry=sim.commodity_registry,
+        process_registry=sim.process_registry,
+    )
 
     # Create actor with required inputs, tools, and facilities
     actor = get_actor("Test Actor", sim, planet=planet)
@@ -274,7 +279,12 @@ def test_process_requires_facility():
 
     # Create planet
     market = Market()
-    planet = Planet("Test Planet", market)
+    planet = Planet(
+        "Test Planet",
+        market,
+        commodity_registry=sim.commodity_registry,
+        process_registry=sim.process_registry,
+    )
 
     # Create actor with required inputs but without facility
     actor = get_actor("Test Actor", sim, planet=planet)

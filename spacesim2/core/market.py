@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Deque, Dict, List, Optional, Tuple, Union
 from spacesim2.core.actor import Actor
 
 if TYPE_CHECKING:
-    from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
+    from spacesim2.core.commodity import CommodityDefinition
     from spacesim2.core.ship import Ship
 
 # Anything that can place orders and trade in a market. Ships participate in
@@ -189,9 +189,6 @@ class Market:
         # ship planners call it repeatedly between mutations, so repeat calls
         # avoid a per-call re-sort of the book.
         self._bid_levels_cache: Dict["CommodityDefinition", List[Tuple[int, int]]] = {}
-
-        # Reference to commodity registry (will be set by simulation)
-        self.commodity_registry: Optional["CommodityRegistry"] = None
 
     def _trim_transaction_history(self) -> None:
         """Trim transaction histories in place (last 1000 global, 100 per actor).

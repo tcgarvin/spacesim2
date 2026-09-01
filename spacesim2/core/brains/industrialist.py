@@ -74,7 +74,7 @@ class IndustrialistBrain(ActorBrain):
             # Exit an unprofitable line of business: if the recipe no longer
             # covers its inputs plus a turn of labor, drop it and re-select
             # (falling back to government work when nothing is viable).
-            process = actor.sim.process_registry.get_process(self.chosen_recipe_id)
+            process = actor.process_registry.get_process(self.chosen_recipe_id)
             if process:
                 score = self._calculate_recipe_score(
                     actor,
@@ -92,7 +92,7 @@ class IndustrialistBrain(ActorBrain):
             self.chosen_recipe_id = self._select_new_recipe(actor, cache)
             self.turns_since_recipe_evaluation = 0
 
-        registry = actor.sim.commodity_registry
+        registry = actor.commodity_registry
 
         # Handle critical needs - food, clothing, shelter
         food_commodity = registry.get_commodity("food")
@@ -125,7 +125,7 @@ class IndustrialistBrain(ActorBrain):
 
         # Check if our chosen recipe needs facilities/tools we lack
         if self.chosen_recipe_id:
-            process = actor.sim.process_registry.get_process(self.chosen_recipe_id)
+            process = actor.process_registry.get_process(self.chosen_recipe_id)
             if process:
                 # Check for missing facilities and try to build them
                 for facility in process.facilities_required:
@@ -205,7 +205,7 @@ class IndustrialistBrain(ActorBrain):
         # rest of this actor-turn): imputed unit costs depend only on (fixed)
         # market state and this actor's facility ownership/horizon.
         memo: Dict[str, float] = cache.imputed_cost if cache is not None else {}
-        for process in actor.sim.process_registry.all_processes():
+        for process in actor.process_registry.all_processes():
             score = self._calculate_recipe_score(actor, market, process, memo)
             if score > 0:
                 recipe_scores.append((process.id, score))
@@ -306,7 +306,7 @@ class IndustrialistBrain(ActorBrain):
         - Opportunity cost of the turn (recipe profit or govt wage)
         """
         # Cost of inputs to make tools (2 common_metal)
-        common_metal = actor.sim.commodity_registry.get_commodity("common_metal")
+        common_metal = actor.commodity_registry.get_commodity("common_metal")
         if not common_metal:
             return GOVERNMENT_WAGE * 10  # Fallback
 
@@ -319,7 +319,7 @@ class IndustrialistBrain(ActorBrain):
         # Opportunity cost: recipe profit if we have one, else govt wage
         opportunity_cost = GOVERNMENT_WAGE
         if self.chosen_recipe_id:
-            process = actor.sim.process_registry.get_process(self.chosen_recipe_id)
+            process = actor.process_registry.get_process(self.chosen_recipe_id)
             if process:
                 score = self._calculate_recipe_score(
                     actor,
@@ -414,7 +414,7 @@ class IndustrialistBrain(ActorBrain):
         if self.chosen_recipe_id is None:
             return commands
 
-        process = actor.sim.process_registry.get_process(self.chosen_recipe_id)
+        process = actor.process_registry.get_process(self.chosen_recipe_id)
         if not process:
             return commands
 
@@ -481,7 +481,7 @@ class IndustrialistBrain(ActorBrain):
             build_process_id = self._get_build_process_for_facility(facility)
             if not build_process_id:
                 continue
-            build_process = actor.sim.process_registry.get_process(build_process_id)
+            build_process = actor.process_registry.get_process(build_process_id)
             if not build_process:
                 continue
             # The build needs both commodity inputs (bricks, glass, ...) and

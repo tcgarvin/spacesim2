@@ -9,13 +9,13 @@ import yaml
 class CommodityDefinition:
     """Definition of a commodity in the simulation.
 
-    Commodities are singletons owned by ``CommodityRegistry`` (each id is
-    constructed exactly once), so identity is the correct equality semantics.
-    ``eq=False`` makes the dataclass inherit ``object``'s identity-based
-    ``__hash__``/``__eq__`` instead of generating field-by-field versions. These
-    objects are used as dict keys on extremely hot paths (inventories, order
-    books, price histories); the generated hash re-hashed all four fields on
-    every lookup and dominated the profile. Identity hash is O(1) on the id().
+    Hash/eq are by ``id`` so that equal definitions from different registry
+    copies (e.g. per-planet registries under the threaded actor phase) are
+    interchangeable as dict keys. These objects key extremely hot dicts
+    (inventories, order books, price histories): ``eq=False`` suppresses the
+    dataclass-generated field-by-field dunders (which once dominated the
+    profile) in favor of the single-field versions below, and ``__eq__`` keeps
+    an identity fast path so same-registry lookups never compare strings.
     """
 
     id: str
@@ -25,6 +25,16 @@ class CommodityDefinition:
 
     def __str__(self) -> str:
         return self.name
+
+    def __hash__(self) -> int:
+        return hash(self.id)
+
+    def __eq__(self, other: object) -> bool:
+        if self is other:
+            return True
+        if not isinstance(other, CommodityDefinition):
+            return NotImplemented
+        return self.id == other.id
 
 
 class CommodityRegistry:

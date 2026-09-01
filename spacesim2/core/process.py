@@ -27,9 +27,16 @@ class ResourceAttribute:
             )
 
 
-@dataclass
+@dataclass(eq=False)
 class ProcessDefinition:
-    """Definition of a production process."""
+    """Definition of a production process.
+
+    Hash/eq are by ``id`` (mirroring ``CommodityDefinition``) so definitions
+    from different registry copies are interchangeable. ``eq=False`` because
+    the generated field-wise ``__eq__`` would make the class unhashable and
+    compare deep input/output dicts; tests still mutate instances in place,
+    so the class stays unfrozen.
+    """
 
     id: str
     name: str
@@ -48,6 +55,16 @@ class ProcessDefinition:
 
     def __str__(self) -> str:
         return self.name
+
+    def __hash__(self) -> int:
+        return hash(self.id)
+
+    def __eq__(self, other: object) -> bool:
+        if self is other:
+            return True
+        if not isinstance(other, ProcessDefinition):
+            return NotImplemented
+        return self.id == other.id
 
 
 class ProcessRegistry:

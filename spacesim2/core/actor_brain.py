@@ -413,7 +413,7 @@ class ActorBrain:
             return cache.replacement_cost[commodity.id]
 
         best: Optional[float] = None
-        for process in actor.sim.process_registry.get_processes_producing(commodity):
+        for process in actor.process_registry.get_processes_producing(commodity):
             out_qty = process.outputs.get(commodity, 0)
             if out_qty <= 0:
                 continue
@@ -579,7 +579,7 @@ class ActorBrain:
         # 2. Make it: cheapest producing recipe, costed recursively.
         visiting = visiting | {commodity.id}
         best = math.inf
-        for process in actor.sim.process_registry.get_processes_producing(commodity):
+        for process in actor.process_registry.get_processes_producing(commodity):
             out_qty = 0
             for out_commodity, qty in process.outputs.items():
                 if out_commodity.id == commodity.id:
@@ -654,7 +654,7 @@ class ActorBrain:
             build_process_id = self._get_build_process_for_facility(facility)
             if not build_process_id:
                 return math.inf
-            build_process = actor.sim.process_registry.get_process(build_process_id)
+            build_process = actor.process_registry.get_process(build_process_id)
             if not build_process:
                 return math.inf
             build_cost = self._impute_recipe_cost(

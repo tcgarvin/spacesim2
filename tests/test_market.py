@@ -31,7 +31,6 @@ def test_market_initialization() -> None:
 def test_place_buy_order(commodity_registry, food_commodity, mock_sim) -> None:
     """Test that a buy order can be placed in the market."""
     market = Market()
-    market.commodity_registry = commodity_registry
     actor = get_actor("Buyer", mock_sim, initial_money=100)
 
     market.place_buy_order(actor, food_commodity, 10, 5)
@@ -48,7 +47,6 @@ def test_place_buy_order(commodity_registry, food_commodity, mock_sim) -> None:
 def test_place_sell_order(commodity_registry, food_commodity, mock_sim) -> None:
     """Test that a sell order can be placed in the market."""
     market = Market()
-    market.commodity_registry = commodity_registry
     actor = get_actor("Seller", mock_sim)
 
     # Add some food to inventory
@@ -68,7 +66,6 @@ def test_place_sell_order(commodity_registry, food_commodity, mock_sim) -> None:
 def test_order_matching(commodity_registry, food_commodity, mock_sim) -> None:
     """Test that orders can be matched and transactions executed."""
     market = Market()
-    market.commodity_registry = commodity_registry
 
     # Create actors
     buyer = get_actor("Buyer", mock_sim, initial_money=100)
@@ -105,7 +102,6 @@ def test_order_matching(commodity_registry, food_commodity, mock_sim) -> None:
 def test_order_partial_matching(commodity_registry, food_commodity, mock_sim) -> None:
     """Test that orders can be partially matched."""
     market = Market()
-    market.commodity_registry = commodity_registry
 
     # Create actors
     buyer = get_actor("Buyer", mock_sim, initial_money=100)
@@ -140,7 +136,6 @@ def test_no_match_when_bid_too_low(
 ) -> None:
     """Test that orders don't match when the bid is lower than the ask."""
     market = Market()
-    market.commodity_registry = commodity_registry
 
     buyer = get_actor("Buyer", mock_sim, initial_money=100)
     seller = get_actor("Seller", mock_sim)
@@ -165,7 +160,6 @@ def test_no_match_when_bid_too_low(
 def test_get_avg_price(commodity_registry, food_commodity) -> None:
     """Test that average price calculation works correctly."""
     market = Market()
-    market.commodity_registry = commodity_registry
 
     # When no transactions, should return base price (now 10 by default)
     assert market.get_avg_price(food_commodity) == 10
@@ -180,7 +174,6 @@ def test_get_avg_price(commodity_registry, food_commodity) -> None:
 def test_has_price_signal(commodity_registry, food_commodity) -> None:
     """has_price_signal distinguishes a real traded price from the default 10."""
     market = Market()
-    market.commodity_registry = commodity_registry
 
     # Never traded: get_avg_price fabricates 10, but there is no real signal.
     assert market.get_avg_price(food_commodity) == 10

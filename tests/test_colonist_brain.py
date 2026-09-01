@@ -86,7 +86,7 @@ class TestColonistBrainToolMarket:
         # With planet but no profitable processes
         mock_actor.planet.market.get_bid_ask_spread.return_value = (None, None)
         mock_actor.planet.market.get_avg_price.return_value = 10
-        mock_actor.sim.process_registry.all_processes.return_value = []
+        mock_actor.process_registry.all_processes.return_value = []
         mock_actor.can_execute_process.return_value = False
 
         result = brain._calculate_turn_opportunity_cost(mock_actor)
@@ -109,7 +109,7 @@ class TestColonistBrainToolMarket:
         process.resource_attribute = None
         process.relevant_skills = []
 
-        mock_actor.sim.process_registry.all_processes.return_value = [process]
+        mock_actor.process_registry.all_processes.return_value = [process]
         mock_actor.can_execute_process.return_value = True
 
         # Input costs 5, output sells for 30 = 25 profit
@@ -134,14 +134,14 @@ class TestColonistBrainToolMarket:
         def get_commodity(name):
             return mock_commodities.get(name)
 
-        mock_actor.sim.commodity_registry.get_commodity.side_effect = get_commodity
+        mock_actor.commodity_registry.get_commodity.side_effect = get_commodity
 
         # Metal costs 15 each (ask price)
         mock_actor.planet.market.get_bid_ask_spread.return_value = (None, 15)
         mock_actor.planet.market.get_avg_price.return_value = 15
 
         # No profitable processes, so opportunity cost = 10 (govt wage)
-        mock_actor.sim.process_registry.all_processes.return_value = []
+        mock_actor.process_registry.all_processes.return_value = []
         mock_actor.can_execute_process.return_value = False
 
         willingness = brain._calculate_tool_willingness_to_pay(mock_actor)
@@ -157,7 +157,7 @@ class TestColonistBrainToolMarket:
         def get_commodity(name):
             return mock_commodities.get(name)
 
-        mock_actor.sim.commodity_registry.get_commodity.side_effect = get_commodity
+        mock_actor.commodity_registry.get_commodity.side_effect = get_commodity
 
         # Setup: actor has low tool inventory
         def get_quantity(commodity):
@@ -181,7 +181,7 @@ class TestColonistBrainToolMarket:
         mock_actor.planet.market.get_bid_ask_spread.side_effect = get_spread
         mock_actor.planet.market.get_avg_price.return_value = 10
 
-        mock_actor.sim.process_registry.all_processes.return_value = []
+        mock_actor.process_registry.all_processes.return_value = []
         mock_actor.can_execute_process.return_value = True
 
         action = brain.decide_economic_action(mock_actor)
@@ -198,7 +198,7 @@ class TestColonistBrainToolMarket:
         def get_commodity(name):
             return mock_commodities.get(name)
 
-        mock_actor.sim.commodity_registry.get_commodity.side_effect = get_commodity
+        mock_actor.commodity_registry.get_commodity.side_effect = get_commodity
 
         # Setup: actor has low tool inventory
         def get_quantity(commodity):
@@ -222,7 +222,7 @@ class TestColonistBrainToolMarket:
         mock_actor.planet.market.get_bid_ask_spread.side_effect = get_spread
         mock_actor.planet.market.get_avg_price.return_value = 10
 
-        mock_actor.sim.process_registry.all_processes.return_value = []
+        mock_actor.process_registry.all_processes.return_value = []
         mock_actor.can_execute_process.return_value = True
 
         action = brain.decide_economic_action(mock_actor)
@@ -239,8 +239,8 @@ class TestColonistBrainToolMarket:
         def get_commodity(name):
             return mock_commodities.get(name)
 
-        mock_actor.sim.commodity_registry.get_commodity.side_effect = get_commodity
-        mock_actor.sim.commodity_registry.all_commodities.return_value = [
+        mock_actor.commodity_registry.get_commodity.side_effect = get_commodity
+        mock_actor.commodity_registry.all_commodities.return_value = [
             mock_commodities["simple_tools"]
         ]
 
@@ -258,7 +258,7 @@ class TestColonistBrainToolMarket:
         mock_actor.planet.market.get_avg_price.return_value = 15
 
         # No profitable processes
-        mock_actor.sim.process_registry.all_processes.return_value = []
+        mock_actor.process_registry.all_processes.return_value = []
         mock_actor.can_execute_process.return_value = False
 
         commands = brain.decide_market_actions(mock_actor)
@@ -279,8 +279,8 @@ class TestColonistBrainToolMarket:
         def get_commodity(name):
             return mock_commodities.get(name)
 
-        mock_actor.sim.commodity_registry.get_commodity.side_effect = get_commodity
-        mock_actor.sim.commodity_registry.all_commodities.return_value = [
+        mock_actor.commodity_registry.get_commodity.side_effect = get_commodity
+        mock_actor.commodity_registry.all_commodities.return_value = [
             mock_commodities["simple_tools"]
         ]
 
@@ -304,7 +304,7 @@ class TestColonistBrainToolMarket:
         mock_actor.planet.market.get_bid_ask_spread.return_value = (None, 15)
         mock_actor.planet.market.get_avg_price.return_value = 15
 
-        mock_actor.sim.process_registry.all_processes.return_value = []
+        mock_actor.process_registry.all_processes.return_value = []
         mock_actor.can_execute_process.return_value = False
 
         commands = brain.decide_market_actions(mock_actor)
@@ -325,8 +325,8 @@ class TestColonistBrainToolMarket:
         def get_commodity(name):
             return mock_commodities.get(name)
 
-        mock_actor.sim.commodity_registry.get_commodity.side_effect = get_commodity
-        mock_actor.sim.commodity_registry.all_commodities.return_value = [
+        mock_actor.commodity_registry.get_commodity.side_effect = get_commodity
+        mock_actor.commodity_registry.all_commodities.return_value = [
             mock_commodities["simple_tools"]
         ]
 
@@ -350,7 +350,7 @@ class TestColonistBrainToolMarket:
         mock_actor.planet.market.get_bid_ask_spread.return_value = (None, 15)
         mock_actor.planet.market.get_avg_price.return_value = 15
 
-        mock_actor.sim.process_registry.all_processes.return_value = []
+        mock_actor.process_registry.all_processes.return_value = []
         mock_actor.can_execute_process.return_value = False
 
         commands = brain.decide_market_actions(mock_actor)

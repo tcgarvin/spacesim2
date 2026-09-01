@@ -14,13 +14,13 @@ from spacesim2.core.commodity import CommodityDefinition, Inventory
 from spacesim2.core.process import ProcessDefinition
 
 
-def _wire_producer_index(sim_mock):
+def _wire_producer_index(actor_mock):
     """Make the mocked registry's get_processes_producing consistent with the
     list configured on all_processes.return_value (evaluated lazily, so tests
     may set the list after the fixture runs). Mirrors the id-keyed producer
     index in ProcessRegistry.
     """
-    registry = sim_mock.process_registry
+    registry = actor_mock.process_registry
     registry.get_processes_producing.side_effect = lambda commodity: [
         p
         for p in registry.all_processes.return_value
@@ -64,7 +64,7 @@ class TestIndustrialistBrain:
         actor.planet = Mock()
         actor.planet.market = Mock()
         actor.sim = Mock()
-        _wire_producer_index(actor.sim)
+        _wire_producer_index(actor)
         actor.inventory = Mock(spec=Inventory)
         actor.drives = []
         return actor
@@ -105,10 +105,8 @@ class TestIndustrialistBrain:
     ):
         """Test that actor tries to make food in emergency (< 2 food)."""
         # Setup: Very low food, can make food
-        mock_actor.sim.commodity_registry.get_commodity.return_value = (
-            mock_food_commodity
-        )
-        mock_actor.sim.process_registry.all_processes.return_value = []  # No processes available for recipe selection
+        mock_actor.commodity_registry.get_commodity.return_value = mock_food_commodity
+        mock_actor.process_registry.all_processes.return_value = []  # No processes available for recipe selection
         mock_actor.inventory.get_quantity.return_value = 1  # Critical shortage
         mock_actor.can_execute_process.return_value = True
 
@@ -125,9 +123,7 @@ class TestIndustrialistBrain:
     ):
         """Test that actor executes chosen recipe when possible."""
         # Setup: Adequate food, has chosen recipe, can execute it
-        mock_actor.sim.commodity_registry.get_commodity.return_value = (
-            mock_food_commodity
-        )
+        mock_actor.commodity_registry.get_commodity.return_value = mock_food_commodity
         mock_actor.inventory.get_quantity.return_value = 10  # Plenty of food
         mock_actor.inventory.has_quantity.return_value = True  # Has all required items
         mock_actor.can_execute_process.return_value = True
@@ -136,7 +132,7 @@ class TestIndustrialistBrain:
         mock_process = Mock(spec=ProcessDefinition)
         mock_process.tools_required = []
         mock_process.facilities_required = []
-        mock_actor.sim.process_registry.get_process.return_value = mock_process
+        mock_actor.process_registry.get_process.return_value = mock_process
 
         brain.chosen_recipe_id = "test_recipe"
 
@@ -150,9 +146,7 @@ class TestIndustrialistBrain:
     ):
         """Test that actor does government work when can't execute recipe."""
         # Setup: Adequate food, has recipe but can't execute it
-        mock_actor.sim.commodity_registry.get_commodity.return_value = (
-            mock_food_commodity
-        )
+        mock_actor.commodity_registry.get_commodity.return_value = mock_food_commodity
         mock_actor.inventory.get_quantity.return_value = 10  # Plenty of food
         mock_actor.inventory.has_quantity.return_value = True  # Has all required items
         mock_actor.can_execute_process.return_value = False  # Can't execute recipe
@@ -161,7 +155,7 @@ class TestIndustrialistBrain:
         mock_process = Mock(spec=ProcessDefinition)
         mock_process.tools_required = []
         mock_process.facilities_required = []
-        mock_actor.sim.process_registry.get_process.return_value = mock_process
+        mock_actor.process_registry.get_process.return_value = mock_process
 
         brain.chosen_recipe_id = "test_recipe"
 
@@ -234,7 +228,7 @@ class TestIndustrialistBrain:
             "buy": [existing_buy_order],
             "sell": [existing_sell_order],
         }
-        mock_actor.sim.commodity_registry.get_commodity.return_value = (
+        mock_actor.commodity_registry.get_commodity.return_value = (
             None  # No food commodity
         )
 
@@ -269,13 +263,11 @@ class TestIndustrialistBrain:
         mock_actor.planet.market.sell_orders = {mock_food_commodity: [sell_order]}
         mock_actor.planet.market.get_bid_ask_spread.return_value = (None, 5)
         mock_actor.planet.market.get_actor_orders.return_value = {"buy": [], "sell": []}
-        mock_actor.sim.commodity_registry.get_commodity.return_value = (
-            mock_food_commodity
-        )
+        mock_actor.commodity_registry.get_commodity.return_value = mock_food_commodity
         # Food trades around 10, so willingness (price * (1 - buffer) = 10) sits
         # above the 5 ask; no recipe produces food locally (no make-it cap).
         mock_actor.planet.market.get_avg_price.return_value = 10
-        mock_actor.sim.process_registry.all_processes.return_value = []
+        mock_actor.process_registry.all_processes.return_value = []
 
         commands = brain.decide_market_actions(mock_actor)
 
@@ -366,7 +358,7 @@ class TestIndustrialistBrain:
             commodity="fiber", effect="output"
         )
 
-        mock_actor.sim.process_registry.all_processes.return_value = [
+        mock_actor.process_registry.all_processes.return_value = [
             biomass_process,
             fiber_process,
         ]
@@ -428,7 +420,7 @@ class TestImputedProcurementBids:
         actor.money = money
         actor.planet = Mock()
         actor.sim = Mock()
-        _wire_producer_index(actor.sim)
+        _wire_producer_index(actor)
         actor.inventory = Mock(spec=Inventory)
         return actor
 
@@ -446,7 +438,7 @@ class TestImputedProcurementBids:
         process.tools_required = []
         process.facilities_required = []
         process.resource_attribute = None
-        actor.sim.process_registry.all_processes.return_value = [process]
+        actor.process_registry.all_processes.return_value = [process]
         return refined, chem
 
     def test_never_traded_input_bids_imputed_cost_not_default(self, brain):
@@ -567,7 +559,7 @@ class TestDriveBidReference:
     def _actor():
         actor = Mock(spec=Actor)
         actor.sim = Mock()
-        _wire_producer_index(actor.sim)
+        _wire_producer_index(actor)
         actor.inventory = Mock(spec=Inventory)
         actor.inventory.has_quantity.return_value = False
         return actor
@@ -586,7 +578,7 @@ class TestDriveBidReference:
         process.tools_required = []
         process.facilities_required = []
         process.resource_attribute = None
-        actor.sim.process_registry.all_processes.return_value = [process]
+        actor.process_registry.all_processes.return_value = [process]
         return refined, chem
 
     @staticmethod
@@ -646,7 +638,7 @@ class TestDriveBidReference:
         assert market.drive_anchor_cache[refined.id] == (5, pytest.approx(22.0))
 
         # Recipe disappears: fresh imputation would now yield inf -> fallback.
-        actor.sim.process_registry.all_processes.return_value = []
+        actor.process_registry.all_processes.return_value = []
 
         # Same turn: served from cache, still 22.
         assert brain._drive_bid_reference(actor, market, refined) == pytest.approx(22.0)

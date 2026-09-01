@@ -457,12 +457,8 @@ class Simulation:
         # Create the planets with their markets
         for (name, x, y), attributes in zip(planet_data, attribute_rolls):
             # Create and initialize the market for the planet
-            planet_market = Market()
-            planet_market.commodity_registry = (
-                self.commodity_registry
-            )  # Give market access to commodity registry
-
-            planet = Planet(name, planet_market, x=x, y=y, attributes=attributes)
+            # Planet loads its own private registry copies (see Planet docstring).
+            planet = Planet(name, Market(), x=x, y=y, attributes=attributes)
             self.planets.append(planet)
 
             # Create actors for each planet
@@ -513,7 +509,7 @@ class Simulation:
 
                 # Initialize actor drives
                 drives: list[ActorDrive] = [
-                    Drive(commodity_registry=self.commodity_registry)
+                    Drive(commodity_registry=planet.commodity_registry)
                     for Drive in (FoodDrive, ClothingDrive, ShelterDrive, HealthDrive)
                 ]
 
@@ -542,7 +538,7 @@ class Simulation:
 
             # Initialize actor drives
             drives = [
-                Drive(commodity_registry=self.commodity_registry)
+                Drive(commodity_registry=planet.commodity_registry)
                 for Drive in (FoodDrive, ClothingDrive, ShelterDrive, HealthDrive)
             ]
 

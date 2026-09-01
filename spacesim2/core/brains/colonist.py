@@ -35,7 +35,7 @@ class ColonistBrain(ActorBrain):
         cache = self._turn_cache(actor)
 
         # First, try to satisfy basic needs (food, clothing, shelter)
-        registry = actor.sim.commodity_registry
+        registry = actor.commodity_registry
 
         food_commodity = registry.get_commodity("food")
         biomass_commodity = registry.get_commodity("biomass")
@@ -168,7 +168,7 @@ class ColonistBrain(ActorBrain):
         best_discounted_profit = 10.0  # Must exceed government work profit
         best_raw_profit = 0.0
 
-        for process in actor.sim.process_registry.all_processes():
+        for process in actor.process_registry.all_processes():
             # Calculate potential profit using actual market bid/ask prices
             input_cost = 0.0
             for commodity, quantity in process.inputs.items():
@@ -246,7 +246,7 @@ class ColonistBrain(ActorBrain):
             return 0  # Cannot determine willingness without market
 
         # Cost of inputs to make tools (2 common_metal per processes.yaml)
-        common_metal = actor.sim.commodity_registry.get_commodity("common_metal")
+        common_metal = actor.commodity_registry.get_commodity("common_metal")
         if not common_metal:
             return 0
 
@@ -304,7 +304,7 @@ class ColonistBrain(ActorBrain):
         self, actor: Actor, market: "Market", cache: Optional[BrainCache] = None
     ) -> List[MarketCommand]:
         """Buy simple_tools up to a buffer, bounded by willingness to pay."""
-        tools = actor.sim.commodity_registry.get_commodity("simple_tools")
+        tools = actor.commodity_registry.get_commodity("simple_tools")
         if not tools:
             return []
 
@@ -344,7 +344,7 @@ class ColonistBrain(ActorBrain):
         """Sell inventory above keep levels, floored at replacement cost."""
         commands: List[MarketCommand] = []
         keep_levels = self._keep_levels_by_commodity(actor)
-        for commodity in actor.sim.commodity_registry.all_commodities():
+        for commodity in actor.commodity_registry.all_commodities():
             if not commodity.transportable:
                 continue
             keep = keep_levels.get(commodity.id, 0)

@@ -19,13 +19,13 @@ from spacesim2.core.planet_attributes import PlanetAttributes
 from spacesim2.core.process import ProcessDefinition, ResourceAttribute
 
 
-def _wire_producer_index(sim_mock):
+def _wire_producer_index(actor_mock):
     """Make the mocked registry's get_processes_producing consistent with the
     list configured on all_processes.return_value (evaluated lazily, so tests
     may set the list after the fixture runs). Mirrors the id-keyed producer
     index in ProcessRegistry.
     """
-    registry = sim_mock.process_registry
+    registry = actor_mock.process_registry
     registry.get_processes_producing.side_effect = lambda commodity: [
         p
         for p in registry.all_processes.return_value
@@ -44,7 +44,7 @@ def _actor(attributes: PlanetAttributes | None) -> Mock:
     """Actor on a planet; ``attributes=None`` models the feature being off."""
     actor = Mock(spec=Actor)
     actor.sim = Mock()
-    _wire_producer_index(actor.sim)
+    _wire_producer_index(actor)
     actor.planet = Mock()
     actor.planet.attributes = attributes
     actor.inventory = Mock(spec=Inventory)
@@ -91,13 +91,13 @@ class TestAttributeScaledImputation:
         """
         ore = _commodity("nova_fuel_ore")
         actor = _actor(PlanetAttributes(nova_fuel_ore=1.0))
-        actor.sim.process_registry.all_processes.return_value = [
+        actor.process_registry.all_processes.return_value = [
             _mining_process(ore, effect="success")
         ]
         rich_cost = _impute(brain, actor, ore)
 
         poor_actor = _actor(PlanetAttributes(nova_fuel_ore=0.1))
-        poor_actor.sim.process_registry.all_processes.return_value = [
+        poor_actor.process_registry.all_processes.return_value = [
             _mining_process(ore, effect="success")
         ]
         poor_cost = _impute(brain, poor_actor, ore)
@@ -110,7 +110,7 @@ class TestAttributeScaledImputation:
         expected unit cost by the availability."""
         ore = _commodity("nova_fuel_ore")
         actor = _actor(PlanetAttributes(nova_fuel_ore=0.25))
-        actor.sim.process_registry.all_processes.return_value = [
+        actor.process_registry.all_processes.return_value = [
             _mining_process(ore, effect="output", out_qty=2)
         ]
 
@@ -123,7 +123,7 @@ class TestAttributeScaledImputation:
         """attr 0.0 must skip the recipe (inf), never divide by zero."""
         ore = _commodity("nova_fuel_ore")
         actor = _actor(PlanetAttributes(nova_fuel_ore=0.0))
-        actor.sim.process_registry.all_processes.return_value = [
+        actor.process_registry.all_processes.return_value = [
             _mining_process(ore, effect="success")
         ]
 
@@ -133,7 +133,7 @@ class TestAttributeScaledImputation:
         """Absent local resources leave the buy-branch untouched."""
         ore = _commodity("nova_fuel_ore")
         actor = _actor(PlanetAttributes(nova_fuel_ore=0.0))
-        actor.sim.process_registry.all_processes.return_value = [
+        actor.process_registry.all_processes.return_value = [
             _mining_process(ore, effect="success")
         ]
         market = _dead_market()
@@ -147,7 +147,7 @@ class TestAttributeScaledImputation:
         """Default (all-1.0) attributes apply no scaling."""
         ore = _commodity("nova_fuel_ore")
         actor = _actor(PlanetAttributes())
-        actor.sim.process_registry.all_processes.return_value = [
+        actor.process_registry.all_processes.return_value = [
             _mining_process(ore, effect="success")
         ]
 
@@ -159,6 +159,6 @@ class TestAttributeScaledImputation:
         actor = _actor(PlanetAttributes(nova_fuel_ore=0.1))
         process = _mining_process(good, effect="success")
         process.resource_attribute = None
-        actor.sim.process_registry.all_processes.return_value = [process]
+        actor.process_registry.all_processes.return_value = [process]
 
         assert _impute(brain, actor, good) == pytest.approx(GOVERNMENT_WAGE)
