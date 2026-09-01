@@ -5,9 +5,12 @@ planet per commodity (distances, "is fuel purchasable here", "how far to the
 nearest fuel source"), which made a single planning decision O(planets^3).
 This module centralizes those facts in a :class:`Navigator`:
 
-- **Geometry** (planet positions are fixed after setup): a lazily built
-  pairwise distance matrix and per-planet proximity orderings, computed once
-  per simulation and shared by every ship.
+- **Geometry** (planets and star lanes are fixed after setup): a lazily
+  built all-pairs **shortest-route** matrix over the star-lane network (see
+  ``core/galaxy.py``), the route waypoints that realise those distances, and
+  per-planet proximity orderings — computed once per simulation and shared by
+  every ship. Ships can only fly along lanes, so "distance" throughout ship
+  planning means lane-route length, never straight-line distance.
 - **Market-derived facts** (order books mutate as brains post orders): fuel
   purchasability, nearest-fuel-source distances, the galaxy fuel price
   reference, and the trade-signal index (per-planet commodity summaries plus
@@ -24,7 +27,7 @@ Use :func:`get_navigator` to obtain the per-simulation shared instance.
 
 from __future__ import annotations
 
-import math
+import heapq
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, FrozenSet, List, Optional, Tuple
 from weakref import WeakKeyDictionary
@@ -103,7 +106,11 @@ class Navigator:
         # --- static geometry (built lazily, rebuilt if the planet set changes)
         self._planet_index: Dict["Planet", int] = {}
         self._distances: List[List[float]] = []
+        # _previous[i][j] = index of the planet before j on the shortest route
+        # from i to j (-1 for j == i); routes are rebuilt from it on demand.
+        self._previous: List[List[int]] = []
         self._by_proximity: Dict["Planet", List["Planet"]] = {}
+        self._lane_count = -1  # lane count the matrix was built from
         # --- static commodity facts
         self._tradeable: Optional[List["CommodityDefinition"]] = None
         self._fuel: Optional["CommodityDefinition"] = None
@@ -148,15 +155,39 @@ class Navigator:
     # ------------------------------------------------------------------
 
     def distance(self, a: "Planet", b: "Planet") -> float:
-        """Euclidean distance between two planets, from the cached matrix."""
+        """Length of the shortest star-lane route between two planets."""
+        i, j = self._indices(a, b)
+        return self._distances[i][j]
+
+    def route(self, a: "Planet", b: "Planet") -> List["Planet"]:
+        """Planets along the shortest lane route from ``a`` to ``b``.
+
+        The list starts with ``a`` and ends with ``b`` (just ``[a]`` when they
+        are the same planet); consecutive entries are always joined by a lane.
+        """
+        i, j = self._indices(a, b)
+        planets = self._sim.planets
+        path = [j]
+        while path[-1] != i:
+            path.append(self._previous[i][path[-1]])
+        path.reverse()
+        return [planets[k] for k in path]
+
+    def _indices(self, a: "Planet", b: "Planet") -> Tuple[int, int]:
+        """Matrix indices of two planets, rebuilding geometry if needed."""
         index = self._planet_index
         i = index.get(a)
         j = index.get(b)
-        if i is None or j is None:
+        if (
+            i is None
+            or j is None
+            or len(index) != len(self._sim.planets)
+            or len(self._sim.star_lanes) != self._lane_count
+        ):
             self._rebuild_geometry()
             i = self._planet_index[a]
             j = self._planet_index[b]
-        return self._distances[i][j]
+        return i, j
 
     def nearest_other_distance(self, planet: "Planet") -> Optional[float]:
         """Distance to the closest other planet, or None if it is alone."""
@@ -176,13 +207,58 @@ class Navigator:
         return ordered
 
     def _rebuild_geometry(self) -> None:
-        """(Re)build the pairwise distance matrix from planet positions."""
+        """(Re)build the all-pairs shortest-route matrix over the star lanes.
+
+        One Dijkstra per planet over the lane graph; O(P * L log P), trivial
+        for the few hundred planets and lanes a galaxy holds.
+
+        Raises:
+            ValueError: If some planet cannot reach every other planet — the
+                galaxy generator guarantees connectivity, so this means a
+                hand-built world forgot to add lanes.
+        """
         planets = self._sim.planets
-        self._planet_index = {planet: i for i, planet in enumerate(planets)}
-        self._distances = [
-            [math.sqrt((b.x - a.x) ** 2 + (b.y - a.y) ** 2) for b in planets]
-            for a in planets
-        ]
+        lanes = self._sim.star_lanes
+        count = len(planets)
+        index = {planet: i for i, planet in enumerate(planets)}
+        adjacency: List[List[Tuple[int, float]]] = [[] for _ in planets]
+        for lane in lanes.lanes:
+            ia, ib = index[lane.a], index[lane.b]
+            adjacency[ia].append((ib, lane.length))
+            adjacency[ib].append((ia, lane.length))
+
+        infinity = float("inf")
+        distances: List[List[float]] = []
+        previous: List[List[int]] = []
+        for source in range(count):
+            dist = [infinity] * count
+            prev = [-1] * count
+            dist[source] = 0.0
+            frontier = [(0.0, source)]
+            while frontier:
+                d, node = heapq.heappop(frontier)
+                if d > dist[node]:
+                    continue
+                for nxt, length in adjacency[node]:
+                    candidate = d + length
+                    if candidate < dist[nxt]:
+                        dist[nxt] = candidate
+                        prev[nxt] = node
+                        heapq.heappush(frontier, (candidate, nxt))
+            unreachable = [planets[k].name for k in range(count) if dist[k] == infinity]
+            if unreachable:
+                raise ValueError(
+                    f"star-lane network is disconnected: {planets[source].name} "
+                    f"cannot reach {', '.join(unreachable[:5])}"
+                    + (" ..." if len(unreachable) > 5 else "")
+                )
+            distances.append(dist)
+            previous.append(prev)
+
+        self._planet_index = index
+        self._distances = distances
+        self._previous = previous
+        self._lane_count = len(lanes)
         self._by_proximity.clear()
 
     # ------------------------------------------------------------------

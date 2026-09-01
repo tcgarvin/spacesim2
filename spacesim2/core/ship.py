@@ -1404,6 +1404,9 @@ class Ship:
         self.reserved_money = 0  # Money reserved for market orders
         self.planet = planet
         self.destination: Optional[Planet] = None  # Target planet when traveling
+        # Lane route being flown: origin first, destination last, every
+        # consecutive pair joined by a star lane. Empty while docked.
+        self.route: List[Planet] = []
         self.cargo = Inventory()  # Cargo hold for commodities
         self.inventory = self.cargo  # Alias for compatibility with market code
         self.cargo_capacity = cargo_capacity
@@ -1427,10 +1430,13 @@ class Ship:
         # Initialize with a brain
         self.brain = TraderBrain(self)
 
-    @staticmethod
-    def calculate_distance(planet1: Planet, planet2: Planet) -> float:
-        """Calculate the distance between two planets."""
-        return math.sqrt((planet2.x - planet1.x) ** 2 + (planet2.y - planet1.y) ** 2)
+    def route_distance(self, origin: Planet, destination: Planet) -> float:
+        """Length of the shortest star-lane route between two planets.
+
+        Ships fly along lanes, so this — not the straight-line distance — is
+        what fuel and travel time are charged on.
+        """
+        return get_navigator(self.simulation).distance(origin, destination)
 
     @staticmethod
     def calculate_fuel_needed(distance: float) -> int:
@@ -1640,8 +1646,11 @@ class Ship:
             self.last_action = "Cannot start journey - fuel commodity not defined"
             return False
 
-        # Calculate distance and fuel requirements
-        distance = Ship.calculate_distance(self.planet, destination)
+        # Calculate route, distance and fuel requirements. The whole route is
+        # fuelled up front; intermediate planets are flown past, not visited.
+        navigator = get_navigator(self.simulation)
+        route = navigator.route(self.planet, destination)
+        distance = navigator.distance(self.planet, destination)
         adjusted_fuel_needed = self.fuel_required(distance)
 
         # Check if we have enough fuel
@@ -1659,8 +1668,13 @@ class Ship:
         self.travel_progress = 0.0
         self.status = ShipStatus.TRAVELING
         self.destination = destination
+        self.route = route
 
-        self.last_action = f"Departed for {destination.name} ({self.travel_time} turns)"
+        hops = len(route) - 1
+        self.last_action = (
+            f"Departed for {destination.name} "
+            f"({self.travel_time} turns, {hops} lane{'s' if hops != 1 else ''})"
+        )
         return True
 
     def update_journey(self) -> bool:
@@ -1686,6 +1700,7 @@ class Ship:
             old_planet = self.planet
             self.planet = self.destination
             self.destination = None
+            self.route = []
             self.status = ShipStatus.DOCKED
             self.travel_progress = 0
 

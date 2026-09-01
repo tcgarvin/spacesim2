@@ -45,7 +45,10 @@ if bid is None:
 ### 3. Fuel Calculations
 
 ```python
-distance = Ship.calculate_distance(planet_a, planet_b)
+# Shortest star-lane route, not the straight line (see core/galaxy.py and
+# core/navigation.py). Multi-lane routes are flown in one go; intermediate
+# planets are passed without docking.
+distance = ship.route_distance(planet_a, planet_b)
 fuel_needed = Ship.calculate_fuel_needed(distance)  # ceil(distance/20)
 
 # Account for ship fuel efficiency (varies 0.8-1.2 per ship)

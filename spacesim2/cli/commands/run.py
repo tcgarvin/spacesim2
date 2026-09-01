@@ -13,6 +13,7 @@ from typing import Any
 
 from spacesim2.cli.common import configure_actor_logging, create_and_setup_simulation
 from spacesim2.cli.output import print_success, print_warning
+from spacesim2.core.galaxy import DEFAULT_ARMS, DEFAULT_LANE_DENSITY
 
 try:
     from spacesim2.analysis.export.exporter import SimulationExporter
@@ -44,7 +45,22 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
     parser.add_argument(
         "--turns", type=int, default=1000, help="Number of turns to simulate"
     )
-    parser.add_argument("--planets", type=int, default=5, help="Number of planets")
+    parser.add_argument(
+        "--planets", type=int, default=100, help="Number of planets (default: 100)"
+    )
+    parser.add_argument(
+        "--arms",
+        type=int,
+        default=DEFAULT_ARMS,
+        help=f"Spiral arms in the galaxy layout (default: {DEFAULT_ARMS})",
+    )
+    parser.add_argument(
+        "--lane-density",
+        type=float,
+        default=DEFAULT_LANE_DENSITY,
+        help="Fraction of optional local star lanes kept beyond the spanning "
+        f"tree, 0..1 (default: {DEFAULT_LANE_DENSITY})",
+    )
     parser.add_argument(
         "--actors", type=int, default=100, help="Number of regular actors per planet"
     )
@@ -157,6 +173,8 @@ def execute(args: argparse.Namespace) -> int:
         actors=args.actors,
         makers=args.makers,
         ships=args.ships,
+        arms=args.arms,
+        lane_density=args.lane_density,
     )
     if args.workers > 1:
         sim.parallel_workers = args.workers

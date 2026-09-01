@@ -1,4 +1,3 @@
-import math
 import random
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -15,6 +14,13 @@ from spacesim2.core.drives import (
     HealthDrive,
     ShelterDrive,
 )
+from spacesim2.core.galaxy import (
+    DEFAULT_ARMS,
+    DEFAULT_LANE_DENSITY,
+    GalaxyLayout,
+    StarLaneNetwork,
+    generate_spiral_layout,
+)
 from spacesim2.core.market import Market
 from spacesim2.core.planet import Planet
 from spacesim2.core.planet_attributes import PlanetAttributes
@@ -24,14 +30,6 @@ from spacesim2.core.skill import SkillsRegistry
 
 if TYPE_CHECKING:
     from spacesim2.analysis.export.exporter import SimulationExporter
-
-# Baseline spatial feel: the historical 5-planet galaxy lived on a 100x100 map.
-# We keep that density (area per planet) constant as galaxies grow, so travel
-# distances — and therefore fuel economics — feel the same at any scale.
-BASE_MAP_SIZE = 100.0
-BASE_PLANET_COUNT = 5
-AREA_PER_PLANET = (BASE_MAP_SIZE * BASE_MAP_SIZE) / BASE_PLANET_COUNT
-MIN_PLANET_DISTANCE = 10.0
 
 # Syllable pools for procedural planet names, used once the curated list of
 # fictional names is exhausted (it has ~100 entries).
@@ -107,6 +105,13 @@ class Simulation:
 
     def __init__(self) -> None:
         self.planets: List[Planet] = []
+        # Star lanes joining the planets; ships travel only along lanes (see
+        # core/galaxy.py). Empty until setup_simple builds the galaxy — a
+        # hand-built world must populate it (StarLaneNetwork.complete gives
+        # the legacy any-to-any model).
+        self.star_lanes = StarLaneNetwork()
+        # Bounding box of the planet layout (map units), for renderers.
+        self.galaxy_size: Tuple[float, float] = (100.0, 100.0)
         self.actors: List[Actor] = []
         self.ships: List[Ship] = []
         self.current_turn = 0
@@ -137,16 +142,17 @@ class Simulation:
         self.data_logger = DataLogger()
         self.exporter: Optional["SimulationExporter"] = None
 
-    def _generate_fictional_planets(
-        self, num_planets: int
-    ) -> List[Tuple[str, float, float]]:
-        """Generate fictional planet names and positions with minimum 10 unit separation.
+    def _generate_planet_names(self, num_planets: int) -> List[str]:
+        """Pick ``num_planets`` unique planet names.
+
+        Curated fictional names are used first, then procedural names so any
+        galaxy size gets unique, readable names.
 
         Args:
-            num_planets: Number of planets to generate
+            num_planets: Number of names to generate
 
         Returns:
-            List of tuples containing (name, x, y) for each planet
+            List of unique planet names
         """
         # Collection of fictional planet names from various sci-fi sources
         fictional_names = [
@@ -255,32 +261,15 @@ class Simulation:
         if num_planets < 1:
             raise ValueError(f"num_planets must be >= 1, got {num_planets}")
 
-        # Use the curated names first, then fall back to procedural names so
-        # any galaxy size gets unique, readable names.
         if num_planets <= len(fictional_names):
-            selected_names = random.sample(fictional_names, num_planets)
-        else:
-            selected_names = random.sample(fictional_names, len(fictional_names))
-            used = set(selected_names)
-            while len(selected_names) < num_planets:
-                name = self._generate_procedural_name(used)
-                used.add(name)
-                selected_names.append(name)
-
-        # Generate positions, scaling the map with planet count so spatial
-        # density (and travel/fuel economics) stays constant.
-        map_size = max(BASE_MAP_SIZE, math.sqrt(AREA_PER_PLANET * num_planets))
-        positions = self._generate_separated_positions(
-            num_planets, min_distance=MIN_PLANET_DISTANCE, map_size=map_size
-        )
-
-        return list(
-            zip(
-                selected_names,
-                [pos[0] for pos in positions],
-                [pos[1] for pos in positions],
-            )
-        )
+            return random.sample(fictional_names, num_planets)
+        selected_names = random.sample(fictional_names, len(fictional_names))
+        used = set(selected_names)
+        while len(selected_names) < num_planets:
+            name = self._generate_procedural_name(used)
+            used.add(name)
+            selected_names.append(name)
+        return selected_names
 
     @staticmethod
     def _generate_procedural_name(used: set[str]) -> str:
@@ -311,139 +300,34 @@ class Simulation:
             suffix += 1
         return f"{base}-{suffix}"
 
-    def _generate_separated_positions(
-        self, num_positions: int, min_distance: float, map_size: float
-    ) -> List[Tuple[float, float]]:
-        """Generate positions with guaranteed minimum pairwise separation.
-
-        Rejection sampling is tried first: it reproduces the historical spatial
-        distribution (uniform with clustering allowed down to ``min_distance``),
-        which the fuel/travel economics were tuned against. Because the caller
-        scales the map area with the position count, rejection almost always
-        succeeds quickly. If it cannot complete within its attempt budget, a
-        jittered-grid sampler takes over — O(n) and guaranteed to fit whenever
-        the grid cells are at least ``min_distance`` wide.
-
-        Args:
-            num_positions: Number of positions to generate.
-            min_distance: Minimum pairwise distance between positions.
-            map_size: Side length of the square map (coordinates in [0, map_size]).
-
-        Returns:
-            List of exactly ``num_positions`` (x, y) positions.
-
-        Raises:
-            ValueError: If the requested count cannot fit on the map with the
-                given minimum distance.
-        """
-        if num_positions < 1:
-            raise ValueError(f"num_positions must be >= 1, got {num_positions}")
-
-        rejection = self._rejection_sample_positions(
-            num_positions, min_distance, map_size
-        )
-        if len(rejection) == num_positions:
-            return rejection
-
-        return self._jittered_grid_positions(num_positions, min_distance, map_size)
-
-    @staticmethod
-    def _rejection_sample_positions(
-        num_positions: int, min_distance: float, map_size: float
-    ) -> List[Tuple[float, float]]:
-        """Rejection-sample separated positions; may return fewer than requested.
-
-        Candidates are drawn uniformly from [min_distance, map_size - min_distance]
-        (matching the legacy sampler) and kept if at least ``min_distance`` from
-        every accepted position. Gives up after a bounded attempt budget so a
-        too-dense request degrades to the caller's fallback instead of spinning.
-
-        Args:
-            num_positions: Number of positions requested.
-            min_distance: Minimum pairwise distance between positions.
-            map_size: Side length of the square map.
-
-        Returns:
-            List of up to ``num_positions`` (x, y) positions.
-        """
-        low, high = min_distance, map_size - min_distance
-        if high <= low:
-            return []
-
-        positions: List[Tuple[float, float]] = []
-        max_attempts = max(1000, 40 * num_positions)
-        for _ in range(max_attempts):
-            x = random.uniform(low, high)
-            y = random.uniform(low, high)
-            if all(math.hypot(x - ex, y - ey) >= min_distance for ex, ey in positions):
-                positions.append((x, y))
-                if len(positions) == num_positions:
-                    break
-        return positions
-
-    @staticmethod
-    def _jittered_grid_positions(
-        num_positions: int, min_distance: float, map_size: float
-    ) -> List[Tuple[float, float]]:
-        """Place separated positions on a jittered grid; guaranteed to fit or raise.
-
-        The map is divided into a k x k grid (k = ceil(sqrt(num_positions))),
-        ``num_positions`` cells are chosen at random, and one point is jittered
-        inside each cell while keeping a margin of ``min_distance / 2`` from the
-        cell edges. Points in distinct cells are then at least ``min_distance``
-        apart, so generation is O(n) with no retry loop.
-
-        Args:
-            num_positions: Number of positions to generate.
-            min_distance: Minimum pairwise distance between positions.
-            map_size: Side length of the square map.
-
-        Returns:
-            List of exactly ``num_positions`` (x, y) positions.
-
-        Raises:
-            ValueError: If the grid cells would be narrower than ``min_distance``,
-                i.e. the requested count cannot fit on the map.
-        """
-        grid_side = math.ceil(math.sqrt(num_positions))
-        cell_size = map_size / grid_side
-        margin = min_distance / 2.0
-
-        if cell_size < min_distance:
-            raise ValueError(
-                f"Cannot place {num_positions} positions with "
-                f"min_distance={min_distance} on a {map_size}x{map_size} map: "
-                f"grid cells ({cell_size:.2f}) are smaller than min_distance. "
-                f"Increase map_size or reduce the position count."
-            )
-
-        chosen_cells = random.sample(range(grid_side * grid_side), num_positions)
-        positions: List[Tuple[float, float]] = []
-        for cell in chosen_cells:
-            col, row = cell % grid_side, cell // grid_side
-            x = col * cell_size + random.uniform(margin, cell_size - margin)
-            y = row * cell_size + random.uniform(margin, cell_size - margin)
-            positions.append((x, y))
-
-        return positions
-
     def setup_simple(
         self,
         num_planets: int = 2,
         num_regular_actors: int = 4,
         num_market_makers: int = 1,
         num_ships: int = 2,
+        arms: int = DEFAULT_ARMS,
+        lane_density: float = DEFAULT_LANE_DENSITY,
     ) -> None:
         """Set up a simple simulation with multiple planets, actors, and ships.
+
+        Planets are laid out on a spiral galaxy and joined by star lanes (see
+        ``core/galaxy.py``); ships can only travel along lanes.
 
         Args:
             num_planets: Number of planets to create
             num_regular_actors: Number of regular actors to create per planet
             num_market_makers: Number of market makers to create per planet
             num_ships: Number of ships to create per planet
+            arms: Number of spiral arms in the galaxy layout
+            lane_density: Fraction of optional local star lanes kept beyond
+                the spanning tree (0 = tree only, 1 = every local lane)
         """
-        # Generate fictional planet data with random positions
-        planet_data = self._generate_fictional_planets(num_planets)
+        names = self._generate_planet_names(num_planets)
+        layout = generate_spiral_layout(
+            num_planets, arms=arms, lane_density=lane_density
+        )
+        planet_data = [(name, x, y) for name, (x, y) in zip(names, layout.positions)]
 
         # Generate planet attributes. Guarantee at least one abundant fuel
         # source: nova_fuel_ore rolls are bimodal, so a galaxy can otherwise
@@ -477,10 +361,22 @@ class Simulation:
                 actor_name_prefix=name,
             )
 
+        self._apply_layout_lanes(layout)
+
         # Create ships and distribute them across planets
         self._setup_ships(num_ships)
 
-        # Simulation references already set in constructors
+    def _apply_layout_lanes(self, layout: GalaxyLayout) -> None:
+        """Build ``star_lanes`` from a layout whose indices match ``planets``."""
+        if len(layout.positions) != len(self.planets):
+            raise ValueError(
+                f"layout has {len(layout.positions)} positions for "
+                f"{len(self.planets)} planets"
+            )
+        self.star_lanes = StarLaneNetwork()
+        for i, j in layout.lanes:
+            self.star_lanes.add_lane(self.planets[i], self.planets[j])
+        self.galaxy_size = (layout.width, layout.height)
 
     def _setup_planet_actors(
         self,

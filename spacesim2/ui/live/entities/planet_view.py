@@ -27,6 +27,13 @@ from spacesim2.ui.live.view_model import PlanetSnapshot
 # Planet visual radius in map units (independent of population for now).
 # Public: the scene uses it for click hit-testing and selection rings.
 PLANET_MAP_RADIUS = 2.2
+# Floor so a world stays a visible, clickable disc when a 100+ planet galaxy is
+# zoomed out to fit the screen.
+MIN_PLANET_PX = 5
+# Labels are drawn only once worlds are at least this big on screen (else a
+# dense galaxy becomes a wall of overlapping text); hovered/selected planets
+# are always labelled.
+LABEL_MIN_RADIUS_PX = 8
 
 # Wellbeing below this makes the halo pulse (a world in real trouble).
 PULSE_WELLBEING = 0.35
@@ -72,6 +79,16 @@ def _stable_seed(name: str) -> int:
     return abs(hash(name)) % 100_000
 
 
+def planet_pixel_radius(camera: Camera) -> int:
+    """On-screen radius of a world at the camera's current zoom."""
+    return max(MIN_PLANET_PX, int(camera.scale(PLANET_MAP_RADIUS)))
+
+
+def labels_visible(camera: Camera) -> bool:
+    """Whether the zoom is close enough to label every world legibly."""
+    return camera.scale(PLANET_MAP_RADIUS) >= LABEL_MIN_RADIUS_PX
+
+
 def draw_planet(
     surface: pygame.Surface,
     planet: PlanetSnapshot,
@@ -79,9 +96,10 @@ def draw_planet(
     fonts: Fonts,
     sprites: PlanetSprites,
     time_s: float,
+    show_label: bool = True,
 ) -> None:
     screen_pos = camera.world_to_screen(planet.pos)
-    radius = max(4, int(camera.scale(PLANET_MAP_RADIUS)))
+    radius = planet_pixel_radius(camera)
 
     glow_color = assets.wellbeing_color(planet.wellbeing)
     distress = _distress(planet.wellbeing)
@@ -124,6 +142,8 @@ def draw_planet(
         body_sprite = planet_sprite(radius, body, _stable_seed(planet.name))
     surface.blit(body_sprite, (screen_pos[0] - radius, screen_pos[1] - radius))
 
+    if not show_label:
+        return
     # Label below the world.
     label = fonts.render(planet.name, "small", assets.HUD_TEXT)
     surface.blit(

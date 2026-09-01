@@ -32,7 +32,10 @@ NEBULA_TINTS: Tuple[Color, ...] = (
     (20, 50, 90),  # teal-blue
     (70, 25, 55),  # magenta
 )
-TRADE_LANE: Color = (90, 110, 150)
+TRADE_LANE: Color = (58, 70, 100)  # resting star lane (dim, under everything)
+LANE_HIGHLIGHT: Color = (120, 170, 235)  # selected planet's lanes
+ROUTE_HIGHLIGHT: Color = (235, 205, 120)  # selected ship's flight path
+ROUTE_HOVER: Color = (150, 165, 200)  # hovered ship's flight path
 SHIP_BODY: Color = (200, 210, 235)
 SHIP_ENGINE: Color = (120, 180, 255)
 HUD_TEXT: Color = (190, 200, 225)

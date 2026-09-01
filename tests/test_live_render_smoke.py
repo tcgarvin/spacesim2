@@ -5,6 +5,7 @@ through real frames (director steps turns, scene renders) and asserts the output
 is non-blank and exception-free.
 """
 
+import math
 import os
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
@@ -116,6 +117,63 @@ def test_baked_ship_sprites_and_good_icons_render() -> None:
         frame = pygame.surfarray.array3d(app._screen)
         assert frame.std() > 1.0
         assert int(np.max(frame.sum(axis=2))) > 30
+    finally:
+        pygame.quit()
+
+
+def test_hundred_planet_galaxy_renders_with_lanes_and_highlights() -> None:
+    """The default 100-planet spiral must fit, draw its lanes, and pick.
+
+    Renders zoomed-out (labels hidden by the declutter threshold), then with a
+    ship and a planet selected so the route/incident-lane highlight paths run,
+    then zoomed in so labels appear.
+    """
+    sim = Simulation()
+    sim.setup_simple(
+        num_planets=100, num_regular_actors=2, num_market_makers=1, num_ships=1
+    )
+    app = LiveGalaxyApp(sim, speed=4.0, size=(1200, 800))
+    try:
+        app.initialize()
+        scene, camera = app._scene, app._camera
+        assert scene is not None and camera is not None
+        assert camera.galaxy_size == sim.galaxy_size
+        # Every planet is on screen at the fitted zoom.
+        for planet in sim.planets:
+            sx, sy = camera.world_to_screen(planet.get_position())
+            assert 0 <= sx <= 1200 and 0 <= sy <= 800
+        for _ in range(8):
+            app.update(0.05)
+            app.render()
+
+        # A planet is pickable at its own screen position even at fit zoom.
+        # Use the most isolated planet: in the dense core two planets can sit
+        # within one pick radius of each other, making the pick ambiguous.
+        target = max(
+            sim.planets,
+            key=lambda p: min(
+                math.hypot(p.x - q.x, p.y - q.y) for q in sim.planets if q is not p
+            ),
+        )
+        assert scene.pick(camera.world_to_screen(target.get_position())) == (
+            "planet",
+            target.name,
+        )
+
+        scene.selection = ("planet", target.name)
+        app.render()
+        traveling = [s for s in sim.ships if s.status == ShipStatus.TRAVELING]
+        if traveling:
+            scene.selection = ("ship", traveling[0].name)
+            scene.hover = ("ship", traveling[-1].name)
+            app.render()
+
+        camera.zoom_at((600, 400), 4.0)
+        app.render()
+
+        assert app._screen is not None
+        frame = pygame.surfarray.array3d(app._screen)
+        assert frame.std() > 1.0
     finally:
         pygame.quit()
 

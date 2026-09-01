@@ -32,6 +32,11 @@ HEADER_H = 56
 GUTTER = 24
 
 
+def strip_reserve_px(screen_height: int) -> int:
+    """Pixels the charts strip (plus HUD line) covers along the bottom edge."""
+    return HUD_RESERVE + int(screen_height * STRIP_FRACTION)
+
+
 class ChartsPanel:
     def __init__(self, recorder: HistoryRecorder) -> None:
         self._recorder = recorder

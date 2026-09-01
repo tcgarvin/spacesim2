@@ -24,26 +24,37 @@ class PlanetSnapshot:
     """Immutable per-frame view of a planet."""
 
     name: str
-    pos: Tuple[float, float]  # map coordinates, 0..100
+    pos: Tuple[float, float]  # map coordinates within ``galaxy_size``
     wellbeing: float  # mean regular-actor welfare in [0, 1]
     population: int  # regular actors resident
+
+
+@dataclass(frozen=True)
+class LaneSnapshot:
+    """One star lane as a pair of map positions (undirected)."""
+
+    a: Tuple[float, float]
+    b: Tuple[float, float]
 
 
 @dataclass(frozen=True)
 class ShipSnapshot:
     """Immutable per-frame view of a ship.
 
-    For a docked ship ``origin == dest == its planet``. For a traveling ship the
-    core keeps ``ship.planet`` as the origin and ``ship.destination`` as the
-    target while ``progress`` advances 0->1 (see ``core/ship.py``); the renderer
-    interpolates position between the two.
+    For a docked ship ``origin == dest == its planet`` and ``waypoints`` is the
+    single dock position. For a traveling ship the core keeps ``ship.planet`` as
+    the origin and ``ship.destination`` as the target while ``progress``
+    advances 0->1 (see ``core/ship.py``); ``waypoints`` is the lane route being
+    flown (origin first, destination last) and the renderer interpolates
+    position along that polyline by arc length.
     """
 
     name: str
     traveling: bool
     origin: Tuple[float, float]
     dest: Tuple[float, float]
-    progress: float  # 0..1 along origin->dest; 0 when docked
+    progress: float  # 0..1 along the route; 0 when docked
+    waypoints: Tuple[Tuple[float, float], ...]
 
 
 @dataclass(frozen=True)
@@ -225,9 +236,14 @@ def ship_detail(ship: Ship, sim: Simulation) -> ShipDetail:
     )
 
     if ship.status == ShipStatus.TRAVELING and ship.destination is not None:
-        origin_name = ship.planet.name if ship.planet else "?"
         status = "traveling"
-        route = f"{origin_name} -> {ship.destination.name} ({ship.travel_progress:.0%})"
+        # Full lane route when the core recorded one, else the bare endpoints
+        # (tests force travel states without going through start_journey).
+        if ship.route:
+            names = [p.name for p in ship.route]
+        else:
+            names = [ship.planet.name if ship.planet else "?", ship.destination.name]
+        route = f"{' -> '.join(names)} ({ship.travel_progress:.0%})"
     elif ship.status == ShipStatus.NEEDS_MAINTENANCE:
         status = f"needs maintenance at {ship.planet.name}" if ship.planet else "adrift"
         route = ""
@@ -248,22 +264,30 @@ def ship_detail(ship: Ship, sim: Simulation) -> ShipDetail:
     )
 
 
-def _ship_snapshot(ship: Ship) -> ShipSnapshot:
+def _ship_snapshot(ship: Ship, fallback_pos: Tuple[float, float]) -> ShipSnapshot:
     traveling = ship.status == ShipStatus.TRAVELING and ship.destination is not None
     origin_planet = ship.planet
-    origin = origin_planet.get_position() if origin_planet is not None else (50.0, 50.0)
+    # A ship with no planet at all (never docked) is parked at ``fallback_pos``,
+    # the galaxy center, rather than a fixed map coordinate.
+    origin = origin_planet.get_position() if origin_planet is not None else fallback_pos
     if traveling and ship.destination is not None:
         dest = ship.destination.get_position()
         progress = max(0.0, min(1.0, ship.travel_progress))
+        if ship.route:
+            waypoints = tuple(p.get_position() for p in ship.route)
+        else:
+            waypoints = (origin, dest)
     else:
         dest = origin
         progress = 0.0
+        waypoints = (origin,)
     return ShipSnapshot(
         name=ship.name,
         traveling=traveling,
         origin=origin,
         dest=dest,
         progress=progress,
+        waypoints=waypoints,
     )
 
 
@@ -272,10 +296,30 @@ class GalaxyViewModel:
 
     def __init__(self, simulation: Simulation) -> None:
         self._sim = simulation
+        # Lanes are fixed for the life of a galaxy; cache keyed on lane count
+        # so a rebuilt network (tests, future dynamic lanes) is picked up.
+        self._lanes_cache: List[LaneSnapshot] = []
+        self._lanes_cache_count = -1
 
     @property
     def current_turn(self) -> int:
         return self._sim.current_turn
+
+    @property
+    def galaxy_size(self) -> Tuple[float, float]:
+        """(width, height) of the map box planets live in."""
+        return self._sim.galaxy_size
+
+    def lanes(self) -> List[LaneSnapshot]:
+        """Every star lane as a pair of map positions (cached)."""
+        network = self._sim.star_lanes
+        if len(network) != self._lanes_cache_count:
+            self._lanes_cache = [
+                LaneSnapshot(a=lane.a.get_position(), b=lane.b.get_position())
+                for lane in network.lanes
+            ]
+            self._lanes_cache_count = len(network)
+        return self._lanes_cache
 
     def planets(self) -> List[PlanetSnapshot]:
         return [
@@ -289,7 +333,9 @@ class GalaxyViewModel:
         ]
 
     def ships(self) -> List[ShipSnapshot]:
-        return [_ship_snapshot(s) for s in self._sim.ships]
+        width, height = self._sim.galaxy_size
+        center = (width / 2.0, height / 2.0)
+        return [_ship_snapshot(s, center) for s in self._sim.ships]
 
     def planet_detail(self, name: str) -> Optional[PlanetDetail]:
         """Drill-down snapshot for the named planet, or None if it vanished."""

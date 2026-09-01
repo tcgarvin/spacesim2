@@ -4,6 +4,25 @@ Append-only record of closed decisions, postmortems, and landed campaigns.
 Newest first. Open work lives in `TODO.md`; current reference docs live
 alongside this file.
 
+## 2026-09-01 — Spike: spiral galaxy with star lanes replaces the open plane
+
+**Landed on branch `spiral-galaxy-star-lanes`.** Planets used to be scattered
+uniformly on a square with straight-line travel between every pair. Now
+`core/galaxy.py` places them on a log-spiral (configurable arms, default 3,
+dense core) and builds a star-lane graph that is guaranteed connected and
+planar: Delaunay triangulation → Kruskal MST for connectivity → Gabriel-graph
+filter sampled at `lane_density` for extra local lanes (100 planets ≈ 150
+lanes, mean degree ~2.9; 500 planets in <0.1 s). `Navigator` is the single
+seam — it runs all-pairs Dijkstra over the lanes, so every brain that asked
+for "distance" now gets route length with no per-brain changes, and raises if
+the network is ever disconnected. Ships fuel the whole route at departure and
+fly past intermediate planets (`Ship.route` polyline drives the UI); per-hop
+docking is deliberately out of scope for the spike. Default galaxy size raised
+5 → 100 planets for `run`/`ui` (`dev check` stays at 5 for speed). 5-planet
+KPIs are unchanged within run-to-run noise (fuel-ore luck dominates at that
+size). `galaxy.json` (positions + lanes) is exported alongside
+`planet_attributes.json`.
+
 ## 2026-08-31 — Perf campaign: scaling toward 500 planets × 100 actors × 1000 ships
 
 **Landed across two waves; target scale now runs at ~3.2 s/turn (was ~45+).**

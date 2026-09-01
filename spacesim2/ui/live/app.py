@@ -25,6 +25,7 @@ from spacesim2.ui.live.camera import Camera
 from spacesim2.ui.live.director import Director
 from spacesim2.ui.live.scenes.galaxy_scene import GalaxyScene
 from spacesim2.ui.live.view_model import GalaxyViewModel
+from spacesim2.ui.live.widgets.charts_panel import strip_reserve_px
 
 DEFAULT_SIZE = (1600, 900)
 TARGET_FPS = 60
@@ -66,7 +67,10 @@ class LiveGalaxyApp:
         self._clock = pygame.time.Clock()
 
         view_model = GalaxyViewModel(self._sim)
-        self._camera = Camera(self._size)
+        # Fit the galaxy above the charts strip so it isn't hidden at startup.
+        self._camera = Camera(
+            self._size, view_model.galaxy_size, strip_reserve_px(self._size[1])
+        )
         self._director = Director(
             self._sim,
             view_model,

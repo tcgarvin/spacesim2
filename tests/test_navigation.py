@@ -3,6 +3,7 @@
 import math
 
 from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
+from spacesim2.core.galaxy import StarLaneNetwork
 from spacesim2.core.market import Market
 from spacesim2.core.navigation import (
     DESTINATION_NEAREST_M,
@@ -32,7 +33,12 @@ def _make_world(planet_specs):
     sim = type(
         "MockSim",
         (object,),
-        {"commodity_registry": registry, "planets": planets, "current_turn": 0},
+        {
+            "commodity_registry": registry,
+            "planets": planets,
+            "star_lanes": StarLaneNetwork.complete(planets),
+            "current_turn": 0,
+        },
     )()
     return sim, fuel, food, planets
 
@@ -60,6 +66,7 @@ def test_distance_matrix_rebuilds_when_planets_added():
     assert nav.distance(a, b) == 100.0
     late = Planet("Late", Market(), 0, 40)
     sim.planets.append(late)
+    sim.star_lanes.add_lane(a, late)
     assert nav.distance(a, late) == 40.0
     assert nav.planets_by_proximity(a) == [late, b]
 
@@ -256,6 +263,7 @@ def test_candidate_destinations_invalidate_on_new_turn():
 
     # A new far-out bidder appears with the best price in the galaxy.
     newcomer = Planet("New", Market(), 500, 0)
+    sim.star_lanes.add_lane(planets[-1], newcomer)
     sim.planets.append(newcomer)
     buyer = Ship("NewBuyer", sim, newcomer, initial_money=10_000)
     newcomer.market.place_buy_order(buyer, food, 10, 99)

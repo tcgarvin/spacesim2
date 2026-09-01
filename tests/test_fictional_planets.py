@@ -66,11 +66,12 @@ class TestFictionalPlanets:
             num_planets=6, num_regular_actors=1, num_market_makers=1, num_ships=1
         )
 
+        width, height = sim.galaxy_size
         for planet in sim.planets:
-            assert 0 <= planet.x <= 100, (
+            assert 0 <= planet.x <= width, (
                 f"Planet {planet.name} x-coordinate {planet.x} out of bounds"
             )
-            assert 0 <= planet.y <= 100, (
+            assert 0 <= planet.y <= height, (
                 f"Planet {planet.name} y-coordinate {planet.y} out of bounds"
             )
 

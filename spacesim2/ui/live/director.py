@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 from spacesim2.core.simulation import Simulation
 from spacesim2.ui.live.history import HistoryRecorder
@@ -25,11 +25,43 @@ MIN_SPEED = 0.1
 MAX_SPEED = 30.0
 
 
+def polyline_point(
+    waypoints: Sequence[Tuple[float, float]], fraction: float
+) -> Tuple[Tuple[float, float], float]:
+    """Point at ``fraction`` (0..1) of a polyline's arc length, and its heading.
+
+    Heading is the direction (radians) of the segment the point lies on, so a
+    ship visibly turns at each waypoint. A single-point polyline (a docked
+    ship) yields that point with heading 0; a degenerate zero-length polyline
+    likewise reports heading 0.
+    """
+    if not waypoints:
+        raise ValueError("polyline needs at least one waypoint")
+    if len(waypoints) == 1:
+        return waypoints[0], 0.0
+    fraction = max(0.0, min(1.0, fraction))
+    seg_lengths = [
+        math.hypot(b[0] - a[0], b[1] - a[1])
+        for a, b in zip(waypoints[:-1], waypoints[1:])
+    ]
+    total = sum(seg_lengths)
+    if total == 0.0:
+        return waypoints[0], 0.0
+    target = fraction * total
+    walked = 0.0
+    for (ax, ay), (bx, by), length in zip(waypoints[:-1], waypoints[1:], seg_lengths):
+        heading = math.atan2(by - ay, bx - ax)
+        if walked + length >= target and length > 0.0:
+            t = (target - walked) / length
+            return (ax + (bx - ax) * t, ay + (by - ay) * t), heading
+        walked += length
+    # Floating-point slack past the last segment: sit on the destination.
+    (ax, ay), (bx, by) = waypoints[-2], waypoints[-1]
+    return waypoints[-1], math.atan2(by - ay, bx - ax)
+
+
 def _route_position(ship: ShipSnapshot) -> Tuple[float, float]:
-    ox, oy = ship.origin
-    dx, dy = ship.dest
-    t = ship.progress
-    return (ox + (dx - ox) * t, oy + (dy - oy) * t)
+    return polyline_point(ship.waypoints, ship.progress)[0]
 
 
 @dataclass(frozen=True)
@@ -97,14 +129,10 @@ class Director:
         a = self.alpha
         out: List[RenderedShip] = []
         for ship in self._vm.ships():
-            curr = _route_position(ship)
+            curr, heading = polyline_point(ship.waypoints, ship.progress)
             prev = self._prev_pos.get(ship.name, curr)
             pos = (prev[0] + (curr[0] - prev[0]) * a, prev[1] + (curr[1] - prev[1]) * a)
-            if ship.traveling:
-                heading = math.atan2(
-                    ship.dest[1] - ship.origin[1], ship.dest[0] - ship.origin[0]
-                )
-            else:
+            if not ship.traveling:
                 heading = 0.0
             out.append(RenderedShip(snapshot=ship, pos=pos, heading=heading))
         return out

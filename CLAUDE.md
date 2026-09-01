@@ -14,6 +14,8 @@ uv run spacesim2 run                 # Headless sim with progress bar (default)
 uv run spacesim2 run --quiet         # Suppress all output
 uv run spacesim2 run --no-export     # Quick run without data export
 uv run spacesim2 run --log-actors all  # Detailed per-actor logging (also: N, or an actor name)
+uv run spacesim2 run --planets 5     # Smaller galaxy (default is 100 planets)
+uv run spacesim2 run --arms 4 --lane-density 0.3  # Spiral arm count / extra star lanes beyond the spanning tree
 
 # Development
 uv run pytest tests/                           # Run all tests
@@ -125,6 +127,7 @@ These apply to most tasks:
 - **Deferred market matching**: Orders execute at END of turn, not immediately
 - **Brain pattern**: Actors/ships delegate decisions to pluggable `Brain` classes
 - **Core files**: `core/simulation.py` (main loop), `core/actor.py`, `core/ship.py`, `core/market.py`
+- **Star-lane galaxy**: `core/galaxy.py` generates a spiral layout plus a connected, planar lane graph; `core/navigation.py` routes along lanes (distance = shortest lane route, never straight-line). Ships fly whole routes without docking at intermediate planets. Default galaxy is 100 planets (`--planets`, `--arms`, `--lane-density`).
 
 ## Common Implementation Patterns
 

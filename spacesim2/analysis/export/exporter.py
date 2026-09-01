@@ -99,6 +99,7 @@ class SimulationExporter:
         )
 
         self._export_planet_attributes(simulation)
+        self._export_galaxy(simulation)
 
     def export_turn(self, simulation: "Simulation", turn: int) -> None:
         """
@@ -237,3 +238,26 @@ class SimulationExporter:
         attrs_path = self.output_dir / "planet_attributes.json"
         with open(attrs_path, "w") as f:
             json.dump(planet_data, f, indent=2)
+
+    def _export_galaxy(self, simulation: "Simulation") -> None:
+        """Export planet positions and star lanes to ``galaxy.json``.
+
+        Args:
+            simulation: Simulation instance with planets and star lanes
+        """
+        width, height = simulation.galaxy_size
+        galaxy = {
+            "width": width,
+            "height": height,
+            "planets": [
+                {"name": planet.name, "x": planet.x, "y": planet.y}
+                for planet in simulation.planets
+            ],
+            "lanes": [
+                {"a": lane.a.name, "b": lane.b.name, "length": lane.length}
+                for lane in simulation.star_lanes.lanes
+            ],
+        }
+        galaxy_path = self.output_dir / "galaxy.json"
+        with open(galaxy_path, "w") as f:
+            json.dump(galaxy, f, indent=2)

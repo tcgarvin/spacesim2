@@ -1,6 +1,7 @@
 import unittest
 
 from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
+from spacesim2.core.galaxy import StarLaneNetwork
 from spacesim2.core.market import Market
 from spacesim2.core.planet import Planet
 from spacesim2.core.ship import Ship, ShipStatus
@@ -25,8 +26,15 @@ class TestShip(unittest.TestCase):
         self.commodity_registry._commodities["nova_fuel"] = self.fuel
 
         # Create a mock simulation
+        planets = [self.earth, self.mars]
         self.mock_sim = type(
-            "MockSimulation", (object,), {"commodity_registry": self.commodity_registry}
+            "MockSimulation",
+            (object,),
+            {
+                "commodity_registry": self.commodity_registry,
+                "planets": planets,
+                "star_lanes": StarLaneNetwork.complete(planets),
+            },
         )()
 
         # Create a ship
@@ -43,7 +51,7 @@ class TestShip(unittest.TestCase):
         self.assertEqual(self.ship.cargo.get_quantity(self.fuel), 50)
 
     def test_distance_calculation(self):
-        distance = Ship.calculate_distance(self.earth, self.mars)
+        distance = self.ship.route_distance(self.earth, self.mars)
         self.assertEqual(distance, 50.0)
 
     def test_fuel_calculation(self):
@@ -79,15 +87,9 @@ class TestShip(unittest.TestCase):
 
     def test_insufficient_fuel(self):
         # Create a ship with less fuel
-        ship2 = Ship("FuellessShip", self.earth)
+        ship2 = Ship("FuellessShip", self.mock_sim, self.earth)
         self.earth.add_ship(ship2)
         ship2.cargo.add_commodity(self.fuel, 2)  # Only 2 units of fuel
-
-        # Set up simulation reference for the ship
-        mock_sim = type(
-            "obj", (object,), {"commodity_registry": self.commodity_registry}
-        )
-        ship2.simulation = mock_sim
 
         # Override the maintenance check to make sure it always returns False for this test
         ship2.check_maintenance = lambda: False

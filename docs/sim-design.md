@@ -70,7 +70,12 @@ Example:
 ---
 
 ## Planets and Solar Systems
-- Planets exist within solar systems in 2D coordinate space.
+- Planets sit in a 2D spiral galaxy (configurable arm count, default 3) and
+  are joined by **star lanes**: a planar, connected graph generated at setup
+  (Delaunay ∩ Gabriel edges over a spanning tree; `--lane-density` controls
+  how many extra local lanes are kept beyond the tree). See `core/galaxy.py`.
+- Travel only follows lanes. Distance between two planets is the shortest lane
+  route (all-pairs Dijkstra in `core/navigation.py`), not the straight line.
 - **Planet Attributes** (enabled by default, disable with `--no-planet-attributes`): Each planet has randomly generated resource availability ratings (0.0-1.0) affecting gathering/mining yields. See `core/planet_attributes.py`.
 - Fixed populations initially, with actors aiming to meet basic needs (food, shelter).
 
@@ -78,7 +83,10 @@ Example:
 
 ## Interplanetary Trade
 - Ships move commodities between planets, consuming refined fuel and occasional maintenance commodities.
-- Travel duration based on spatial coordinates; no travel risks in MVP.
+- Travel duration and fuel are based on lane-route length; no travel risks in MVP.
+- A multi-lane journey is a single flight: fuel for the whole route is loaded at
+  departure and intermediate planets are flown past without docking (spike
+  simplification — hop-by-hop refuelling/trading en route is future work).
 
 ---
 

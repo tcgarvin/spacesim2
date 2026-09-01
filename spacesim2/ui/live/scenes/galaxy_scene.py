@@ -1,28 +1,36 @@
 """Composes a full galaxy frame and owns map interaction state.
 
-Layering order is deliberate: backdrop -> trade lanes/ships -> planets on top so
-worlds read as the focal points, then selection chrome, charts, the drill-down
-panel, and a quiet HUD. The scene also owns picking: hovering highlights a
-planet or ship, clicking selects it and opens a live detail panel, and the
-charts strip scopes itself to the selected planet's market.
+Layering order is deliberate: backdrop -> star lanes -> highlighted route ->
+ships -> planets on top so worlds read as the focal points, then selection
+chrome, charts, the drill-down panel, and a quiet HUD. The scene also owns
+picking: hovering highlights a planet or ship, clicking selects it and opens a
+live detail panel, and the charts strip scopes itself to the selected planet's
+market. Selecting a ship lights up its lane route; selecting a planet lights up
+the lanes touching it.
 """
 
 from __future__ import annotations
 
 import math
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import pygame
 
+from spacesim2.ui.live import assets
 from spacesim2.ui.live.assets import Fonts, GoodIcons, PlanetSprites, ShipSprites
 from spacesim2.ui.live.camera import Camera
-from spacesim2.ui.live.director import Director
-from spacesim2.ui.live.entities.planet_view import PLANET_MAP_RADIUS, draw_planet
+from spacesim2.ui.live.director import Director, RenderedShip
+from spacesim2.ui.live.entities.lane_view import draw_lane_set, draw_lanes, draw_route
+from spacesim2.ui.live.entities.planet_view import (
+    draw_planet,
+    labels_visible,
+    planet_pixel_radius,
+)
 from spacesim2.ui.live.entities.ship_view import SHIP_MAP_LENGTH, draw_ship
 from spacesim2.ui.live.procgen.nebula import Nebula
-from spacesim2.ui.live.view_model import GalaxyViewModel
+from spacesim2.ui.live.view_model import GalaxyViewModel, LaneSnapshot
 from spacesim2.ui.live.widgets import hud, info_panel
-from spacesim2.ui.live.widgets.charts_panel import ChartsPanel
+from spacesim2.ui.live.widgets.charts_panel import ChartsPanel, strip_reserve_px
 
 # (kind, name) where kind is "planet" or "ship".
 Selection = Tuple[str, str]
@@ -57,13 +65,13 @@ class GalaxyScene:
 
     def resize(self, size: tuple[int, int]) -> None:
         self._nebula.resize(size)
-        self._camera.resize(size)
+        self._camera.resize(size, strip_reserve_px(size[1]))
 
     # -- Picking ---------------------------------------------------------
 
     def pick(self, pos: Tuple[int, int]) -> Optional[Selection]:
         """The planet or ship under ``pos``, planets taking priority."""
-        planet_r = max(4, int(self._camera.scale(PLANET_MAP_RADIUS)))
+        planet_r = planet_pixel_radius(self._camera)
         for planet in self._vm.planets():
             px, py = self._camera.world_to_screen(planet.pos)
             if math.hypot(pos[0] - px, pos[1] - py) <= planet_r + _PICK_SLOP_PX:
@@ -110,15 +118,30 @@ class GalaxyScene:
         # Parallax keys off the camera center so panning drifts the starfield.
         self._nebula.draw(surface, (self._camera.center_x, self._camera.center_y))
 
-        # Ships and lanes under the worlds.
-        for rendered in self._director.rendered_ships():
+        # The lane skeleton first, then whatever route is in focus over it.
+        draw_lanes(surface, self._vm.lanes(), self._camera)
+        rendered_ships = self._director.rendered_ships()
+        self._draw_focus_lanes(surface, rendered_ships)
+
+        # Ships under the worlds.
+        for rendered in rendered_ships:
             draw_ship(surface, rendered, self._camera, self._ship_sprites)
 
         # Wall-clock time drives the distress pulse on suffering worlds.
         time_s = pygame.time.get_ticks() / 1000.0
+        all_labels = labels_visible(self._camera)
+        focused = {
+            target[1] for target in (self.hover, self.selection) if target is not None
+        }
         for planet in self._vm.planets():
             draw_planet(
-                surface, planet, self._camera, self._fonts, self._planet_sprites, time_s
+                surface,
+                planet,
+                self._camera,
+                self._fonts,
+                self._planet_sprites,
+                time_s,
+                show_label=all_labels or planet.name in focused,
             )
 
         self._draw_rings(surface)
@@ -129,6 +152,43 @@ class GalaxyScene:
         hud.draw_status_strip(surface, self._fonts, self._vm, self._director)
         hud.draw_help_line(surface, self._fonts, self.selection is not None)
 
+    def _planet_lanes(self, name: str) -> List[LaneSnapshot]:
+        """Lanes touching the named planet (matched by map position)."""
+        for planet in self._vm.planets():
+            if planet.name == name:
+                return [
+                    lane
+                    for lane in self._vm.lanes()
+                    if lane.a == planet.pos or lane.b == planet.pos
+                ]
+        return []
+
+    def _draw_focus_lanes(
+        self, surface: pygame.Surface, rendered_ships: List[RenderedShip]
+    ) -> None:
+        """Highlight the hovered ship's route, then the selection's lanes on top."""
+        routes = {r.snapshot.name: r.snapshot.waypoints for r in rendered_ships}
+        if self.hover is not None and self.hover != self.selection:
+            kind, name = self.hover
+            if kind == "ship" and name in routes:
+                draw_route(surface, routes[name], self._camera, assets.ROUTE_HOVER, 1)
+        if self.selection is None:
+            return
+        kind, name = self.selection
+        if kind == "ship":
+            if name in routes:
+                draw_route(
+                    surface, routes[name], self._camera, assets.ROUTE_HIGHLIGHT, 2
+                )
+        else:
+            draw_lane_set(
+                surface,
+                self._planet_lanes(name),
+                self._camera,
+                assets.LANE_HIGHLIGHT,
+                2,
+            )
+
     def _ring_center(self, target: Selection) -> Optional[Tuple[int, int, int]]:
         """Screen (x, y, radius) for a selection ring, or None if it vanished."""
         kind, name = target
@@ -136,7 +196,7 @@ class GalaxyScene:
             for planet in self._vm.planets():
                 if planet.name == name:
                     x, y = self._camera.world_to_screen(planet.pos)
-                    r = max(4, int(self._camera.scale(PLANET_MAP_RADIUS))) + 6
+                    r = planet_pixel_radius(self._camera) + 6
                     return (x, y, r)
             return None
         for rendered in self._director.rendered_ships():

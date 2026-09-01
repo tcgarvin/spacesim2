@@ -1,8 +1,8 @@
-"""Draws ships and their trade lanes.
+"""Draws ships.
 
-A traveling ship gets a faint origin->dest lane, an engine-glow trail behind it,
-and an arrow glyph facing its heading. Docked ships are drawn as a small mark at
-their planet.
+A traveling ship gets an engine-glow trail behind it and an arrow glyph facing
+its heading along the current lane segment. Docked ships are drawn as a small
+mark at their planet. Lanes and route highlights live in ``lane_view``.
 """
 
 from __future__ import annotations
@@ -33,10 +33,8 @@ def draw_ship(
     screen_pos = camera.world_to_screen(rendered.pos)
 
     if ship.traveling:
-        origin = camera.world_to_screen(ship.origin)
-        dest = camera.world_to_screen(ship.dest)
-        # Trade lane: a quiet line along the route.
-        pygame.draw.line(surface, assets.TRADE_LANE, origin, dest, 1)
+        # The route itself is a star lane, already drawn by the scene under the
+        # ships; only the selected ship's path is highlighted (see lane_view).
         # Engine trail: a short fading segment behind the ship. Drawn on a
         # surface sized to the trail's bounding box (not the whole screen) so
         # per-ship per-frame allocation stays small.

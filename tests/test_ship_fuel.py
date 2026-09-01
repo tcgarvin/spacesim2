@@ -14,6 +14,7 @@ Covers the three fuel fixes:
 import math
 
 from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
+from spacesim2.core.galaxy import StarLaneNetwork
 from spacesim2.core.market import Market
 from spacesim2.core.planet import Planet
 from spacesim2.core.ship import FUEL_BID_MARGIN, Ship, TradePlan
@@ -37,7 +38,12 @@ def _make_world(planet_specs):
     sim = type(
         "MockSim",
         (object,),
-        {"commodity_registry": registry, "planets": planets, "current_turn": 0},
+        {
+            "commodity_registry": registry,
+            "planets": planets,
+            "star_lanes": StarLaneNetwork.complete(planets),
+            "current_turn": 0,
+        },
     )()
     return sim, fuel, food, planets
 
@@ -72,7 +78,7 @@ def test_fuel_required_applies_efficiency():
 def test_departure_consumes_exactly_the_planned_fuel():
     sim, fuel, _, (a, b) = _make_world([("A", 0, 0), ("B", 50, 0)])
     ship = _make_ship(sim, a, fuel_units=10, efficiency=0.8)
-    needed = ship.fuel_required(Ship.calculate_distance(a, b))
+    needed = ship.fuel_required(ship.route_distance(a, b))
 
     assert ship.start_journey(b)
     assert ship.cargo.get_quantity(fuel) == 10 - needed
@@ -91,7 +97,7 @@ def test_trade_plan_reserves_efficiency_adjusted_fuel():
     plan = trader.brain._evaluate_trade_opportunity(a, b, food)
 
     assert plan is not None
-    distance = Ship.calculate_distance(a, b)
+    distance = trader.route_distance(a, b)
     assert plan.fuel_needed_one_way == trader.fuel_required(distance)
     assert plan.fuel_needed_one_way == 7  # ceil(ceil(100/20) / 0.8)
 
@@ -125,7 +131,7 @@ def test_fuel_safe_destination_requires_escape_route():
     sim, fuel, _, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
     supplier = _make_ship(sim, a, fuel_units=100, name="Supplier")
     ship = _make_ship(sim, a, name="Trader")
-    escape_cost = ship.fuel_required(Ship.calculate_distance(a, b))
+    escape_cost = ship.fuel_required(ship.route_distance(a, b))
 
     # No fuel for sale anywhere (early economy): the minimum requirement is
     # retaining the return leg.
