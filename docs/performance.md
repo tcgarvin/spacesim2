@@ -2,8 +2,10 @@
 
 Current posture after the 2026 perf campaign (history and rejected
 alternatives: `docs/decision-log.md`). Target scale is 500 planets × 100
-actors/planet × 1000 ships; that runs at **~3.2 s/turn** on a free-threaded
-interpreter with `--workers 12` (~7.9-8.1 s/turn serial), down from 45+.
+actors/planet × 1000 ships; that runs at **~2.7 s/turn** on a free-threaded
+interpreter with `--workers 12` (~7.1 s/turn serial), down from 45+
+(2026-09-01 measurement on the dev laptop; the threaded-phase table below
+predates the two exact-caching passes).
 
 ## Threaded actor phase (`--workers N`)
 
@@ -113,9 +115,12 @@ the CLI checks `sys._is_gil_enabled()` and warns.
   (staleness never crosses a turn). Behavior-exact (live-order content and
   relative order identical to the eager delete; tests in
   `tests/test_market_lazy_cancel.py`). Bench-neutral at P=40 where
-  `cancel_order` was only ~2% cum with ~1.7k cancels/turn; the win is the
-  O(book)→O(1) cancel at target scale's ~65-70k cancels/turn — re-measure
-  there. (Stale-claim
+  `cancel_order` was only ~2% cum with ~1.7k cancels/turn. Measured at
+  target scale (500×100×1000, 3.14t, interleaved A/B vs a65bac8): serial
+  **7.49 → 7.10 s/turn (−5.2%, above rep noise)**; `--workers 12` a wash
+  within ~7% rep noise (2.7 s/turn both arms — the serial-phase share it
+  trims matters less when the actor phase is spread across threads).
+  (Stale-claim
   correction: matching does **not** re-sort uncrossed books — the sort is
   guarded — and `list.pop(0)` was already replaced by index cursors. The
   remaining unconditional matching costs are the dead-book union via
