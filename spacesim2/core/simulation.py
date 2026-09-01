@@ -461,6 +461,10 @@ class Simulation:
             planet_market.commodity_registry = (
                 self.commodity_registry
             )  # Give market access to commodity registry
+            # Record order events only for actors selected for the logging
+            # pipeline (a live view, so --log-actors selection made after
+            # setup is honored). See Market.order_event_filter.
+            planet_market.order_event_filter = self.data_logger.logged_actor_names()
 
             planet = Planet(name, planet_market, x=x, y=y, attributes=attributes)
             self.planets.append(planet)

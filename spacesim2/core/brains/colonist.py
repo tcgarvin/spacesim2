@@ -155,53 +155,87 @@ class ColonistBrain(ActorBrain):
         ``_calculate_turn_opportunity_cost`` reports as the opportunity cost
         of a turn.
 
-        Memoized in ``cache.best_result``: both callers below (the tool
-        willingness-to-pay path and the direct profitability search) ask this
-        same question against the same frozen market/inventory state, so a
-        single scan answers both; the entry survives into later calls this
-        turn unless the actor's inventory or skills change (see BrainCache).
+        Three-level memoization (see BrainCache), matching what actually
+        changes when the mid-turn economic command executes:
+
+        * ``cache.best_result`` — the final answer; dropped on any
+          inventory/skills change (it read ``can_execute``).
+        * ``cache.ranked_profits`` — every process's profit figures sorted by
+          descending discounted profit; survives inventory-only changes.
+        * ``cache.process_quote_values`` — the quote-derived part (input
+          cost / output value per process), which depends on neither skills
+          nor inventory; survives everything within the turn. A successful
+          ProcessCommand bumps skills every time, so this is the level that
+          spares the second ``decide_*`` call a fresh quote scan: re-ranking
+          from it is a cheap skill-multiply and sort.
         """
         if cache is not None and cache.best_result is not None:
             return cache.best_result
 
+        ranked = cache.ranked_profits if cache is not None else None
+        if ranked is None:
+            quote_values = cache.process_quote_values if cache is not None else None
+            if quote_values is None:
+                quote_values = []
+                for process in actor.sim.process_registry.all_processes():
+                    # Calculate potential profit using actual market bid/ask
+                    # prices
+                    input_cost = 0.0
+                    for commodity, quantity in process.inputs.items():
+                        # Use ask price (what we'd pay to buy) if available
+                        _bid, ask = _get_bid_ask(market, commodity, cache)
+                        price = (
+                            ask
+                            if ask is not None
+                            else _get_avg_price(market, commodity, cache)
+                        )
+                        input_cost += price * quantity
+
+                    output_value = 0.0
+                    for commodity, quantity in process.outputs.items():
+                        # Use bid price (what buyers will pay) if available
+                        bid, _ask = _get_bid_ask(market, commodity, cache)
+                        price = (
+                            bid
+                            if bid is not None
+                            else _get_avg_price(market, commodity, cache)
+                        )
+                        output_value += price * quantity
+
+                    quote_values.append((input_cost, output_value, process))
+                if cache is not None:
+                    cache.process_quote_values = quote_values
+
+            ranked = [
+                (
+                    output_value
+                    * self._expected_yield_modifier(actor, process, cache)
+                    * self._expected_skill_factor(actor, process, cache)
+                    - input_cost,
+                    output_value - input_cost,
+                    process,
+                )
+                for input_cost, output_value, process in quote_values
+            ]
+            # Stable sort: equal discounted profits keep registry order, so
+            # the walk below picks the same winner the old
+            # first-strictly-better registry scan did.
+            ranked.sort(key=lambda entry: -entry[0])
+            if cache is not None:
+                cache.ranked_profits = ranked
+
         best_process: Optional["ProcessDefinition"] = None
-        best_discounted_profit = 10.0  # Must exceed government work profit
         best_raw_profit = 0.0
-
-        for process in actor.sim.process_registry.all_processes():
-            # Calculate potential profit using actual market bid/ask prices
-            input_cost = 0.0
-            for commodity, quantity in process.inputs.items():
-                # Use ask price (what we'd pay to buy) if available
-                _bid, ask = _get_bid_ask(market, commodity, cache)
-                price = (
-                    ask if ask is not None else _get_avg_price(market, commodity, cache)
-                )
-                input_cost += price * quantity
-
-            output_value = 0.0
-            for commodity, quantity in process.outputs.items():
-                # Use bid price (what buyers will pay) if available
-                bid, _ask = _get_bid_ask(market, commodity, cache)
-                price = (
-                    bid if bid is not None else _get_avg_price(market, commodity, cache)
-                )
-                output_value += price * quantity
-
-            expected_value = (
-                output_value
-                * self._expected_yield_modifier(actor, process, cache)
-                * self._expected_skill_factor(actor, process, cache)
-            )
-            discounted_profit = expected_value - input_cost
-
-            # Check if we can execute this process
-            can_execute = actor.can_execute_process(process.id)
-
-            if can_execute and discounted_profit > best_discounted_profit:
+        for discounted_profit, raw_profit, process in ranked:
+            # Must exceed government work profit (same strict bar as the old
+            # scan's best_discounted_profit = 10.0 starting value). Entries
+            # are sorted, so once below the bar nothing later qualifies.
+            if discounted_profit <= 10.0:
+                break
+            if actor.can_execute(process):
                 best_process = process
-                best_discounted_profit = discounted_profit
-                best_raw_profit = output_value - input_cost
+                best_raw_profit = raw_profit
+                break
 
         result = (best_process, best_raw_profit)
         if cache is not None:

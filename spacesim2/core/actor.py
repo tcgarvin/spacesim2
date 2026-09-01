@@ -1,5 +1,5 @@
 import enum
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, cast
 
 from spacesim2.core.commands import (
     PlaceBuyOrderCommand,
@@ -12,6 +12,7 @@ from spacesim2.core.planet import Planet
 if TYPE_CHECKING:
     from spacesim2.core.actor_brain import ActorBrain
     from spacesim2.core.drives.actor_drive import ActorDrive
+    from spacesim2.core.process import ProcessDefinition
     from spacesim2.core.simulation import Simulation
 
 
@@ -136,16 +137,21 @@ class Actor:
             success = command.execute(self)
             # Log all market commands to data logger
             self.sim.data_logger.log_actor_command(self, command)
-            # Only log buy/sell order commands for market action summary
-            if success and isinstance(
-                command, (PlaceBuyOrderCommand, PlaceSellOrderCommand)
-            ):
-                action_type = (
-                    "Buy" if isinstance(command, PlaceBuyOrderCommand) else "Sell"
+            # Only log buy/sell order commands for market action summary.
+            # Exact-class checks: isinstance on these ABC-derived commands
+            # routes through abc.__instancecheck__, measurable at this call
+            # frequency (every market command, every actor, every turn).
+            command_class = command.__class__
+            is_buy = command_class is PlaceBuyOrderCommand
+            if success and (is_buy or command_class is PlaceSellOrderCommand):
+                order_command = cast(
+                    "PlaceBuyOrderCommand | PlaceSellOrderCommand", command
                 )
-                commodity_name = command.commodity_type.id
+                action_type = "Buy" if is_buy else "Sell"
+                commodity_name = order_command.commodity_type.id
                 market_actions.append(
-                    f"{action_type} {command.quantity} {commodity_name} at {command.price}"
+                    f"{action_type} {order_command.quantity} "
+                    f"{commodity_name} at {order_command.price}"
                 )
 
         # Update the actor's last market action summary
@@ -168,20 +174,27 @@ class Actor:
         process = self.sim.process_registry.get_process(process_id)
         if not process:
             return False
+        return self.can_execute(process)
+
+    def can_execute(self, process: "ProcessDefinition") -> bool:
+        """Like ``can_execute_process``, for callers already holding the
+        definition (hot paths scan the whole registry; re-resolving each
+        process by id was a measurable cost)."""
+        inventory = self.inventory
 
         # Check if actor has required inputs
         for commodity, quantity in process.inputs.items():
-            if not self.inventory.has_quantity(commodity, quantity):
+            if not inventory.has_quantity(commodity, quantity):
                 return False
 
         # Check if actor has required tools
         for tool in process.tools_required:
-            if not self.inventory.has_quantity(tool, 1):
+            if not inventory.has_quantity(tool, 1):
                 return False
 
         # Check if actor has access to required facilities in their inventory
         for facility in process.facilities_required:
-            if not self.inventory.has_quantity(facility, 1):
+            if not inventory.has_quantity(facility, 1):
                 return False
 
         return True

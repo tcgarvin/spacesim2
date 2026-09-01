@@ -1,10 +1,10 @@
 import itertools
+import math
 import random
-import statistics
 import threading
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Deque, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, AbstractSet, Deque, Dict, List, Optional, Tuple, Union
 
 from spacesim2.core.actor import Actor
 
@@ -140,6 +140,14 @@ class Market:
             lambda: deque(maxlen=ORDER_EVENTS_PER_ACTOR)
         )
 
+        # Which actors (by name) get order lifecycle events recorded. None
+        # means everyone (the default for directly-constructed markets, e.g.
+        # in tests). The simulation wires this to the data logger's live
+        # logged-actor set: events are only ever read back for logged actors
+        # (via get_market_activity_this_turn), so recording them for the
+        # other ~99% of actors is pure overhead on every place/cancel/fill.
+        self.order_event_filter: Optional[AbstractSet[str]] = None
+
         # Track current turn for timestamping orders
         self.current_turn = 0
 
@@ -160,6 +168,20 @@ class Market:
         # Backs has_history() in O(1); the histories above are trimmed to a
         # recent window, so this counter is the durable record.
         self._active_volume_days: Dict["CommodityDefinition", int] = defaultdict(int)
+
+        # Per-turn memos for the trade-history-derived reads (get_avg_price,
+        # has_price_signal, get_30_day_average_price, get_30_day_average_volume,
+        # get_30_day_standard_deviation). Their underlying state
+        # (last_traded_prices, price_history, volume_history) is written ONLY
+        # inside match_orders, which runs at the end of the turn — so cached
+        # values are exact from the start of a turn until matching. Cleared in
+        # set_current_turn AND at the top of match_orders so post-match readers
+        # (export/logging) see fresh values.
+        self._avg_price_cache: Dict["CommodityDefinition", int] = {}
+        self._price_signal_cache: Dict["CommodityDefinition", bool] = {}
+        self._avg30_price_cache: Dict["CommodityDefinition", float] = {}
+        self._avg30_volume_cache: Dict["CommodityDefinition", float] = {}
+        self._stdev30_cache: Dict["CommodityDefinition", float] = {}
 
         # Per-commodity scarcity pressure (see SCARCITY_PRESSURE_* constants).
         self.scarcity_pressure: Dict["CommodityDefinition", float] = defaultdict(float)
@@ -213,7 +235,14 @@ class Market:
         return self.actor_transaction_history.get(actor.name, [])
 
     def _record_order_event(self, event_type: str, order: Order) -> None:
-        """Internal: record an order lifecycle event for the order's actor."""
+        """Internal: record an order lifecycle event for the order's actor.
+
+        Skipped entirely for actors outside ``order_event_filter`` — nothing
+        ever reads their events (see the filter's comment in ``__init__``).
+        """
+        recorded = self.order_event_filter
+        if recorded is not None and order.actor.name not in recorded:
+            return
         event = OrderEvent(
             order_id=order.order_id,
             actor_name=order.actor.name,
@@ -427,8 +456,24 @@ class Market:
 
         return order.order_id
 
+    def _clear_history_read_caches(self) -> None:
+        """Drop the per-turn memos of trade-history-derived reads.
+
+        Called when current_turn advances and again when match_orders is about
+        to mutate the underlying histories, so every caller always sees values
+        identical to an uncached computation.
+        """
+        self._avg_price_cache.clear()
+        self._price_signal_cache.clear()
+        self._avg30_price_cache.clear()
+        self._avg30_volume_cache.clear()
+        self._stdev30_cache.clear()
+
     def match_orders(self) -> None:
         """Match buy and sell orders for all commodities and update market history."""
+        # Matching rewrites last_traded_prices/price_history/volume_history;
+        # anything read after this point must be recomputed.
+        self._clear_history_read_caches()
         self._trim_transaction_history()
 
         # Process orders for all commodity types (both enum and string IDs)
@@ -740,6 +785,10 @@ class Market:
 
     def get_avg_price(self, commodity_type: "CommodityDefinition") -> int:
         """Get the average price for a commodity based on recent transactions."""
+        cached = self._avg_price_cache.get(commodity_type)
+        if cached is not None:
+            return cached
+
         prices = self.last_traded_prices.get(commodity_type, [])
         if not prices:
             # If no recent trades, use the price history or a default base price
@@ -747,15 +796,18 @@ class Market:
                 commodity_type in self.price_history
                 and self.price_history[commodity_type]
             ):
-                return self.price_history[commodity_type][-1]
+                result = self.price_history[commodity_type][-1]
+            else:
+                # Use a default price of 10 if no history exists
+                result = 10
+        else:
+            # Equivalent to int(statistics.mean(prices)) for the non-negative
+            # int prices stored here, but avoids statistics' exact-Fraction
+            # arithmetic, which dominated the profile on these tiny lists.
+            result = sum(prices) // len(prices)
 
-            # Use a default price of 10 if no history exists
-            return 10
-
-        # Equivalent to int(statistics.mean(prices)) for the non-negative int
-        # prices stored here, but avoids statistics' exact-Fraction arithmetic,
-        # which dominated the profile on these tiny lists.
-        return sum(prices) // len(prices)
+        self._avg_price_cache[commodity_type] = result
+        return result
 
     def has_price_signal(self, commodity_type: "CommodityDefinition") -> bool:
         """Whether a real trade has ever set a price for ``commodity_type``.
@@ -767,9 +819,15 @@ class Market:
         when ``last_traded_prices`` or ``price_history`` holds real data, both
         of which are populated exclusively when a transaction clears.
         """
-        if self.last_traded_prices.get(commodity_type):
-            return True
-        return bool(self.price_history.get(commodity_type))
+        cached = self._price_signal_cache.get(commodity_type)
+        if cached is not None:
+            return cached
+
+        result = bool(self.last_traded_prices.get(commodity_type)) or bool(
+            self.price_history.get(commodity_type)
+        )
+        self._price_signal_cache[commodity_type] = result
+        return result
 
     def get_bid_ask_spread(
         self, commodity_type: "CommodityDefinition"
@@ -818,40 +876,65 @@ class Market:
 
     def get_30_day_average_price(self, commodity_type: "CommodityDefinition") -> float:
         """Get the 30-day moving average price for a commodity."""
+        cached = self._avg30_price_cache.get(commodity_type)
+        if cached is not None:
+            return cached
+
         prices = self.price_history.get(commodity_type, [])
         if not prices:
-            return 10.0  # Default base price
+            result = 10.0  # Default base price
+        else:
+            # Take the last 30 days (or as many as we have)
+            recent_prices = prices[-30:] if len(prices) >= 30 else prices
+            result = sum(recent_prices) / len(recent_prices)
 
-        # Take the last 30 days (or as many as we have)
-        recent_prices = prices[-30:] if len(prices) >= 30 else prices
-        return sum(recent_prices) / len(recent_prices) if recent_prices else 10.0
+        self._avg30_price_cache[commodity_type] = result
+        return result
 
     def get_30_day_average_volume(self, commodity_type: "CommodityDefinition") -> float:
         """Get the 30-day moving average trading volume for a commodity."""
+        cached = self._avg30_volume_cache.get(commodity_type)
+        if cached is not None:
+            return cached
+
         volumes = self.volume_history.get(commodity_type, [])
         if not volumes:
-            return 1.0  # Default to 1 unit if no history
+            result = 1.0  # Default to 1 unit if no history
+        else:
+            # Take the last 30 days (or as many as we have)
+            recent_volumes = volumes[-30:] if len(volumes) >= 30 else volumes
+            result = sum(recent_volumes) / len(recent_volumes)
 
-        # Take the last 30 days (or as many as we have)
-        recent_volumes = volumes[-30:] if len(volumes) >= 30 else volumes
-        return sum(recent_volumes) / len(recent_volumes) if recent_volumes else 1.0
+        self._avg30_volume_cache[commodity_type] = result
+        return result
 
     def get_30_day_standard_deviation(
         self, commodity_type: "CommodityDefinition"
     ) -> float:
         """Get the standard deviation of prices over the last 30 days."""
+        cached = self._stdev30_cache.get(commodity_type)
+        if cached is not None:
+            return cached
+
         prices = self.price_history.get(commodity_type, [])
         if not prices or len(prices) < 2:  # Need at least 2 prices to calculate std dev
             # Default to 10% of average price or 1.0
-            avg_price = self.get_30_day_average_price(commodity_type)
-            return max(1.0, avg_price * 0.1)
+            result = max(1.0, self.get_30_day_average_price(commodity_type) * 0.1)
+            self._stdev30_cache[commodity_type] = result
+            return result
 
         # Take the last 30 days (or as many as we have)
         recent_prices = prices[-30:] if len(prices) >= 30 else prices
-        try:
-            return statistics.stdev(recent_prices)
-        except statistics.StatisticsError:
-            return 1.0  # Default in case of error
+        # Sample standard deviation (n-1 denominator), matching
+        # statistics.stdev for these int price lists but in plain float
+        # arithmetic; statistics' exact-Fraction path dominated the profile
+        # on these tiny lists (see get_avg_price for the same treatment).
+        n = len(recent_prices)
+        mean = sum(recent_prices) / n
+        sum_sq_dev = sum((p - mean) ** 2 for p in recent_prices)
+        result = math.sqrt(sum_sq_dev / (n - 1))
+        self._stdev30_cache[commodity_type] = result
+        return result
 
     def has_history(self, commodity_type: "CommodityDefinition") -> bool:
         """Check if there is sufficient price history for sophisticated market making.
@@ -866,6 +949,7 @@ class Market:
     def set_current_turn(self, turn: int) -> None:
         """Update the current turn for timestamping new orders."""
         self.current_turn = turn
+        self._clear_history_read_caches()
 
     def cancel_order(self, order_id: str) -> bool:
         """Cancel an existing order and release reserved resources.

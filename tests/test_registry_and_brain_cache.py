@@ -156,30 +156,161 @@ class TestBrainCacheInvalidation:
         assert cache.imputed_cost == {}
         assert cache.best_result is None
 
-    def test_skill_change_clears_actor_group(self) -> None:
+    def test_skill_change_clears_skill_and_valuation_groups(self) -> None:
         actor, brain, _sim = self._actor_and_brain()
         cache = brain._turn_cache(actor)
         cache.skill_factor["make_food"] = 1.5
+        cache.ranked_profits = []
         cache.bid_ask["food"] = (3, 5)
 
         actor.improve_skill("farming", 0.1)
         cache = brain._turn_cache(actor)
         assert cache.skill_factor == {}
+        assert cache.ranked_profits is None
         assert cache.bid_ask == {"food": (3, 5)}
 
-    def test_turn_change_clears_everything(self) -> None:
+    def test_turn_change_clears_market_and_actor_groups(self) -> None:
         actor, brain, sim = self._actor_and_brain()
         cache = brain._turn_cache(actor)
         cache.bid_ask["food"] = (3, 5)
         cache.replacement_cost["food"] = 7.0
+        cache.ranked_profits = []
 
         sim.current_turn = 1
         cache = brain._turn_cache(actor)
         assert cache.bid_ask == {}
         assert cache.replacement_cost == {}
+        assert cache.ranked_profits is None
+
+    def test_skill_factor_survives_turn_and_inventory_changes(self) -> None:
+        """Skill factors depend only on skills, so they must outlive both a
+        turn boundary and a mid-turn inventory bump."""
+        actor, brain, sim = self._actor_and_brain()
+        thing = CommodityDefinition(
+            id="thing", name="Thing", transportable=True, description=""
+        )
+
+        cache = brain._turn_cache(actor)
+        cache.skill_factor["make_food"] = 1.5
+
+        actor.inventory.add_commodity(thing, 1)
+        cache = brain._turn_cache(actor)
+        assert cache.skill_factor == {"make_food": 1.5}
+
+        sim.current_turn = 1
+        cache = brain._turn_cache(actor)
+        assert cache.skill_factor == {"make_food": 1.5}
+
+    def test_ranked_profits_survives_inventory_change(self) -> None:
+        """The valuation ranking is quote/skill-derived, so the mid-turn
+        inventory bump from the economic command must not drop it (that is
+        the whole point: no second registry scan in decide_market_actions).
+        best_result, which reads inventory via can_execute, must drop."""
+        actor, brain, _sim = self._actor_and_brain()
+        thing = CommodityDefinition(
+            id="thing", name="Thing", transportable=True, description=""
+        )
+
+        cache = brain._turn_cache(actor)
+        cache.ranked_profits = []
+        cache.best_result = (None, 0.0)
+
+        actor.inventory.add_commodity(thing, 1)
+        cache = brain._turn_cache(actor)
+        assert cache.ranked_profits == []
+        assert cache.best_result is None
+
+    def test_yield_modifier_is_never_reset(self) -> None:
+        actor, brain, sim = self._actor_and_brain()
+        cache = brain._turn_cache(actor)
+        cache.yield_modifier["gather_biomass"] = 0.7
+
+        actor.improve_skill("farming", 0.1)
+        sim.current_turn = 5
+        cache = brain._turn_cache(actor)
+        assert cache.yield_modifier == {"gather_biomass": 0.7}
 
     def test_each_brain_owns_one_cache_instance(self) -> None:
         actor, brain, _sim = self._actor_and_brain()
         first = brain._turn_cache(actor)
         assert brain._turn_cache(actor) is first
         assert ColonistBrain()._turn_cache(actor) is not first
+
+
+class TestBestProcessRankedWalkEquivalence:
+    """The ranked-vector walk in _best_process_and_raw_profit must pick
+    exactly what the original first-strictly-better registry scan picked,
+    including tie-breaking by registry order and the >10.0 profit bar."""
+
+    @staticmethod
+    def _brute_force_reference(
+        brain: ColonistBrain, actor: Actor, market: object
+    ) -> tuple:
+        best_process = None
+        best_discounted_profit = 10.0
+        best_raw_profit = 0.0
+        for process in actor.sim.process_registry.all_processes():
+            input_cost = 0.0
+            for commodity, quantity in process.inputs.items():
+                _bid, ask = market.get_bid_ask_spread(commodity)  # type: ignore[attr-defined]
+                price = ask if ask is not None else market.get_avg_price(commodity)  # type: ignore[attr-defined]
+                input_cost += price * quantity
+            output_value = 0.0
+            for commodity, quantity in process.outputs.items():
+                bid, _ask = market.get_bid_ask_spread(commodity)  # type: ignore[attr-defined]
+                price = bid if bid is not None else market.get_avg_price(commodity)  # type: ignore[attr-defined]
+                output_value += price * quantity
+            expected_value = (
+                output_value
+                * brain._expected_yield_modifier(actor, process)
+                * brain._expected_skill_factor(actor, process)
+            )
+            discounted_profit = expected_value - input_cost
+            if (
+                actor.can_execute_process(process.id)
+                and discounted_profit > best_discounted_profit
+            ):
+                best_process = process
+                best_discounted_profit = discounted_profit
+                best_raw_profit = output_value - input_cost
+        return (best_process, best_raw_profit)
+
+    def test_matches_brute_force_scan_on_a_real_sim(self) -> None:
+        from spacesim2.core.simulation import Simulation
+
+        sim = Simulation()
+        sim.setup_simple(
+            num_planets=2, num_regular_actors=10, num_market_makers=1, num_ships=1
+        )
+        for _ in range(5):
+            sim.run_turn()
+        # run_turn leaves current_turn at the just-played turn, so brains
+        # would (legitimately) serve quotes cached mid-phase, before end-of-
+        # turn matching moved the books. Step to the next turn so both the
+        # cache-backed path and the brute-force reference read the same
+        # post-matching market state, as any real decide_* call would.
+        sim.current_turn += 1
+
+        checked = 0
+        for planet in sim.planets:
+            market = planet.market
+            for actor in planet.actors:
+                brain = actor.brain
+                if not isinstance(brain, ColonistBrain):
+                    continue
+                expected = self._brute_force_reference(brain, actor, market)
+                cache = brain._turn_cache(actor)
+                got = brain._best_process_and_raw_profit(actor, market, cache)
+                assert got == expected
+                # And again from the memoized ranking after an inventory-only
+                # change (the mid-turn path that skips the second scan).
+                wood = sim.commodity_registry.get_commodity("wood")
+                assert wood is not None
+                actor.inventory.add_commodity(wood, 1)
+                expected_after = self._brute_force_reference(brain, actor, market)
+                cache = brain._turn_cache(actor)
+                assert cache.ranked_profits is not None  # survived the bump
+                got_after = brain._best_process_and_raw_profit(actor, market, cache)
+                assert got_after == expected_after
+                checked += 1
+        assert checked >= 10

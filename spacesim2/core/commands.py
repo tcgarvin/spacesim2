@@ -1,7 +1,7 @@
 import random
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import TYPE_CHECKING, Dict, List, Tuple
+from typing import TYPE_CHECKING, Dict, List, Tuple, cast
 
 if TYPE_CHECKING:
     from spacesim2.core.actor import Actor
@@ -286,9 +286,14 @@ def prune_unchanged_order_commands(
     Only cancels of ``actor``'s own orders in ``market`` are eligible; anything
     unmatched passes through untouched, in the original relative order.
     """
+    # Exact-class checks (not isinstance): these run for every command of
+    # every actor-turn, and isinstance on ABC-derived classes routes through
+    # abc.__instancecheck__, which showed up in profiles. No command class
+    # here is ever subclassed.
     cancels_by_key: Dict[_OrderKey, List[CancelOrderCommand]] = defaultdict(list)
     for command in commands:
-        if isinstance(command, CancelOrderCommand):
+        if command.__class__ is CancelOrderCommand:
+            command = cast(CancelOrderCommand, command)
             order = market.orders_by_id.get(command.order_id)
             if order is not None and order.actor is actor:
                 key = (
@@ -304,9 +309,12 @@ def prune_unchanged_order_commands(
 
     dropped: set = set()
     for command in commands:
-        if isinstance(command, (PlaceBuyOrderCommand, PlaceSellOrderCommand)):
+        command_class = command.__class__
+        is_buy = command_class is PlaceBuyOrderCommand
+        if is_buy or command_class is PlaceSellOrderCommand:
+            command = cast("PlaceBuyOrderCommand | PlaceSellOrderCommand", command)
             key = (
-                isinstance(command, PlaceBuyOrderCommand),
+                is_buy,
                 command.commodity_type.id,
                 command.price,
                 command.quantity,

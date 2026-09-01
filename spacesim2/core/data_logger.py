@@ -4,7 +4,7 @@ Data logging interface for actors and the simulation.  Should in general be atta
 
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, AbstractSet, Union
 
 from spacesim2.core.actor import Actor
 from spacesim2.core.commands import Command
@@ -60,6 +60,14 @@ class DataLogger:
 
     def add_actor_to_log(self, actor: LoggableActor) -> None:
         self._actors_to_log[actor.name] = actor
+
+    def logged_actor_names(self) -> AbstractSet[str]:
+        """Live, read-only view of the logged actors' names.
+
+        Handed to markets as their ``order_event_filter``; being a view, it
+        reflects actors added after setup (``--log-actors`` wiring).
+        """
+        return self._actors_to_log.keys()
 
     def _turn_log(self, actor: LoggableActor) -> ActorTurnLog:
         """Get (creating if needed) the current turn's log for an actor."""

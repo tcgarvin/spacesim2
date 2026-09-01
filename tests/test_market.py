@@ -170,8 +170,11 @@ def test_get_avg_price(commodity_registry, food_commodity) -> None:
     # When no transactions, should return base price (now 10 by default)
     assert market.get_avg_price(food_commodity) == 10
 
-    # Add some transaction history (manually)
+    # Add some transaction history (manually). In production these lists are
+    # only written inside match_orders; ticking the turn clears the per-turn
+    # history-read memo the same way run_turn does.
     market.last_traded_prices[food_commodity] = [8, 9, 10]
+    market.set_current_turn(1)
 
     # Check average
     assert market.get_avg_price(food_commodity) == 9
@@ -186,11 +189,15 @@ def test_has_price_signal(commodity_registry, food_commodity) -> None:
     assert market.get_avg_price(food_commodity) == 10
     assert market.has_price_signal(food_commodity) is False
 
-    # A recorded trade is a real signal.
+    # A recorded trade is a real signal. (In production these lists are only
+    # written inside match_orders; ticking the turn clears the per-turn
+    # history-read memo the same way run_turn does.)
     market.last_traded_prices[food_commodity] = [8, 9, 10]
+    market.set_current_turn(1)
     assert market.has_price_signal(food_commodity) is True
 
     # price_history alone (recent trades aged out) also counts.
     market.last_traded_prices[food_commodity] = []
     market.price_history[food_commodity] = [9]
+    market.set_current_turn(2)
     assert market.has_price_signal(food_commodity) is True

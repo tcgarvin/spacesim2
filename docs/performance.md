@@ -64,21 +64,43 @@ the CLI checks `sys._is_gil_enabled()` and warns.
   HT, and heavy thermal downclock under all-core load — that alone explains
   most of the ~3.4x CPU-seconds inflation observed at 12 workers. Re-test
   scaling on server hardware before chasing further contention theories.
-- **Serial work reduction is the live lever**: the brain valuation chain
-  (opportunity cost → WTP → replacement cost → skill factor → imputed cost)
-  is ~60-70% of the turn, ~68M Python calls/turn at target scale
-  (`_expected_skill_factor` 1.4M calls/turn, `dict.get` 13.6M/turn,
-  `can_execute_process` re-walking inputs already walked by
-  `_best_process_and_raw_profit`). Per-(planet, turn) caching of
-  quote-derived quantities cuts serial and threaded time proportionally.
-- **Order cancel/repost churn** — ~6-8% of the turn, inside the threaded
-  actor phase: ~65-70k `cancel_order` calls/turn, each rebuilding the whole
-  book list (market.py). Lazy-delete (mark-dead + id index) is the
-  contained fix. (Stale-claim correction: matching does **not** re-sort
-  uncrossed books — the sort is guarded — and `list.pop(0)` was already
-  replaced by index cursors. The remaining unconditional matching costs are
-  the dead-book union via `volume_history` keys, which is self-perpetuating,
-  and an O(book) quantity sum per commodity for scarcity pressure.)
+- **Serial work reduction (2026-09-01 pass, ~1.2x at P=40): landed as
+  behavior-exact caching**, verified by an equivalence test against the old
+  scan (`tests/test_registry_and_brain_cache.py`). What landed: BrainCache
+  split into finer invalidation groups (skill factors keyed on
+  `skills_version` — they survive turns and inventory bumps; a successful
+  ProcessCommand bumps skills *every* time, so the quote-derived per-process
+  input-cost/output-value table got its own inventory- and skill-independent
+  group, making the mid-turn re-rank a cheap multiply+sort instead of a
+  second full registry scan); ranked-walk `_best_process_and_raw_profit`
+  (sorted valuation vector + lazy `can_execute` walk); `Actor.can_execute`
+  taking the definition (the id re-resolution was ~1M lookups/50 turns);
+  per-market per-turn memos for the trade-history reads (`get_avg_price`,
+  `has_price_signal`, `get_30_day_*` — written only inside `match_orders`,
+  so exact); float stdev in `get_30_day_standard_deviation` (was
+  exact-Fraction `statistics.stdev`, 6.7% of wall). NOT pursued: sharing
+  quote-derived valuations across actors per (planet, turn) — order books
+  mutate actor-by-actor (posting is immediate, only matching is deferred),
+  so that is a behavior change, and the exact alternative (keying on live
+  quote values) re-fetches the quotes that make up the cost. Remaining
+  serial headroom is diffuse: `_drive_buy_commands` chain (~17% cum,
+  `_replacement_cost` could get the same quote-part split), and
+  `_cheapest_material_ask`/direct book scans.
+- **Order cancel/repost churn** — was ~14% of wall as a cluster
+  (`prune_unchanged_order_commands` top self-time + `cancel_order` +
+  `_record_order_event` + command construction). Landed 2026-09-01:
+  order-event recording is now gated on the data logger's logged-actor set
+  (`Market.order_event_filter`; events were only ever read back for
+  `--log-actors` actors, default 1), and the per-command `isinstance`
+  checks in the prune/take_turn loops became exact-class checks (ABC
+  `__instancecheck__` was ~1% of wall). Still open: ~65-70k
+  `cancel_order` calls/turn each rebuilding the whole book list —
+  lazy-delete (mark-dead + id index) is the contained fix. (Stale-claim
+  correction: matching does **not** re-sort uncrossed books — the sort is
+  guarded — and `list.pop(0)` was already replaced by index cursors. The
+  remaining unconditional matching costs are the dead-book union via
+  `volume_history` keys, which is self-perpetuating, and an O(book)
+  quantity sum per commodity for scarcity pressure.)
 - Per-turn cost grows ~28-33% over the first ~150 turns then plateaus
   (economy warm-up, not a leak).
 - Profiling on this box: `perf` is blocked (`perf_event_paranoid=4`) and

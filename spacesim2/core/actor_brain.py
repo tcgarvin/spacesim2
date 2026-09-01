@@ -60,15 +60,28 @@ class BrainCache:
       does change inventory and skills, which is exactly what the version
       counters detect.
 
-    Cached values fall into two groups:
+    Cached values fall into four groups, by what invalidates them:
 
     * Market-derived, valid for the whole sim turn: ``bid_ask``,
-      ``avg_price``, and ``yield_modifier`` (planet attributes are fixed for
-      the run; scoped per turn only to keep lifetime rules uniform).
+      ``avg_price``, and ``process_quote_values`` (per-process input cost /
+      output value at current quotes — no skill or inventory inputs at all,
+      so it survives both mid-turn bumps; see colonist.py).
+    * Skill-derived, valid until the actor's skills change (surviving turn
+      boundaries and inventory changes): ``skill_factor``. Skill ratings are
+      the only input, and ``skills_version`` tracks them exactly.
+    * Valuation, derived from quotes and skills but *not* inventory:
+      ``ranked_profits`` (the colonist's whole-registry profitability scan,
+      pre-``can_execute`` filtering — see colonist.py). Dropped on turn
+      change (quotes move) or skill change, but kept across the
+      inventory-only bump the economic command causes mid-turn, which is
+      what spares ``decide_market_actions`` a second full registry scan.
     * Actor-state-derived, additionally invalidated when inventory or skills
-      change: ``skill_factor``, ``replacement_cost``, ``imputed_cost``, and
-      ``best_result`` (they read tool/facility ownership, skill ratings, or
-      ``can_execute_process``).
+      change: ``replacement_cost``, ``imputed_cost``, and ``best_result``
+      (they read tool/facility ownership or ``can_execute_process``).
+
+    ``yield_modifier`` lives outside all groups and is never reset: it
+    depends only on the planet's attributes (fixed for the run) and the
+    process, and an actor never changes planet.
 
     Money and drive metrics are deliberately *not* cached anywhere here, so
     they need no versioning. Keys are commodity/process ``id`` strings.
@@ -77,28 +90,51 @@ class BrainCache:
     __slots__ = (
         "bid_ask",
         "avg_price",
+        "process_quote_values",
         "yield_modifier",
         "skill_factor",
+        "ranked_profits",
         "replacement_cost",
         "imputed_cost",
         "best_result",
         "_turn",
         "_actor_key",
+        "_skills_key",
     )
 
     def __init__(self) -> None:
         self._turn: int = -1
         self._actor_key: Tuple[int, int, int] = (-1, -1, -1)
+        self._skills_key: Tuple[int, int] = (-1, -1)
+        self.yield_modifier: Dict[str, float] = {}
         self._reset_market_group()
+        self._reset_skill_group()
+        self._reset_valuation_group()
         self._reset_actor_group()
 
     def _reset_market_group(self) -> None:
         self.bid_ask: Dict[str, Tuple[Optional[int], Optional[int]]] = {}
         self.avg_price: Dict[str, float] = {}
-        self.yield_modifier: Dict[str, float] = {}
+        # Colonist-specific: (input_cost, output_value, process) for every
+        # process at current quotes, registry order. Skill- and inventory-
+        # independent, so a mid-turn skills bump costs only a cheap re-rank
+        # instead of a fresh quote scan (see _best_process_and_raw_profit).
+        self.process_quote_values: Optional[
+            List[Tuple[float, float, "ProcessDefinition"]]
+        ] = None
+
+    def _reset_skill_group(self) -> None:
+        self.skill_factor: Dict[str, float] = {}
+
+    def _reset_valuation_group(self) -> None:
+        # Colonist-specific: (discounted_profit, raw_profit, process) for
+        # every process, sorted by descending discounted profit (stable, so
+        # registry order breaks ties). See _best_process_and_raw_profit.
+        self.ranked_profits: Optional[
+            List[Tuple[float, float, "ProcessDefinition"]]
+        ] = None
 
     def _reset_actor_group(self) -> None:
-        self.skill_factor: Dict[str, float] = {}
         self.replacement_cost: Dict[str, Optional[float]] = {}
         # Shared memo for make-or-buy imputation (see _imputed_unit_cost).
         self.imputed_cost: Dict[str, float] = {}
@@ -118,10 +154,16 @@ class BrainCache:
             self._turn = turn
             self._actor_key = actor_key
             self._reset_market_group()
+            self._reset_valuation_group()
             self._reset_actor_group()
         elif actor_key != self._actor_key:
             self._actor_key = actor_key
             self._reset_actor_group()
+        skills_key = (id(actor), actor.skills_version)
+        if skills_key != self._skills_key:
+            self._skills_key = skills_key
+            self._reset_skill_group()
+            self._reset_valuation_group()
         return self
 
 
@@ -469,10 +511,9 @@ class ActorBrain:
         Both attribute effects reduce expected yield proportionally: "output"
         scales the quantity, "success" scales the chance the run succeeds.
 
-        Memoized per process in ``cache`` (see ``BrainCache``); a planet's
-        attributes never change during a run, so this is even safe to reuse
-        beyond a turn, but we scope it to the turn to keep cache lifetime
-        rules uniform across all cached quantities.
+        Memoized per process in ``cache`` for the brain's whole lifetime
+        (see ``BrainCache``): a planet's attributes never change during a
+        run and an actor never changes planet, so entries are never reset.
         """
         if cache is not None and process.id in cache.yield_modifier:
             return cache.yield_modifier[process.id]
@@ -500,9 +541,10 @@ class ActorBrain:
         (and waste the turn) proportionally; ratings above 1.0 sometimes
         double the run. Always positive (ratings are clamped to >= 0.5).
 
-        Memoized per process in ``cache``; entries are dropped whenever the
-        actor's skills change (skill improvement bumps ``skills_version``
-        when a ProcessCommand executes — see ``BrainCache``).
+        Memoized per process in ``cache``; entries survive turn boundaries
+        and inventory changes, and are dropped only when the actor's skills
+        change (skill improvement bumps ``skills_version`` when a
+        ProcessCommand executes — see ``BrainCache``).
         """
         if cache is not None and process.id in cache.skill_factor:
             return cache.skill_factor[process.id]
