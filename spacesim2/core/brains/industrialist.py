@@ -352,7 +352,11 @@ class IndustrialistBrain(ActorBrain):
         if quantity_to_buy <= 0:
             return []
         asks = sorted(
-            [o for o in market.sell_orders.get(commodity, []) if o.actor != actor],
+            [
+                o
+                for o in market.sell_orders.get(commodity, [])
+                if o.actor != actor and not o.cancelled
+            ],
             key=lambda o: (o.price, o.timestamp),
         )
         if asks:
@@ -431,7 +435,11 @@ class IndustrialistBrain(ActorBrain):
                 quantity_to_buy = TOOL_BUFFER - current_quantity
 
                 market_sell_orders = sorted(
-                    [o for o in market.sell_orders.get(tool, []) if o.actor != actor],
+                    [
+                        o
+                        for o in market.sell_orders.get(tool, [])
+                        if o.actor != actor and not o.cancelled
+                    ],
                     key=lambda o: (o.price, o.timestamp),
                 )
 

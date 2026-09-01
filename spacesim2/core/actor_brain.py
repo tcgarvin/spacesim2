@@ -63,9 +63,13 @@ class BrainCache:
     Cached values fall into four groups, by what invalidates them:
 
     * Market-derived, valid for the whole sim turn: ``bid_ask``,
-      ``avg_price``, and ``process_quote_values`` (per-process input cost /
+      ``avg_price``, ``process_quote_values`` (per-process input cost /
       output value at current quotes — no skill or inventory inputs at all,
-      so it survives both mid-turn bumps; see colonist.py).
+      so it survives both mid-turn bumps; see colonist.py), and
+      ``replacement_quote_parts`` (per-process quoted base input cost plus
+      the amortized quoted price of every required tool, computed for ALL
+      tools regardless of ownership — ownership is inventory-dependent and
+      is applied per call in ``_replacement_cost``, never baked in here).
     * Skill-derived, valid until the actor's skills change (surviving turn
       boundaries and inventory changes): ``skill_factor``. Skill ratings are
       the only input, and ``skills_version`` tracks them exactly.
@@ -91,6 +95,7 @@ class BrainCache:
         "bid_ask",
         "avg_price",
         "process_quote_values",
+        "replacement_quote_parts",
         "yield_modifier",
         "skill_factor",
         "ranked_profits",
@@ -122,6 +127,15 @@ class BrainCache:
         self.process_quote_values: Optional[
             List[Tuple[float, float, "ProcessDefinition"]]
         ] = None
+        # Quote-derived halves of _replacement_cost, per producing process:
+        # (base input cost at current quotes, per-required-tool amortized
+        # quoted price in tools_required order). Inventory- and skill-
+        # independent by construction, so it survives both mid-turn bumps;
+        # the actor-dependent parts (facility gating, which tools are owned,
+        # skill factor) are applied per call.
+        self.replacement_quote_parts: Dict[
+            str, Tuple[float, List[Tuple["CommodityDefinition", float]]]
+        ] = {}
 
     def _reset_skill_group(self) -> None:
         self.skill_factor: Dict[str, float] = {}
@@ -265,7 +279,9 @@ class ActorBrain:
             if need <= 0:
                 continue
 
-            target_commodity, ask = self._cheapest_material_ask(actor, market, mats)
+            target_commodity, ask = self._cheapest_material_ask(
+                actor, market, mats, cache
+            )
             wtp = self._drive_willingness_to_pay(
                 actor, market, drive, target_commodity, lam, cache
             )
@@ -449,7 +465,12 @@ class ActorBrain:
         make-it-yourself ceiling.
 
         Memoized per commodity in ``cache``; entries live until the turn ends
-        or the actor's inventory/skills change (see ``BrainCache``).
+        or the actor's inventory/skills change (see ``BrainCache``). The
+        quote-derived halves (base input cost, per-tool amortized prices) are
+        additionally cached per process for the whole turn in
+        ``cache.replacement_quote_parts`` (see ``_replacement_quote_parts``),
+        so the post-ProcessCommand recompute only redoes the cheap
+        actor-dependent parts.
         """
         if cache is not None and commodity.id in cache.replacement_cost:
             return cache.replacement_cost[commodity.id]
@@ -465,21 +486,13 @@ class ActorBrain:
             ):
                 continue
 
-            input_cost = 0.0
-            for input_commodity, qty in process.inputs.items():
-                _, ask = _get_bid_ask(market, input_commodity, cache)
-                price = (
-                    ask
-                    if ask is not None
-                    else _get_avg_price(market, input_commodity, cache)
-                )
-                input_cost += price * qty
-            for tool in process.tools_required:
+            input_cost, tool_amortizations = self._replacement_quote_parts(
+                market, process, cache
+            )
+            for tool, amortized in tool_amortizations:
                 if actor.inventory.has_quantity(tool, 1):
                     continue
-                _, ask = _get_bid_ask(market, tool, cache)
-                price = ask if ask is not None else _get_avg_price(market, tool, cache)
-                input_cost += price / TOOL_EXPECTED_LIFESPAN
+                input_cost += amortized
 
             expected_out = out_qty * self._expected_yield_modifier(
                 actor, process, cache
@@ -499,6 +512,49 @@ class ActorBrain:
         if cache is not None:
             cache.replacement_cost[commodity.id] = best
         return best
+
+    def _replacement_quote_parts(
+        self,
+        market: "Market",
+        process: "ProcessDefinition",
+        cache: Optional[BrainCache] = None,
+    ) -> Tuple[float, List[Tuple["CommodityDefinition", float]]]:
+        """Quote-derived, actor-independent halves of ``_replacement_cost``.
+
+        Returns ``(base_input_cost, tool_amortizations)`` for one process:
+        the summed quoted cost of its inputs (ask, falling back to the
+        rolling average), and the amortized quoted price of EVERY required
+        tool in ``tools_required`` order — regardless of ownership, which is
+        inventory-dependent and must not bake into this per-turn cache.
+        Callers add the amortizations for tools the actor lacks, preserving
+        the original inputs-then-tools float summation order exactly.
+
+        Memoized per process in the market group of ``cache``: quotes are
+        the only inputs, so entries live for the whole sim turn and survive
+        mid-turn inventory/skill bumps (see ``BrainCache``).
+        """
+        if cache is not None and process.id in cache.replacement_quote_parts:
+            return cache.replacement_quote_parts[process.id]
+
+        base_cost = 0.0
+        for input_commodity, qty in process.inputs.items():
+            _, ask = _get_bid_ask(market, input_commodity, cache)
+            price = (
+                ask
+                if ask is not None
+                else _get_avg_price(market, input_commodity, cache)
+            )
+            base_cost += price * qty
+        tool_amortizations: List[Tuple["CommodityDefinition", float]] = []
+        for tool in process.tools_required:
+            _, ask = _get_bid_ask(market, tool, cache)
+            price = ask if ask is not None else _get_avg_price(market, tool, cache)
+            tool_amortizations.append((tool, price / TOOL_EXPECTED_LIFESPAN))
+
+        parts = (base_cost, tool_amortizations)
+        if cache is not None:
+            cache.replacement_quote_parts[process.id] = parts
+        return parts
 
     def _expected_yield_modifier(
         self,
@@ -730,12 +786,16 @@ class ActorBrain:
         floor = self._replacement_cost(actor, market, commodity, cache)
         min_ask = 1 if floor is None else max(1, math.ceil(floor))
 
-        bids = sorted(
-            [o for o in market.buy_orders.get(commodity, []) if o.actor != actor],
-            key=lambda o: (-o.price, o.timestamp),
-        )
-        if bids and bids[0].price >= min_ask:
-            price = bids[0].price
+        # Only the best (highest) non-own bid price is ever used, so a single
+        # max pass replaces the old full sort; the sort's timestamp tie-break
+        # never mattered because ties share the same price.
+        best_bid: Optional[int] = None
+        for o in market.buy_orders.get(commodity, []):
+            if o.actor != actor and not o.cancelled:
+                if best_bid is None or o.price > best_bid:
+                    best_bid = o.price
+        if best_bid is not None and best_bid >= min_ask:
+            price = best_bid
         else:
             price = min_ask
         return [PlaceSellOrderCommand(commodity, quantity, price)]
@@ -745,23 +805,58 @@ class ActorBrain:
         actor: "Actor",
         market: "Market",
         materials: List["CommodityDefinition"],
+        cache: Optional[BrainCache] = None,
     ) -> Tuple["CommodityDefinition", Optional[int]]:
         """Find the cheapest available (non-own) ask among a drive's materials.
 
         Returns the chosen commodity and its ask price, or the basic material
         with ``None`` if nothing is for sale locally.
+
+        Fast path: when the actor owns no live sell order in a commodity, the
+        minimum over *others'* asks equals the market's global best ask, so
+        the (cached) quote answers in O(1) and the book scan is skipped. The
+        actor's own live sell orders are enumerated via
+        ``market.actor_orders`` (a short per-actor id list; filled and
+        cancelled orders are removed from it, but ids are re-checked against
+        ``orders_by_id`` and the ``cancelled`` flag to match the lazy-delete
+        book semantics exactly). Only when the actor does own a live ask does
+        the full non-own, non-cancelled scan run.
         """
         chosen = materials[0]
         best_ask: Optional[int] = None
         for commodity in materials:
-            asks = [
-                o.price
-                for o in market.sell_orders.get(commodity, [])
-                if o.actor != actor
-            ]
-            if asks:
-                low = min(asks)
-                if best_ask is None or low < best_ask:
-                    best_ask = low
-                    chosen = commodity
+            _, quote_ask = _get_bid_ask(market, commodity, cache)
+            if quote_ask is None:
+                continue  # no live asks at all
+            low: Optional[int]
+            if self._owns_live_sell_order(actor, market, commodity):
+                low = None
+                for o in market.sell_orders.get(commodity, []):
+                    if o.actor != actor and not o.cancelled:
+                        if low is None or o.price < low:
+                            low = o.price
+            else:
+                low = quote_ask
+            if low is not None and (best_ask is None or low < best_ask):
+                best_ask = low
+                chosen = commodity
         return chosen, best_ask
+
+    @staticmethod
+    def _owns_live_sell_order(
+        actor: "Actor", market: "Market", commodity: "CommodityDefinition"
+    ) -> bool:
+        """Whether ``actor`` has a live (uncancelled) sell order for
+        ``commodity`` resting on ``market``."""
+        entry = market.actor_orders.get(actor)
+        if entry is None:
+            return False
+        for order_id in entry["sell"]:
+            order = market.orders_by_id.get(order_id)
+            if (
+                order is not None
+                and not order.cancelled
+                and order.commodity_type is commodity
+            ):
+                return True
+        return False

@@ -289,6 +289,7 @@ class TestColonistBrainToolMarket:
         sell_order.price = 25
         sell_order.actor = Mock()  # Different actor
         sell_order.timestamp = 0
+        sell_order.cancelled = False
 
         mock_actor.planet.market.sell_orders = {
             mock_commodities["simple_tools"]: [sell_order]
@@ -335,6 +336,7 @@ class TestColonistBrainToolMarket:
         sell_order.price = 100
         sell_order.actor = Mock()
         sell_order.timestamp = 0
+        sell_order.cancelled = False
 
         mock_actor.planet.market.sell_orders = {
             mock_commodities["simple_tools"]: [sell_order]

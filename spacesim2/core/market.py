@@ -77,6 +77,12 @@ class Order:
     timestamp: int = 0  # For ordering when prices are the same
     order_id: str = ""  # Unique identifier for the order
     created_turn: int = 0  # Turn when order was created
+    # Lazy-delete marker: cancel_order marks instead of rebuilding the whole
+    # per-commodity book list (~65-70k cancels/turn at target scale). Every
+    # book reader must skip cancelled orders; compaction (threshold-based in
+    # cancel_order, and per commodity each match_orders pass) bounds how long
+    # dead orders rest in the books.
+    cancelled: bool = False
 
     def __post_init__(self) -> None:
         """Generate a unique order ID if not provided."""
@@ -205,6 +211,17 @@ class Market:
         self._quote_cache: Dict[
             "CommodityDefinition", Tuple[Optional[int], Optional[int]]
         ] = {}
+
+        # Lazy-delete bookkeeping: number of cancelled (dead) orders still
+        # resting in each per-commodity book. cancel_order marks orders dead
+        # instead of rebuilding the list; a book is compacted (dead orders
+        # filtered out, live order preserved in relative order) when its dead
+        # count exceeds half its length, and unconditionally per commodity in
+        # match_orders so staleness never crosses a turn boundary. Compaction
+        # never changes the live-order sequence, so it needs no cache
+        # invalidation.
+        self._dead_buy_counts: Dict["CommodityDefinition", int] = defaultdict(int)
+        self._dead_sell_counts: Dict["CommodityDefinition", int] = defaultdict(int)
 
         # Sorted (price, quantity) bid levels per commodity, dropped on any
         # buy-book mutation (place/cancel/modify/match). Backs get_bid_levels:
@@ -485,6 +502,11 @@ class Market:
 
         # Process orders
         for commodity_type in all_commodities:
+            # Sweep out lazily-cancelled orders before matching so book
+            # staleness is bounded to within a single turn and the truthiness
+            # checks below see only live orders.
+            self._compact_books(commodity_type)
+
             buy_book = self.buy_orders.get(commodity_type)
             sell_book = self.sell_orders.get(commodity_type)
 
@@ -548,13 +570,13 @@ class Market:
         # random key the same actor would win a contested price level every
         # turn (measurably starving thin markets like medicine).
         buy_orders = sorted(
-            self.buy_orders.get(commodity_type, []),
+            (o for o in self.buy_orders.get(commodity_type, []) if not o.cancelled),
             key=lambda o: (-o.price, o.timestamp, random.random()),
         )
 
         # Sort sell orders by price (lowest first) and timestamp (oldest first)
         sell_orders = sorted(
-            self.sell_orders.get(commodity_type, []),
+            (o for o in self.sell_orders.get(commodity_type, []) if not o.cancelled),
             key=lambda o: (o.price, o.timestamp, random.random()),
         )
 
@@ -651,9 +673,13 @@ class Market:
                 # No more matches possible (highest bid < lowest ask)
                 break
 
-        # Update remaining orders
+        # Update remaining orders. The rebuilt books come from the
+        # cancelled-filtered sorted lists above, so they contain no dead
+        # orders and the lazy-delete counters reset.
         self.buy_orders[commodity_type] = buy_orders[buy_index:]
         self.sell_orders[commodity_type] = sell_orders[sell_index:]
+        self._dead_buy_counts[commodity_type] = 0
+        self._dead_sell_counts[commodity_type] = 0
         self._quote_cache.pop(commodity_type, None)
         self._on_buy_book_changed(commodity_type)
 
@@ -840,8 +866,12 @@ class Market:
         buy_orders = self.buy_orders.get(commodity_type, [])
         sell_orders = self.sell_orders.get(commodity_type, [])
 
-        highest_bid = max((o.price for o in buy_orders), default=None)
-        lowest_ask = min((o.price for o in sell_orders), default=None)
+        highest_bid = max(
+            (o.price for o in buy_orders if not o.cancelled), default=None
+        )
+        lowest_ask = min(
+            (o.price for o in sell_orders if not o.cancelled), default=None
+        )
 
         result = (highest_bid, lowest_ask)
         self._quote_cache[commodity_type] = result
@@ -868,7 +898,9 @@ class Market:
         cached = self._bid_levels_cache.get(commodity_type)
         if cached is None:
             cached = [
-                (o.price, o.quantity) for o in self.buy_orders.get(commodity_type, [])
+                (o.price, o.quantity)
+                for o in self.buy_orders.get(commodity_type, [])
+                if not o.cancelled
             ]
             cached.sort(key=lambda level: -level[0])
             self._bid_levels_cache[commodity_type] = cached
@@ -951,6 +983,36 @@ class Market:
         self.current_turn = turn
         self._clear_history_read_caches()
 
+    def _note_dead_order(
+        self,
+        book: Dict["CommodityDefinition", List[Order]],
+        dead_counts: Dict["CommodityDefinition", int],
+        commodity_type: "CommodityDefinition",
+    ) -> None:
+        """Internal: count one newly-cancelled order; compact past the threshold.
+
+        Compaction filters cancelled orders out, preserving the relative order
+        of live orders, so it is invisible to every (cancel-skipping) reader.
+        """
+        dead = dead_counts[commodity_type] + 1
+        orders = book[commodity_type]
+        if dead > len(orders) // 2:
+            book[commodity_type] = [o for o in orders if not o.cancelled]
+            dead_counts[commodity_type] = 0
+        else:
+            dead_counts[commodity_type] = dead
+
+    def _compact_books(self, commodity_type: "CommodityDefinition") -> None:
+        """Internal: drop any dead orders resting in this commodity's books."""
+        if self._dead_buy_counts.get(commodity_type):
+            orders = self.buy_orders[commodity_type]
+            self.buy_orders[commodity_type] = [o for o in orders if not o.cancelled]
+            self._dead_buy_counts[commodity_type] = 0
+        if self._dead_sell_counts.get(commodity_type):
+            orders = self.sell_orders[commodity_type]
+            self.sell_orders[commodity_type] = [o for o in orders if not o.cancelled]
+            self._dead_sell_counts[commodity_type] = 0
+
     def cancel_order(self, order_id: str) -> bool:
         """Cancel an existing order and release reserved resources.
 
@@ -983,12 +1045,15 @@ class Market:
         # Remove from orders by ID
         del self.orders_by_id[order_id]
 
-        # Remove from order books
+        # Lazily remove from the order book: mark dead instead of rebuilding
+        # the list, and compact once dead orders outnumber live ones. All
+        # book readers skip cancelled orders, so live-order semantics
+        # (content and relative order) are identical to an eager delete.
+        order.cancelled = True
         if order.is_buy:
-            buy_orders = self.buy_orders.get(commodity_type, [])
-            self.buy_orders[commodity_type] = [
-                o for o in buy_orders if o.order_id != order_id
-            ]
+            self._note_dead_order(
+                self.buy_orders, self._dead_buy_counts, commodity_type
+            )
             self._on_buy_book_changed(commodity_type)
 
             # Return reserved money to actor
@@ -1000,10 +1065,9 @@ class Market:
                 self.actor_orders[actor]["buy"].remove(order_id)
 
         else:  # Sell order
-            sell_orders = self.sell_orders.get(commodity_type, [])
-            self.sell_orders[commodity_type] = [
-                o for o in sell_orders if o.order_id != order_id
-            ]
+            self._note_dead_order(
+                self.sell_orders, self._dead_sell_counts, commodity_type
+            )
 
             # Return reserved inventory to actor
             actor.inventory.unreserve_commodity(commodity_type, order.quantity)

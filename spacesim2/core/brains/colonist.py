@@ -353,7 +353,11 @@ class ColonistBrain(ActorBrain):
             return []
 
         market_sell_orders = sorted(
-            [o for o in market.sell_orders.get(tools, []) if o.actor != actor],
+            [
+                o
+                for o in market.sell_orders.get(tools, [])
+                if o.actor != actor and not o.cancelled
+            ],
             key=lambda o: (o.price, o.timestamp),
         )
 

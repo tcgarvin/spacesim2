@@ -180,9 +180,14 @@ class SimulationExporter:
                 best_bid = best_bid or 0
                 best_ask = best_ask or 0
 
-                # Count orders
-                buy_orders = market.buy_orders.get(commodity, [])
-                sell_orders = market.sell_orders.get(commodity, [])
+                # Count orders (skipping lazily-cancelled ones still resting
+                # in the books between compactions)
+                buy_orders = [
+                    o for o in market.buy_orders.get(commodity, []) if not o.cancelled
+                ]
+                sell_orders = [
+                    o for o in market.sell_orders.get(commodity, []) if not o.cancelled
+                ]
 
                 self.writers["market_snapshots"].write_row(
                     {

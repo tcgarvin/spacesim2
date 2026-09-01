@@ -265,10 +265,13 @@ class TestIndustrialistBrain:
         sell_order.price = 5
         sell_order.actor = "different_actor"  # Not our actor
         sell_order.timestamp = 0
+        sell_order.cancelled = False
 
         mock_actor.planet.market.sell_orders = {mock_food_commodity: [sell_order]}
         mock_actor.planet.market.get_bid_ask_spread.return_value = (None, 5)
         mock_actor.planet.market.get_actor_orders.return_value = {"buy": [], "sell": []}
+        # No resting own orders: the cheapest-ask fast path checks this map.
+        mock_actor.planet.market.actor_orders = {}
         mock_actor.sim.commodity_registry.get_commodity.return_value = (
             mock_food_commodity
         )
@@ -486,6 +489,7 @@ class TestImputedProcurementBids:
         ask_order.price = 8
         ask_order.actor = "someone_else"
         ask_order.timestamp = 0
+        ask_order.cancelled = False
 
         market = Mock()
         market.sell_orders = {refined: [ask_order]}

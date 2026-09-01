@@ -1,16 +1,26 @@
 """Registry caches (all_commodities/all_processes, producer index) and the
 per-actor-turn BrainCache invalidation rules."""
 
+import math
 from pathlib import Path
 from unittest.mock import Mock
 
 import yaml
 
 from spacesim2.core.actor import Actor, ActorType
-from spacesim2.core.actor_brain import _get_bid_ask
+from spacesim2.core.actor_brain import (
+    GOVERNMENT_WAGE,
+    TOOL_EXPECTED_LIFESPAN,
+    ActorBrain,
+    _get_bid_ask,
+)
 from spacesim2.core.brains.colonist import ColonistBrain
+from spacesim2.core.commands import PlaceSellOrderCommand
 from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
+from spacesim2.core.market import Market
 from spacesim2.core.process import ProcessRegistry
+
+from .helpers import get_actor
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 
@@ -314,3 +324,275 @@ class TestBestProcessRankedWalkEquivalence:
                 assert got_after == expected_after
                 checked += 1
         assert checked >= 10
+
+
+class TestReplacementCostSplitEquivalence:
+    """The quote-part split of _replacement_cost must return bit-identical
+    values to the original single-pass computation in every actor state,
+    including immediately after mid-turn inventory and skill bumps (which
+    must NOT invalidate the per-turn replacement_quote_parts table)."""
+
+    @staticmethod
+    def _reference(
+        brain: ActorBrain,
+        actor: Actor,
+        market: object,
+        commodity: CommodityDefinition,
+    ) -> float | None:
+        """Naive copy of the pre-split _replacement_cost, cache-less."""
+        best: float | None = None
+        for process in actor.sim.process_registry.get_processes_producing(commodity):
+            out_qty = process.outputs.get(commodity, 0)
+            if out_qty <= 0:
+                continue
+            if not all(
+                actor.inventory.has_quantity(facility, 1)
+                for facility in process.facilities_required
+            ):
+                continue
+
+            input_cost = 0.0
+            for input_commodity, qty in process.inputs.items():
+                _bid, ask = market.get_bid_ask_spread(input_commodity)  # type: ignore[attr-defined]
+                price = (
+                    ask if ask is not None else market.get_avg_price(input_commodity)  # type: ignore[attr-defined]
+                )
+                input_cost += price * qty
+            for tool in process.tools_required:
+                if actor.inventory.has_quantity(tool, 1):
+                    continue
+                _bid, ask = market.get_bid_ask_spread(tool)  # type: ignore[attr-defined]
+                price = ask if ask is not None else market.get_avg_price(tool)  # type: ignore[attr-defined]
+                input_cost += price / TOOL_EXPECTED_LIFESPAN
+
+            expected_out = out_qty * brain._expected_yield_modifier(actor, process)
+            if expected_out <= 0:
+                continue
+            skill_factor = brain._expected_skill_factor(actor, process)
+            per_unit = input_cost / expected_out + GOVERNMENT_WAGE / (
+                expected_out * skill_factor
+            )
+            if best is None or per_unit < best:
+                best = per_unit
+        return best
+
+    def test_matches_reference_on_a_real_sim(self) -> None:
+        from spacesim2.core.simulation import Simulation
+
+        sim = Simulation()
+        sim.setup_simple(
+            num_planets=2, num_regular_actors=10, num_market_makers=1, num_ships=1
+        )
+        for _ in range(5):
+            sim.run_turn()
+        # Step past the just-played turn so cache-backed and reference reads
+        # both see the post-matching books (see the ranked-walk test above).
+        sim.current_turn += 1
+
+        commodities = sim.commodity_registry.all_commodities()
+        tool = sim.commodity_registry.get_commodity("simple_tools")
+        assert tool is not None
+        checked = 0
+        for planet in sim.planets:
+            market = planet.market
+            for actor in planet.actors:
+                brain = actor.brain
+                if not isinstance(brain, ActorBrain):
+                    continue
+                cache = brain._turn_cache(actor)
+                for commodity in commodities:
+                    expected = self._reference(brain, actor, market, commodity)
+                    got = brain._replacement_cost(actor, market, commodity, cache)
+                    assert got == expected
+
+                # Mid-turn inventory bump (as after a ProcessCommand): give
+                # the actor a tool, flipping tool-amortization branches. The
+                # actor-group memo must drop; the quote-parts table must not.
+                actor.inventory.add_commodity(tool, 1)
+                cache = brain._turn_cache(actor)
+                assert cache.replacement_quote_parts  # survived the bump
+                assert cache.replacement_cost == {}
+                for commodity in commodities:
+                    expected = self._reference(brain, actor, market, commodity)
+                    got = brain._replacement_cost(actor, market, commodity, cache)
+                    assert got == expected
+
+                # Mid-turn skill bump (a successful ProcessCommand bumps
+                # skills every time): quote parts still survive.
+                actor.improve_skill("farming", 0.2)
+                cache = brain._turn_cache(actor)
+                assert cache.replacement_quote_parts
+                assert cache.replacement_cost == {}
+                for commodity in commodities:
+                    expected = self._reference(brain, actor, market, commodity)
+                    got = brain._replacement_cost(actor, market, commodity, cache)
+                    assert got == expected
+                checked += 1
+        assert checked >= 10
+
+
+class TestCheapestMaterialAskEquivalence:
+    """The quote fast path of _cheapest_material_ask must agree exactly with
+    the original full non-own, non-cancelled book scan."""
+
+    @staticmethod
+    def _reference(actor: Actor, market: object, materials: list) -> tuple:
+        chosen = materials[0]
+        best_ask = None
+        for commodity in materials:
+            asks = [
+                o.price
+                for o in market.sell_orders.get(commodity, [])  # type: ignore[attr-defined]
+                if o.actor != actor and not o.cancelled
+            ]
+            if asks:
+                low = min(asks)
+                if best_ask is None or low < best_ask:
+                    best_ask = low
+                    chosen = commodity
+        return chosen, best_ask
+
+    def _market_and_actors(self) -> tuple:
+        registry = CommodityRegistry()
+        registry.load_from_file(str(DATA_DIR / "commodities.yaml"))
+        market = Market()
+        market.commodity_registry = registry
+        me = get_actor("Me", initial_money=1000)
+        other = get_actor("Other", initial_money=1000)
+        brain = ColonistBrain()
+        return registry, market, me, other, brain
+
+    def test_matches_reference_on_a_real_sim(self) -> None:
+        from spacesim2.core.simulation import Simulation
+
+        sim = Simulation()
+        sim.setup_simple(
+            num_planets=2, num_regular_actors=10, num_market_makers=1, num_ships=1
+        )
+        for _ in range(5):
+            sim.run_turn()
+        sim.current_turn += 1
+
+        commodities = sim.commodity_registry.all_commodities()
+        checked = 0
+        for planet in sim.planets:
+            market = planet.market
+            for actor in planet.actors:
+                brain = actor.brain
+                if not isinstance(brain, ActorBrain):
+                    continue
+                cache = brain._turn_cache(actor)
+                # Whole-registry material list exercises the cross-material
+                # min; per-commodity calls exercise every single-material path.
+                expected = self._reference(actor, market, commodities)
+                got = brain._cheapest_material_ask(actor, market, commodities, cache)
+                assert got == expected
+                for commodity in commodities:
+                    expected = self._reference(actor, market, [commodity])
+                    got = brain._cheapest_material_ask(
+                        actor, market, [commodity], cache
+                    )
+                    assert got == expected
+                checked += 1
+        assert checked >= 10
+
+    def test_actor_owning_the_lowest_ask_falls_back_to_scan(self) -> None:
+        registry, market, me, other, brain = self._market_and_actors()
+        food = registry.get_commodity("food")
+        assert food is not None
+        me.inventory.add_commodity(food, 10)
+        other.inventory.add_commodity(food, 10)
+
+        market.place_sell_order(me, food, 1, 5)  # own lowest ask
+        market.place_sell_order(other, food, 1, 8)
+        market.place_sell_order(other, food, 1, 12)
+
+        expected = self._reference(me, market, [food])
+        assert expected == (food, 8)
+        assert brain._cheapest_material_ask(me, market, [food]) == expected
+
+    def test_cancelled_orders_are_ignored(self) -> None:
+        registry, market, me, other, brain = self._market_and_actors()
+        food = registry.get_commodity("food")
+        assert food is not None
+        me.inventory.add_commodity(food, 10)
+        other.inventory.add_commodity(food, 10)
+
+        cheap = market.place_sell_order(other, food, 1, 4)
+        market.place_sell_order(other, food, 1, 9)
+        own = market.place_sell_order(me, food, 1, 3)
+        assert market.cancel_order(cheap)  # dead order rests in the book
+        assert market.cancel_order(own)  # own cancelled ask must not count
+
+        expected = self._reference(me, market, [food])
+        assert expected == (food, 9)
+        assert brain._cheapest_material_ask(me, market, [food]) == expected
+
+    def test_only_own_asks_yield_none(self) -> None:
+        registry, market, me, _other, brain = self._market_and_actors()
+        food = registry.get_commodity("food")
+        assert food is not None
+        me.inventory.add_commodity(food, 10)
+        market.place_sell_order(me, food, 1, 5)
+
+        wood = registry.get_commodity("wood")
+        assert wood is not None
+        expected = self._reference(me, market, [food, wood])
+        assert expected == (food, None)
+        assert brain._cheapest_material_ask(me, market, [food, wood]) == expected
+
+    def test_material_order_breaks_price_ties(self) -> None:
+        registry, market, me, other, brain = self._market_and_actors()
+        food = registry.get_commodity("food")
+        wood = registry.get_commodity("wood")
+        assert food is not None and wood is not None
+        other.inventory.add_commodity(food, 10)
+        other.inventory.add_commodity(wood, 10)
+        market.place_sell_order(other, food, 1, 7)
+        market.place_sell_order(other, wood, 1, 7)
+
+        expected = self._reference(me, market, [wood, food])
+        assert expected == (wood, 7)
+        assert brain._cheapest_material_ask(me, market, [wood, food]) == expected
+
+
+class TestSellAtOrAboveCostMaxPass:
+    """The single max pass must price exactly like the old full sort that
+    only ever read bids[0].price."""
+
+    def test_prices_at_best_non_own_live_bid(self) -> None:
+        registry = CommodityRegistry()
+        registry.load_from_file(str(DATA_DIR / "commodities.yaml"))
+        market = Market()
+        market.commodity_registry = registry
+        food = registry.get_commodity("food")
+        assert food is not None
+
+        me = get_actor("Me", initial_money=1000)
+        other = get_actor("Other", initial_money=1000)
+        me.sim.process_registry = _load_real_registries()[1]
+
+        brain = ColonistBrain()
+        floor = brain._replacement_cost(me, market, food)
+        min_ask = 1 if floor is None else max(1, math.ceil(floor))
+        high_bid = min_ask + 10
+
+        market.place_buy_order(other, food, 1, high_bid)
+        market.place_buy_order(me, food, 1, high_bid + 5)  # own: ignored
+        dead = market.place_buy_order(other, food, 1, high_bid + 9)
+        assert market.cancel_order(dead)  # cancelled: ignored
+
+        commands = brain._sell_at_or_above_cost(me, market, food, 3)
+        assert len(commands) == 1
+        command = commands[0]
+        assert isinstance(command, PlaceSellOrderCommand)
+        # Best live non-own bid covers the floor -> hit it.
+        assert command.price == high_bid
+        assert command.quantity == 3
+
+        # With no live non-own bids at all, the ask rests at the floor.
+        market.cancel_order(market.actor_orders[other]["buy"][0])
+        commands = brain._sell_at_or_above_cost(me, market, food, 3)
+        command = commands[0]
+        assert isinstance(command, PlaceSellOrderCommand)
+        assert command.price == min_ask

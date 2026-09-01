@@ -82,10 +82,23 @@ the CLI checks `sys._is_gil_enabled()` and warns.
   quote-derived valuations across actors per (planet, turn) — order books
   mutate actor-by-actor (posting is immediate, only matching is deferred),
   so that is a behavior change, and the exact alternative (keying on live
-  quote values) re-fetches the quotes that make up the cost. Remaining
-  serial headroom is diffuse: `_drive_buy_commands` chain (~17% cum,
-  `_replacement_cost` could get the same quote-part split), and
-  `_cheapest_material_ask`/direct book scans.
+  quote values) re-fetches the quotes that make up the cost.
+- **Second exact-caching pass (2026-09-01, follow-up): the diffuse
+  `_drive_buy_commands` headroom, landed behavior-exact** (equivalence tests
+  in `tests/test_registry_and_brain_cache.py`). What landed:
+  `_replacement_cost` got the same quote-part split as the colonist re-rank —
+  per-process base input cost and per-tool amortized quoted price now live in
+  a turn-scoped market-group cache (`BrainCache.replacement_quote_parts`,
+  tool prices cached for ALL required tools so ownership never bakes in), so
+  the post-ProcessCommand recompute redoes only facility gating, unowned-tool
+  sums, and the cached skill/yield factors; `_cheapest_material_ask` answers
+  from the cached quote in O(1) when the actor owns no live ask in that
+  commodity (own-order check via `actor_orders` re-validated against
+  `orders_by_id`; full non-own scan only otherwise); `_sell_at_or_above_cost`
+  replaced its full bid sort with a single max pass (only the top price was
+  read). Serial bench P=40: 122.1 → 119.2 ms/turn combined with the cancel
+  lazy-delete below — modest at this scale; the split's win is bounded
+  because the old recompute already hit turn-cached quotes.
 - **Order cancel/repost churn** — was ~14% of wall as a cluster
   (`prune_unchanged_order_commands` top self-time + `cancel_order` +
   `_record_order_event` + command construction). Landed 2026-09-01:
@@ -93,9 +106,16 @@ the CLI checks `sys._is_gil_enabled()` and warns.
   (`Market.order_event_filter`; events were only ever read back for
   `--log-actors` actors, default 1), and the per-command `isinstance`
   checks in the prune/take_turn loops became exact-class checks (ABC
-  `__instancecheck__` was ~1% of wall). Still open: ~65-70k
-  `cancel_order` calls/turn each rebuilding the whole book list —
-  lazy-delete (mark-dead + id index) is the contained fix. (Stale-claim
+  `__instancecheck__` was ~1% of wall). The last piece landed 2026-09-01:
+  `cancel_order` is now a lazy delete — orders carry a `cancelled` flag,
+  every book reader skips dead orders, and books compact when dead orders
+  outnumber live ones plus once per commodity at the top of `match_orders`
+  (staleness never crosses a turn). Behavior-exact (live-order content and
+  relative order identical to the eager delete; tests in
+  `tests/test_market_lazy_cancel.py`). Bench-neutral at P=40 where
+  `cancel_order` was only ~2% cum with ~1.7k cancels/turn; the win is the
+  O(book)→O(1) cancel at target scale's ~65-70k cancels/turn — re-measure
+  there. (Stale-claim
   correction: matching does **not** re-sort uncrossed books — the sort is
   guarded — and `list.pop(0)` was already replaced by index cursors. The
   remaining unconditional matching costs are the dead-book union via

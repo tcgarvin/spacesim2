@@ -36,13 +36,17 @@ def food(commodity_registry):
 
 def _brute_force_quote(market: Market, commodity) -> tuple:
     """Reference best bid/ask computed by a full book scan."""
-    bids = [o.price for o in market.buy_orders.get(commodity, [])]
-    asks = [o.price for o in market.sell_orders.get(commodity, [])]
+    bids = [o.price for o in market.buy_orders.get(commodity, []) if not o.cancelled]
+    asks = [o.price for o in market.sell_orders.get(commodity, []) if not o.cancelled]
     return (max(bids) if bids else None, min(asks) if asks else None)
 
 
 def _brute_force_bid_levels(market: Market, commodity) -> list:
-    levels = [(o.price, o.quantity) for o in market.buy_orders.get(commodity, [])]
+    levels = [
+        (o.price, o.quantity)
+        for o in market.buy_orders.get(commodity, [])
+        if not o.cancelled
+    ]
     levels.sort(key=lambda level: -level[0])
     return levels
 
