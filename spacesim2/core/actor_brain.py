@@ -74,8 +74,9 @@ class BrainCache:
       boundaries and inventory changes): ``skill_factor``. Skill ratings are
       the only input, and ``skills_version`` tracks them exactly.
     * Valuation, derived from quotes and skills but *not* inventory:
-      ``ranked_profits`` (the colonist's whole-registry profitability scan,
-      pre-``can_execute`` filtering — see colonist.py). Dropped on turn
+      ``ranked_profits`` (the colonist's whole-registry profitability scan
+      filtered to the entries clearing the government-work bar, still
+      pre-``can_execute`` — see colonist.py). Dropped on turn
       change (quotes move) or skill change, but kept across the
       inventory-only bump the economic command causes mid-turn, which is
       what spares ``decide_market_actions`` a second full registry scan.
@@ -124,6 +125,8 @@ class BrainCache:
         # process at current quotes, registry order. Skill- and inventory-
         # independent, so a mid-turn skills bump costs only a cheap re-rank
         # instead of a fresh quote scan (see _best_process_and_raw_profit).
+        # May alias Market.shared_quote_table's list (shared across actors,
+        # keyed on (turn, quote_version)) — treat it as read-only.
         self.process_quote_values: Optional[
             List[Tuple[float, float, "ProcessDefinition"]]
         ] = None
@@ -142,8 +145,9 @@ class BrainCache:
 
     def _reset_valuation_group(self) -> None:
         # Colonist-specific: (discounted_profit, raw_profit, process) for
-        # every process, sorted by descending discounted profit (stable, so
-        # registry order breaks ties). See _best_process_and_raw_profit.
+        # every process clearing the >10.0 government-work bar, sorted by
+        # descending discounted profit (stable, so registry order breaks
+        # ties). See _best_process_and_raw_profit.
         self.ranked_profits: Optional[
             List[Tuple[float, float, "ProcessDefinition"]]
         ] = None

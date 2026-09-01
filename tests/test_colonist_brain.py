@@ -38,6 +38,9 @@ class TestColonistBrainToolMarket:
         actor.money = 100
         actor.planet = Mock()
         actor.planet.market = Mock()
+        # Shared quote-table plumbing normally set up by Market.__init__.
+        actor.planet.market.quote_version = 0
+        actor.planet.market.shared_quote_table = None
         actor.sim = Mock()
         _wire_producer_index(actor.sim)
         actor.inventory = Mock(spec=Inventory)
@@ -106,6 +109,9 @@ class TestColonistBrainToolMarket:
         process.id = "profitable_process"
         process.inputs = {input_commodity: 1}
         process.outputs = {output_commodity: 1}
+        # Precomputed flattenings normally built by __post_init__.
+        process.inputs_items = ((input_commodity, 1),)
+        process.outputs_items = ((output_commodity, 1),)
         process.resource_attribute = None
         process.relevant_skills = []
 

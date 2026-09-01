@@ -10,6 +10,7 @@ from spacesim2.core.actor import Actor
 
 if TYPE_CHECKING:
     from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
+    from spacesim2.core.process import ProcessDefinition
     from spacesim2.core.ship import Ship
 
 # Anything that can place orders and trade in a market. Ships participate in
@@ -212,6 +213,33 @@ class Market:
             "CommodityDefinition", Tuple[Optional[int], Optional[int]]
         ] = {}
 
+        # Monotonic counter bumped at every site where a best bid/ask COULD
+        # change — mirroring the incremental _quote_cache maintenance above:
+        # a placement that improves (or could first-populate) a side's best,
+        # a cancel of an order at the cached best (or with no cached quote,
+        # where "at the best" can't be cheaply ruled out), and matching.
+        # Bumps are allowed to be conservative (a bump when the best did not
+        # actually move only loses cache sharing, never exactness); what is
+        # NOT allowed is a best-quote change without a bump. Consumers key
+        # shared quote-derived tables on (sim turn, quote_version): two
+        # readers at the same key provably see identical bid/ask across all
+        # commodities, and trade-history reads (avg_price etc.) are
+        # phase-constant (matching runs only at end of turn), so such tables
+        # are byte-identical and safe to share across actors on this market.
+        self.quote_version: int = 0
+
+        # Shared actor-independent process quote table, keyed on
+        # ((sim turn, quote_version), table). Written and read by
+        # ColonistBrain._best_process_and_raw_profit; the stored list is
+        # shared across actors and MUST be treated as read-only. The turn is
+        # part of the key so cross-turn staleness (e.g. rolling avg-price
+        # windows advancing) is impossible even if quote_version stood
+        # still. No lock: threading shards whole planets, so a market is
+        # only ever touched by one thread.
+        self.shared_quote_table: Optional[
+            Tuple[Tuple[int, int], List[Tuple[float, float, "ProcessDefinition"]]]
+        ] = None
+
         # Lazy-delete bookkeeping: number of cancelled (dead) orders still
         # resting in each per-commodity book. cancel_order marks orders dead
         # instead of rebuilding the list; a book is compacted (dead orders
@@ -403,6 +431,11 @@ class Market:
             best_bid, best_ask = cached
             if best_bid is None or price > best_bid:
                 self._quote_cache[commodity_type] = (price, best_ask)
+                self.quote_version += 1
+        else:
+            # No cached quote: the new bid may or may not beat the true best,
+            # which we won't compute here. Conservative bump (see __init__).
+            self.quote_version += 1
         self.orders_by_id[order.order_id] = order
         self.actor_orders[actor]["buy"].append(order.order_id)
 
@@ -462,6 +495,10 @@ class Market:
             best_bid, best_ask = cached
             if best_ask is None or price < best_ask:
                 self._quote_cache[commodity_type] = (best_bid, price)
+                self.quote_version += 1
+        else:
+            # No cached quote: conservative bump (see __init__).
+            self.quote_version += 1
         self.orders_by_id[order.order_id] = order
         self.actor_orders[actor]["sell"].append(order.order_id)
 
@@ -681,6 +718,7 @@ class Market:
         self._dead_buy_counts[commodity_type] = 0
         self._dead_sell_counts[commodity_type] = 0
         self._quote_cache.pop(commodity_type, None)
+        self.quote_version += 1
         self._on_buy_book_changed(commodity_type)
 
     def _update_scarcity_pressure(
@@ -1041,6 +1079,11 @@ class Market:
             cached_bid, cached_ask = cached
             if order.price == (cached_bid if order.is_buy else cached_ask):
                 self._quote_cache.pop(commodity_type, None)
+                self.quote_version += 1
+        else:
+            # No cached quote: can't cheaply rule out that this order was the
+            # best on its side. Conservative bump (see __init__).
+            self.quote_version += 1
 
         # Remove from orders by ID
         del self.orders_by_id[order_id]

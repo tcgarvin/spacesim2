@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import yaml
 
@@ -45,6 +45,31 @@ class ProcessDefinition:
     relevant_skills: List[str] = field(default_factory=list)
     # Optional resource attribute configuration for gathering processes
     resource_attribute: Optional[ResourceAttribute] = None
+    # Precomputed, read-only flattenings of the fields above, built once at
+    # construction for hot scan loops (definitions are immutable after
+    # registry load, so these can never go stale):
+    # inputs/outputs as (commodity, quantity) tuples — avoids a fresh
+    # dict.items() view per process per scan.
+    inputs_items: Tuple[Tuple[CommodityDefinition, int], ...] = field(
+        init=False, repr=False
+    )
+    outputs_items: Tuple[Tuple[CommodityDefinition, int], ...] = field(
+        init=False, repr=False
+    )
+    # Everything Actor.can_execute checks, in its exact order: inputs at
+    # their quantities, then tools and facilities at quantity 1.
+    requirements: Tuple[Tuple[CommodityDefinition, int], ...] = field(
+        init=False, repr=False
+    )
+
+    def __post_init__(self) -> None:
+        self.inputs_items = tuple(self.inputs.items())
+        self.outputs_items = tuple(self.outputs.items())
+        self.requirements = (
+            self.inputs_items
+            + tuple((tool, 1) for tool in self.tools_required)
+            + tuple((facility, 1) for facility in self.facilities_required)
+        )
 
     def __str__(self) -> str:
         return self.name

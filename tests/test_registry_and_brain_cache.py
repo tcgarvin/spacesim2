@@ -326,6 +326,130 @@ class TestBestProcessRankedWalkEquivalence:
         assert checked >= 10
 
 
+class TestSharedQuoteTable:
+    """The actor-independent process quote table is shared across actors on
+    one market, keyed on (sim turn, quote_version): identical key implies
+    identical quotes and avg prices, so the tables are identical. Any
+    best-quote mutation bumps the version and forces a rebuild."""
+
+    def test_two_colonists_share_the_table_and_a_quote_move_rebuilds(self) -> None:
+        from spacesim2.core.simulation import Simulation
+
+        sim = Simulation()
+        sim.setup_simple(
+            num_planets=1, num_regular_actors=20, num_market_makers=1, num_ships=1
+        )
+        for _ in range(5):
+            sim.run_turn()
+        sim.current_turn += 1
+
+        planet = sim.planets[0]
+        market = planet.market
+        colonists = [a for a in planet.actors if isinstance(a.brain, ColonistBrain)]
+        assert len(colonists) >= 4
+        first, second, seller, third = colonists[:4]
+        brain_a = first.brain
+        brain_b = second.brain
+        brain_c = third.brain
+        assert isinstance(brain_a, ColonistBrain)
+        assert isinstance(brain_b, ColonistBrain)
+        assert isinstance(brain_c, ColonistBrain)
+
+        cache_a = brain_a._turn_cache(first)
+        expected_a = TestBestProcessRankedWalkEquivalence._brute_force_reference(
+            brain_a, first, market
+        )
+        assert brain_a._best_process_and_raw_profit(first, market, cache_a) == (
+            expected_a
+        )
+        table_a = cache_a.process_quote_values
+        assert table_a is not None
+        shared = market.shared_quote_table
+        assert shared is not None
+        assert shared[1] is table_a
+
+        # Second actor, unchanged book: identical object, no rebuild — and
+        # the shared table still yields the brute-force answer for B's own
+        # skills/inventory (only the quote-derived part is shared).
+        cache_b = brain_b._turn_cache(second)
+        expected_b = TestBestProcessRankedWalkEquivalence._brute_force_reference(
+            brain_b, second, market
+        )
+        assert brain_b._best_process_and_raw_profit(second, market, cache_b) == (
+            expected_b
+        )
+        assert cache_b.process_quote_values is table_a
+
+        # An order improving a best quote bumps the version; the next scan
+        # rebuilds a fresh table with the new quote priced in.
+        food = sim.commodity_registry.get_commodity("food")
+        assert food is not None
+        bid, ask = market.get_bid_ask_spread(food)
+        version_before = market.quote_version
+        seller.money += 1000  # ensure the improving order can be funded
+        if ask is not None and ask > 1:
+            seller.inventory.add_commodity(food, 5)
+            assert market.place_sell_order(seller, food, 1, ask - 1)
+        else:
+            # Can't undercut a 1-credit (or absent) ask; improve the bid side.
+            assert market.place_buy_order(
+                seller, food, 1, 1 if bid is None else bid + 1
+            )
+        assert market.quote_version > version_before
+
+        cache_c = brain_c._turn_cache(third)
+        expected_c = TestBestProcessRankedWalkEquivalence._brute_force_reference(
+            brain_c, third, market
+        )
+        assert brain_c._best_process_and_raw_profit(third, market, cache_c) == (
+            expected_c
+        )
+        table_c = cache_c.process_quote_values
+        assert table_c is not None
+        assert table_c is not table_a
+
+    def test_quote_version_bump_sites(self) -> None:
+        registry = CommodityRegistry()
+        registry.load_from_file(str(DATA_DIR / "commodities.yaml"))
+        market = Market()
+        market.commodity_registry = registry
+        food = registry.get_commodity("food")
+        assert food is not None
+
+        seller = get_actor("Seller", initial_money=1000)
+        seller.inventory.add_commodity(food, 20)
+        buyer = get_actor("Buyer", initial_money=1000)
+
+        # Populate the incremental quote cache so the bump logic can compare
+        # against a known best rather than bumping conservatively.
+        market.get_bid_ask_spread(food)
+
+        v0 = market.quote_version
+        best = market.place_sell_order(seller, food, 1, 10)  # first ask: best
+        assert best and market.quote_version == v0 + 1
+
+        market.get_bid_ask_spread(food)
+        v1 = market.quote_version
+        worse = market.place_sell_order(seller, food, 1, 15)  # behind the best
+        assert worse and market.quote_version == v1  # no bump
+
+        improving = market.place_sell_order(seller, food, 1, 8)  # new best
+        assert improving and market.quote_version == v1 + 1
+
+        market.get_bid_ask_spread(food)
+        v2 = market.quote_version
+        assert market.cancel_order(worse)  # not at the best: no bump
+        assert market.quote_version == v2
+        assert market.cancel_order(improving)  # at the best ask: bump
+        assert market.quote_version == v2 + 1
+
+        # Bid side: a first (best-populating) bid bumps too.
+        market.get_bid_ask_spread(food)
+        v3 = market.quote_version
+        assert market.place_buy_order(buyer, food, 1, 5)
+        assert market.quote_version == v3 + 1
+
+
 class TestReplacementCostSplitEquivalence:
     """The quote-part split of _replacement_cost must return bit-identical
     values to the original single-pass computation in every actor state,

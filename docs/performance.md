@@ -126,6 +126,50 @@ the CLI checks `sys._is_gil_enabled()` and warns.
   remaining unconditional matching costs are the dead-book union via
   `volume_history` keys, which is self-perpetuating, and an O(book)
   quantity sum per commodity for scarcity pressure.)
+- **Third exact pass (2026-09-01): colonist scan micro-flattening, landed
+  behavior-exact.** `_best_process_and_raw_profit` was ~17% of serial turn
+  time at target scale, mostly call overhead on memo *hits* (18M
+  `_expected_skill_factor` calls at ~1.5µs each). What landed: memo-hit
+  inlining in the ranked-list build (probe `cache.skill_factor` /
+  `yield_modifier` / `bid_ask` / `avg_price` via local dict `.get`s,
+  falling back to the existing helpers only on miss, so fill and
+  invalidation logic stay in one place); precomputed
+  `ProcessDefinition.inputs_items` / `outputs_items` / `requirements`
+  tuples built in `__post_init__` (definitions are immutable after load),
+  so the quote scan no longer materializes `dict.items()` views and
+  `Actor.can_execute` is one loop over the flattened requirements with a
+  bound `has_quantity` (same check order, identical boolean);
+  `ranked_profits` now drops entries at or below the 10.0 government-work
+  bar *before* sorting (`itemgetter(0)`, `reverse=True` — stable, so the
+  registry-order tie-break is preserved; the walk could never select the
+  dropped entries). Measured at target scale (500×100+2mm, 2 ships/planet,
+  stock 3.13 serial, interleaved A/B, 3 reps of 5 measured turns): serial
+  **8.29 → 7.73 s/turn (−6.8%)**, consistent across reps (before
+  8.33/8.30/8.23, after 7.80/7.68/7.71).
+- **Shared process quote table per market (2026-09-01, follow-up to the
+  third pass): landed behavior-exact.** The colonist quote scan's
+  actor-independent `(input_cost, output_value, process)` table is now
+  shared across actors on a market (`Market.shared_quote_table`), keyed on
+  `(sim turn, quote_version)` — a new monotonic counter bumped at exactly
+  the sites where a best bid/ask COULD change, mirroring the incremental
+  `_quote_cache` maintenance (best-improving/first-populating placement,
+  cancel at the cached best or with no cached quote, matching; conservative
+  tie bumps lose only sharing, never exactness). Exactness argument: two
+  actors reading at the same key provably see identical bid/ask (the
+  version covers every best-quote mutation) and identical avg prices
+  (trade history moves only in end-of-turn matching, so it is
+  phase-constant), hence identical tables; skill/yield discounting stays
+  fully per-actor — deliberately distinct from the rejected turn-scoped
+  quote-snapshot sharing, which would have frozen mid-phase book moves.
+  No lock: threading shards whole planets, one thread per market.
+  Instrumentation at target scale measured a ~67% hit rate on the ~25k
+  full quote builds/turn (mean 25.3 best-quote-moving events per market
+  per turn vs ~50 colonist scans). Equivalence tests in
+  `tests/test_registry_and_brain_cache.py` (shared-object identity,
+  rebuild-on-quote-move, bump-site coverage). Measured (same interleaved
+  method, baseline = third pass): serial **7.75 → 7.66 s/turn (−1.1%,
+  after faster in all 3 reps)**; one threaded rep (3.14t,
+  `--workers 12`): **2.41 → 2.20 s/turn** — no regression under threads.
 - Per-turn cost grows ~28-33% over the first ~150 turns then plateaus
   (economy warm-up, not a leak).
 - Profiling on this box: `perf` is blocked (`perf_event_paranoid=4`) and

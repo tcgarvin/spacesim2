@@ -1,3 +1,4 @@
+from operator import itemgetter
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from spacesim2.core.actor import Actor
@@ -20,6 +21,11 @@ if TYPE_CHECKING:
     from spacesim2.core.commodity import CommodityDefinition
     from spacesim2.core.market import Market
     from spacesim2.core.process import ProcessDefinition
+
+# Sort key for the ranked-profit entries (discounted profit first element).
+# itemgetter avoids a Python-level lambda call per comparison; reverse=True
+# keeps the sort stable, so registry order still breaks ties.
+_DISCOUNTED_PROFIT_KEY = itemgetter(0)
 
 
 class ColonistBrain(ActorBrain):
@@ -160,8 +166,10 @@ class ColonistBrain(ActorBrain):
 
         * ``cache.best_result`` — the final answer; dropped on any
           inventory/skills change (it read ``can_execute``).
-        * ``cache.ranked_profits`` — every process's profit figures sorted by
-          descending discounted profit; survives inventory-only changes.
+        * ``cache.ranked_profits`` — the profit figures of every process
+          whose discounted profit clears the government-work bar (>10.0;
+          nothing below it can ever be selected), sorted by descending
+          discounted profit; survives inventory-only changes.
         * ``cache.process_quote_values`` — the quote-derived part (input
           cost / output value per process), which depends on neither skills
           nor inventory; survives everything within the turn. A successful
@@ -174,64 +182,103 @@ class ColonistBrain(ActorBrain):
 
         ranked = cache.ranked_profits if cache is not None else None
         if ranked is None:
+            # Hoist the cache dicts into locals and probe them inline: at
+            # target scale nearly every lookup below is a memo hit, and the
+            # helper-call + double-dict pattern per hit was a measured cost.
+            # On a miss the existing helper/method runs, keeping the fill
+            # (and invalidation) logic in one place. When cache is None the
+            # throwaway empty dicts always miss, reproducing the uncached
+            # path exactly.
+            bid_ask_memo = cache.bid_ask if cache is not None else {}
+            avg_price_memo = cache.avg_price if cache is not None else {}
+
             quote_values = cache.process_quote_values if cache is not None else None
+            if quote_values is None:
+                # The table is actor-independent (quotes and avg prices only;
+                # skill/yield discounting happens per-actor below), so it is
+                # shared across actors on the same market, keyed on
+                # (sim turn, quote_version). Two actors at the same key
+                # provably see identical bid/ask (the version covers every
+                # best-quote mutation) and identical avg prices (trade
+                # history only moves in end-of-turn matching), so the tables
+                # are identical — the shared list is read-only by contract.
+                # Per-actor quote caches stay exact contributors: within one
+                # actor's turn slice the market cannot mutate (its own
+                # market commands execute after both decide_* calls), so
+                # quotes cached earlier in the slice equal live quotes.
+                shared_key = (actor.sim.current_turn, market.quote_version)
+                shared = market.shared_quote_table
+                if shared is not None and shared[0] == shared_key:
+                    quote_values = shared[1]
+                    if cache is not None:
+                        cache.process_quote_values = quote_values
             if quote_values is None:
                 quote_values = []
                 for process in actor.sim.process_registry.all_processes():
                     # Calculate potential profit using actual market bid/ask
                     # prices
                     input_cost = 0.0
-                    for commodity, quantity in process.inputs.items():
+                    for commodity, quantity in process.inputs_items:
                         # Use ask price (what we'd pay to buy) if available
-                        _bid, ask = _get_bid_ask(market, commodity, cache)
-                        price = (
-                            ask
-                            if ask is not None
-                            else _get_avg_price(market, commodity, cache)
-                        )
+                        pair = bid_ask_memo.get(commodity.id)
+                        if pair is None:
+                            pair = _get_bid_ask(market, commodity, cache)
+                        ask = pair[1]
+                        if ask is not None:
+                            price = float(ask)
+                        else:
+                            price = avg_price_memo.get(commodity.id, -1.0)
+                            if price < 0.0:
+                                price = _get_avg_price(market, commodity, cache)
                         input_cost += price * quantity
 
                     output_value = 0.0
-                    for commodity, quantity in process.outputs.items():
+                    for commodity, quantity in process.outputs_items:
                         # Use bid price (what buyers will pay) if available
-                        bid, _ask = _get_bid_ask(market, commodity, cache)
-                        price = (
-                            bid
-                            if bid is not None
-                            else _get_avg_price(market, commodity, cache)
-                        )
+                        pair = bid_ask_memo.get(commodity.id)
+                        if pair is None:
+                            pair = _get_bid_ask(market, commodity, cache)
+                        bid = pair[0]
+                        if bid is not None:
+                            price = float(bid)
+                        else:
+                            price = avg_price_memo.get(commodity.id, -1.0)
+                            if price < 0.0:
+                                price = _get_avg_price(market, commodity, cache)
                         output_value += price * quantity
 
                     quote_values.append((input_cost, output_value, process))
+                market.shared_quote_table = (shared_key, quote_values)
                 if cache is not None:
                     cache.process_quote_values = quote_values
 
-            ranked = [
-                (
-                    output_value
-                    * self._expected_yield_modifier(actor, process, cache)
-                    * self._expected_skill_factor(actor, process, cache)
-                    - input_cost,
-                    output_value - input_cost,
-                    process,
-                )
-                for input_cost, output_value, process in quote_values
-            ]
-            # Stable sort: equal discounted profits keep registry order, so
-            # the walk below picks the same winner the old
-            # first-strictly-better registry scan did.
-            ranked.sort(key=lambda entry: -entry[0])
+            yield_memo = cache.yield_modifier if cache is not None else {}
+            skill_memo = cache.skill_factor if cache is not None else {}
+            ranked = []
+            for input_cost, output_value, process in quote_values:
+                yield_mod = yield_memo.get(process.id)
+                if yield_mod is None:
+                    yield_mod = self._expected_yield_modifier(actor, process, cache)
+                skill_factor = skill_memo.get(process.id)
+                if skill_factor is None:
+                    skill_factor = self._expected_skill_factor(actor, process, cache)
+                discounted = output_value * yield_mod * skill_factor - input_cost
+                # Must exceed government work profit (same strict bar as the
+                # old scan's best_discounted_profit = 10.0 starting value).
+                # Entries at or below the bar can never be selected by the
+                # walk below, so they are dropped before the sort.
+                if discounted > 10.0:
+                    ranked.append((discounted, output_value - input_cost, process))
+            # Stable sort: equal discounted profits keep registry order (the
+            # pre-sort filter preserves it too), so the walk below picks the
+            # same winner the old first-strictly-better registry scan did.
+            ranked.sort(key=_DISCOUNTED_PROFIT_KEY, reverse=True)
             if cache is not None:
                 cache.ranked_profits = ranked
 
         best_process: Optional["ProcessDefinition"] = None
         best_raw_profit = 0.0
-        for discounted_profit, raw_profit, process in ranked:
-            # Must exceed government work profit (same strict bar as the old
-            # scan's best_discounted_profit = 10.0 starting value). Entries
-            # are sorted, so once below the bar nothing later qualifies.
-            if discounted_profit <= 10.0:
-                break
+        for _discounted_profit, raw_profit, process in ranked:
             if actor.can_execute(process):
                 best_process = process
                 best_raw_profit = raw_profit

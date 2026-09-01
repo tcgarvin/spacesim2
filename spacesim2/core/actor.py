@@ -180,23 +180,14 @@ class Actor:
         """Like ``can_execute_process``, for callers already holding the
         definition (hot paths scan the whole registry; re-resolving each
         process by id was a measurable cost)."""
-        inventory = self.inventory
-
-        # Check if actor has required inputs
-        for commodity, quantity in process.inputs.items():
-            if not inventory.has_quantity(commodity, quantity):
+        # process.requirements is the precomputed flattening of inputs (at
+        # their quantities) plus tools and facilities (at 1), in the same
+        # check order as the original three loops — one pass, one bound
+        # method lookup.
+        has_quantity = self.inventory.has_quantity
+        for commodity, quantity in process.requirements:
+            if not has_quantity(commodity, quantity):
                 return False
-
-        # Check if actor has required tools
-        for tool in process.tools_required:
-            if not inventory.has_quantity(tool, 1):
-                return False
-
-        # Check if actor has access to required facilities in their inventory
-        for facility in process.facilities_required:
-            if not inventory.has_quantity(facility, 1):
-                return False
-
         return True
 
     def get_market_activity_since_last_check(self) -> Dict:
