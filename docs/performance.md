@@ -53,18 +53,37 @@ the CLI checks `sys._is_gil_enabled()` and warns.
 
 ## Open levers
 
-- **Thread-scaling contention** — thread scaling is only ~2.8x at 12 workers.
-  The global `random` module's lock is **ruled out**: a per-actor-RNG
-  refactor (69ca496, reverted for simplicity in 286c739) measured no change
-  at target scale (3.15 s/turn at `--workers 12` vs 8.71 serial — same
-  ratio). The prime remaining suspect is refcount traffic on shared
-  read-only objects (registries, commodity/process instances); profile
-  (py-spy/perf on 3.14t) before writing code.
-- **Sorted/heap order books** — matching still re-sorts both sides of every
-  commodity book per turn (including dead books unioned in via
-  `volume_history` keys) and uses O(B) `list.pop(0)` per fill.
+- **Thread scaling (~3x at 12 workers) is largely a hardware ceiling on the
+  dev host**, not a software-contention bug. Two hypotheses tested and ruled
+  out at target scale: the global `random` lock (per-actor-RNG refactor
+  69ca496, reverted in 286c739 — no change), and refcount traffic on shared
+  commodity/process definition objects (per-planet registry copies + id-based
+  hash/eq, parked on branch `per-planet-registries` — 12-worker 3.36→3.26
+  s/turn i.e. noise, while costing ~8-17% serial from the Python-level
+  `__hash__`). The dev host is an i5-1340P laptop: 4 P-cores + 8 E-cores,
+  HT, and heavy thermal downclock under all-core load — that alone explains
+  most of the ~3.4x CPU-seconds inflation observed at 12 workers. Re-test
+  scaling on server hardware before chasing further contention theories.
+- **Serial work reduction is the live lever**: the brain valuation chain
+  (opportunity cost → WTP → replacement cost → skill factor → imputed cost)
+  is ~60-70% of the turn, ~68M Python calls/turn at target scale
+  (`_expected_skill_factor` 1.4M calls/turn, `dict.get` 13.6M/turn,
+  `can_execute_process` re-walking inputs already walked by
+  `_best_process_and_raw_profit`). Per-(planet, turn) caching of
+  quote-derived quantities cuts serial and threaded time proportionally.
+- **Order cancel/repost churn** — ~6-8% of the turn, inside the threaded
+  actor phase: ~65-70k `cancel_order` calls/turn, each rebuilding the whole
+  book list (market.py). Lazy-delete (mark-dead + id index) is the
+  contained fix. (Stale-claim correction: matching does **not** re-sort
+  uncrossed books — the sort is guarded — and `list.pop(0)` was already
+  replaced by index cursors. The remaining unconditional matching costs are
+  the dead-book union via `volume_history` keys, which is self-perpetuating,
+  and an O(book) quantity sum per commodity for scarcity pressure.)
 - Per-turn cost grows ~28-33% over the first ~150 turns then plateaus
   (economy warm-up, not a leak).
+- Profiling on this box: `perf` is blocked (`perf_event_paranoid=4`) and
+  py-spy cannot read 3.14t — use CPU-accounting (`/proc/<pid>/stat` deltas,
+  pidstat) and stock-interpreter py-spy for serial attribution.
 
 ## Reference bench numbers (single-thread, 50-turn driver)
 
