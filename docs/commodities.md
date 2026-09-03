@@ -1,73 +1,54 @@
-# Commodities and Processes System
+# Commodities and Processes
 
-## Overview
+Commodities and production processes are data: `data/commodities.yaml` and
+`data/processes.yaml`. The economy can be extended without code changes.
 
-The commodity system in SpaceSim2 uses a data-driven approach to define commodities and production processes. This allows for flexible expansion of the in-game economy without requiring code changes. All commodity and process definitions are stored in YAML files in the `data/` directory.
+## Commodities
 
-## Key Concepts
+Each entry has `id`, `name`, `transportable` (can ships carry it; false for
+facilities) and `description`. `CommodityRegistry` (`core/commodity.py`)
+loads them. Everywhere in the codebase a commodity is a
+`CommodityDefinition` object, never a string id.
 
-### Commodity Definitions
+## Processes
 
-Commodities represent physical goods and resources in the simulation. They are defined in `data/commodities.yaml` with the following attributes:
+Each entry has `id`, `name`, `inputs` and `outputs` (commodity id to
+quantity), `tools_required`, `facilities_required`, `labor`,
+`relevant_skills` and `description`. `ProcessRegistry` (`core/process.py`)
+loads them and needs a `CommodityRegistry` to resolve ids to
+`CommodityDefinition` objects. Full schema: the `commodity-process-design`
+skill.
 
-- `id`: Unique string identifier (e.g., "food", "nova_fuel")
-- `name`: Human-readable name
-- `transportable`: Boolean indicating if the commodity can be transported by ships
-- `description`: Text description of the commodity
+## Inventory
 
-**Implementation Note**: Commodities are loaded and managed by the `CommodityRegistry` class. Throughout the codebase, commodities are always represented by `CommodityDefinition` objects, not by string IDs.
+`Inventory` (`core/commodity.py`) tracks commodities for actors and ships.
+All methods take `CommodityDefinition` objects.
 
-### Process Definitions
+| Method | Purpose |
+|--------|---------|
+| `add_commodity(commodity, quantity)` | Add stock |
+| `remove_commodity(commodity, quantity)` | Remove stock |
+| `has_quantity(commodity, quantity)` | Enough in stock? |
+| `get_quantity(commodity)` | Total held |
+| `get_available_quantity(commodity)` | Unreserved amount |
+| `reserve_commodity(commodity, quantity)` | Hold stock for a market order |
+| `unreserve_commodity(commodity, quantity)` | Release a hold |
 
-Processes represent production activities that transform inputs into outputs. They are defined in `data/processes.yaml` with the following attributes:
+## Process execution
 
-- `id`: Unique string identifier (e.g., "make_food", "refine_metal")
-- `name`: Human-readable name
-- `inputs`: Dictionary mapping commodity IDs to required quantities
-- `outputs`: Dictionary mapping commodity IDs to produced quantities
-- `tools_required`: List of tool commodity IDs needed (actors must have these)
-- `facilities_required`: List of facility commodity IDs needed (actors must have these)
-- `labor`: Amount of labor required
-- `description`: Text description of the process
+`ProcessCommand.execute(actor)` in `core/commands.py` runs a process. It
+checks inputs, tools and facilities, applies the skill check
+(`docs/skills.md`) and the planet resource attribute, then consumes inputs
+and adds outputs. Brains pick processes by market profitability; see
+`_find_most_profitable_process` in `core/brains/colonist.py`.
 
-**Implementation Note**: Processes are loaded and managed by the `ProcessRegistry` class, which requires a reference to the `CommodityRegistry` to convert string IDs to `CommodityDefinition` objects.
+## Market
 
-### Inventory Management
+Orders, transactions and price histories are keyed by `CommodityDefinition`.
+Market makers quote liquidity from their inventory levels. Sellers reserve
+inventory while an order rests and unreserve on cancel.
 
-The `Inventory` class is used by actors, ships, and other entities to track commodities. Key methods:
+## Adding commodities or processes
 
-- `add_commodity(commodity, quantity)`: Add commodities to the inventory
-- `remove_commodity(commodity, quantity)`: Remove commodities from the inventory
-- `has_quantity(commodity, quantity)`: Check if the inventory has enough of a commodity
-- `get_quantity(commodity)`: Get the total quantity of a commodity
-- `get_available_quantity(commodity)`: Get the unreserved quantity of a commodity
-- `reserve_commodity(commodity, quantity)`: Reserve commodities for market transactions
-- `unreserve_commodity(commodity, quantity)`: Unreserve commodities
-
-**Implementation Note**: All inventory methods require `CommodityDefinition` objects as parameters, not string IDs.
-
-### Actor Process Execution
-
-Actors can execute processes through their brain's `execute_process(process_id)` method. This method:
-
-1. Gets the process definition from the registry
-2. Checks if the actor has all required inputs
-3. Checks if the actor has all required tools
-4. Checks if the actor has access to all required facilities
-5. Consumes inputs and produces outputs if all requirements are met
-
-Actors can also evaluate the profitability of processes based on current market prices using the `_find_most_profitable_process()` method.
-
-### Market Integration
-
-The market system has been updated to work with `CommodityDefinition` objects:
-
-- Orders and transactions use `CommodityDefinition` objects
-- Price histories are tracked per commodity
-- Market makers provide liquidity for commodities based on inventory levels
-- Actors can buy and sell using their inventory reserved/unreserve system
-
-## Adding New Commodities and Processes
-
-Use the `commodity-process-design` skill — it covers schemas, validation,
-bootstrap-path checks, and the dependency-graph workflow.
+Use the `commodity-process-design` skill. It covers the schemas, validation,
+the bootstrap-path check and the dependency graph.

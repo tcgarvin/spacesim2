@@ -17,94 +17,81 @@ from tests.helpers import get_actor
 
 
 class TestClamp01:
-    """Test the clamp01 utility function."""
+    """clamp01."""
 
     def test_clamp01_within_range(self):
-        """Test that values within [0,1] are unchanged."""
+        """Values within [0, 1] are unchanged."""
         assert clamp01(0.0) == 0.0
         assert clamp01(0.5) == 0.5
         assert clamp01(1.0) == 1.0
 
     def test_clamp01_below_zero(self):
-        """Test that negative values are clamped to 0."""
+        """Negative values clamp to 0."""
         assert clamp01(-0.1) == 0.0
         assert clamp01(-10.0) == 0.0
         assert clamp01(-math.inf) == 0.0
 
     def test_clamp01_above_one(self):
-        """Test that values above 1 are clamped to 1."""
+        """Values above 1 clamp to 1."""
         assert clamp01(1.1) == 1.0
         assert clamp01(10.0) == 1.0
         assert clamp01(math.inf) == 1.0
 
 
 class TestLogNormRatio:
-    """Test the log_norm_ratio utility function."""
+    """log_norm_ratio."""
 
     def test_log_norm_ratio_basic_cases(self):
-        """Test basic cases of log_norm_ratio."""
-        # When x = 0, should return 0
+        """x = 0 gives 0, x = target lies in [0, 1], x = cap gives 1."""
         assert log_norm_ratio(0.0, 10.0, 20.0) == 0.0
 
-        # When x = target, should return a value between 0 and 1
         result = log_norm_ratio(10.0, 10.0, 20.0)
         assert 0.0 <= result <= 1.0
 
-        # When x = cap, should return 1.0
         result = log_norm_ratio(20.0, 10.0, 20.0)
         assert result == 1.0
 
     def test_log_norm_ratio_negative_input(self):
-        """Test that negative inputs are handled correctly."""
-        # Negative x should be treated as 0
+        """Negative x is treated as 0."""
         result = log_norm_ratio(-5.0, 10.0, 20.0)
         assert result == 0.0
 
     def test_log_norm_ratio_above_cap(self):
-        """Test that values above cap are capped."""
-        # x > cap should be treated as x = cap
+        """x above cap is treated as x = cap."""
         result1 = log_norm_ratio(20.0, 10.0, 20.0)
         result2 = log_norm_ratio(30.0, 10.0, 20.0)
         assert result1 == result2 == 1.0
 
     def test_log_norm_ratio_diminishing_returns(self):
-        """Test that the function shows diminishing returns."""
+        """The function is monotonically increasing below the target."""
         target, cap = 10.0, 20.0
 
-        # Values should increase but with diminishing returns
         result_quarter = log_norm_ratio(2.5, target, cap)
         result_half = log_norm_ratio(5.0, target, cap)
         result_target = log_norm_ratio(10.0, target, cap)
 
-        # Should be increasing
         assert result_quarter < result_half < result_target
 
-        # The logarithmic nature means later increases are actually larger
-        # This is because we're measuring log(1 + x/target) which grows faster initially
-        # but the denominator normalizes it
         increase1 = result_half - result_quarter
         increase2 = result_target - result_half
-        # Both increases should be positive, showing the function is monotonic
         assert increase1 > 0
         assert increase2 > 0
 
     def test_log_norm_ratio_edge_cases(self):
-        """Test edge cases for log_norm_ratio."""
-        # When cap = target, should handle gracefully
+        """cap == target stays in range; x above cap equals x == cap."""
         result = log_norm_ratio(5.0, 10.0, 10.0)
         assert 0.0 <= result <= 1.0
 
-        # When x exceeds cap, should be same as when x = cap
         result1 = log_norm_ratio(1.0, 0.01, 1.0)
-        result2 = log_norm_ratio(2.0, 0.01, 1.0)  # Should be capped at same value
+        result2 = log_norm_ratio(2.0, 0.01, 1.0)
         assert result1 == result2
 
 
 class TestDriveMetrics:
-    """Test the DriveMetrics dataclass."""
+    """DriveMetrics."""
 
     def test_drive_metrics_creation(self):
-        """Test creating DriveMetrics with all fields."""
+        """Constructor stores all four fields."""
         metrics = DriveMetrics(health=0.8, debt=0.2, buffer=0.6, urgency=0.9)
 
         assert metrics.health == 0.8
@@ -113,7 +100,7 @@ class TestDriveMetrics:
         assert metrics.urgency == 0.9
 
     def test_get_zero_metrics(self):
-        """Test the get_zero_metrics factory function."""
+        """get_zero_metrics returns a DriveMetrics with all fields at 0."""
         metrics = get_zero_metrics()
 
         assert metrics.health == 0.0
@@ -124,25 +111,25 @@ class TestDriveMetrics:
 
 
 class TestActorDrive:
-    """Test the ActorDrive base class."""
+    """ActorDrive base class."""
 
     @pytest.fixture
     def commodity_registry(self):
-        """Create a mock commodity registry."""
+        """Mock commodity registry."""
         return Mock(spec=CommodityRegistry)
 
     @pytest.fixture
     def actor_drive(self, commodity_registry):
-        """Create an ActorDrive instance."""
+        """ActorDrive instance."""
         return ActorDrive(commodity_registry)
 
     @pytest.fixture
     def mock_actor(self):
-        """Create a mock actor for testing."""
+        """Test actor."""
         return get_actor("TestActor")
 
     def test_actor_drive_initialization(self, actor_drive):
-        """Test that ActorDrive initializes correctly."""
+        """A new drive starts with zero metrics."""
         assert isinstance(actor_drive.metrics, DriveMetrics)
         assert actor_drive.metrics.health == 0.0
         assert actor_drive.metrics.debt == 0.0
@@ -150,7 +137,7 @@ class TestActorDrive:
         assert actor_drive.metrics.urgency == 0.0
 
     def test_update_metrics(self, actor_drive):
-        """Test the _update_metrics method."""
+        """_update_metrics sets all four fields."""
         actor_drive._update_metrics(health=0.8, debt=0.3, buffer=0.7, urgency=0.9)
 
         assert actor_drive.metrics.health == 0.8
@@ -159,11 +146,9 @@ class TestActorDrive:
         assert actor_drive.metrics.urgency == 0.9
 
     def test_update_metrics_partial(self, actor_drive):
-        """Test updating metrics one at a time."""
-        # Set initial values
+        """A second _update_metrics call overwrites the first."""
         actor_drive._update_metrics(0.1, 0.2, 0.3, 0.4)
 
-        # Update with new values
         actor_drive._update_metrics(0.9, 0.8, 0.7, 0.6)
 
         assert actor_drive.metrics.health == 0.9
@@ -172,13 +157,12 @@ class TestActorDrive:
         assert actor_drive.metrics.urgency == 0.6
 
     def test_tick_not_implemented(self, actor_drive, mock_actor):
-        """Test that tick method raises NotImplementedError in base class."""
+        """The base class tick raises NotImplementedError."""
         with pytest.raises(NotImplementedError):
             actor_drive.tick(mock_actor)
 
     def test_metrics_bounds(self, actor_drive):
-        """Test that metrics can handle edge values."""
-        # Test with boundary values
+        """Metrics accept the boundary values 0.0 and 1.0."""
         actor_drive._update_metrics(0.0, 0.0, 0.0, 0.0)
         assert all(
             metric == 0.0
@@ -202,13 +186,11 @@ class TestActorDrive:
         )
 
     def test_metrics_immutability(self, actor_drive):
-        """Test that metrics can be safely accessed without modification."""
+        """_update_metrics mutates the existing metrics object in place."""
         original_metrics = actor_drive.metrics
 
-        # Modify metrics
         actor_drive._update_metrics(0.5, 0.6, 0.7, 0.8)
 
-        # Original reference should reflect the changes
         assert original_metrics.health == 0.5
         assert original_metrics.debt == 0.6
         assert original_metrics.buffer == 0.7
@@ -216,10 +198,10 @@ class TestActorDrive:
 
 
 class TestActorDriveIntegration:
-    """Integration tests for ActorDrive with real components."""
+    """ActorDrive with real components."""
 
     def test_with_real_commodity_registry(self):
-        """Test ActorDrive with a real CommodityRegistry."""
+        """ActorDrive constructs with a real CommodityRegistry."""
         registry = CommodityRegistry()
         drive = ActorDrive(registry)
 
@@ -227,14 +209,12 @@ class TestActorDriveIntegration:
         assert drive.metrics.health == 0.0
 
     def test_metrics_persistence_across_updates(self):
-        """Test that metrics are properly updated and persist."""
+        """A held metrics reference sees every later update."""
         registry = CommodityRegistry()
         drive = ActorDrive(registry)
 
-        # Store reference to metrics
         metrics_ref = drive.metrics
 
-        # Update metrics multiple times
         for i in range(5):
             health = i * 0.2
             drive._update_metrics(health, 0.0, 0.0, 0.0)
@@ -242,7 +222,7 @@ class TestActorDriveIntegration:
             assert drive.metrics.health == health
 
     def test_inheritance_compatibility(self):
-        """Test that ActorDrive can be properly subclassed."""
+        """A subclass overriding tick runs without NotImplementedError."""
 
         class TestDrive(ActorDrive):
             def tick(self, actor):
@@ -253,7 +233,6 @@ class TestActorDriveIntegration:
         drive = TestDrive(registry)
         mock_actor = get_actor("TestActor")
 
-        # Should not raise NotImplementedError
         result = drive.tick(mock_actor)
 
         assert isinstance(result, DriveMetrics)

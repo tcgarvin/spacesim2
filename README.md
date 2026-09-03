@@ -1,17 +1,15 @@
 # SpaceSim2
 
-A turn-based economic simulation modeling interplanetary trade with actors, markets, and ships.
+A turn-based economic simulation of interplanetary trade with actors,
+markets, and ships.
 
-## Overview
+- **Planets** with their own resources and local markets
+- **Actors** who produce, consume, and trade
+- **Ships** that carry goods between planets along star lanes
+- **Markets** that match buy and sell orders per commodity
+- **Commodities** that are gathered, refined, and traded
 
-The simulation models an interplanetary economy with:
-- **Planets** with unique resources and local markets
-- **Actors** performing economic actions and trading
-- **Ships** facilitating interplanetary trade
-- **Markets** matching buy/sell orders for commodities
-- **Commodities** that can be produced, refined, and traded
-
-See [docs/sim-design.md](docs/sim-design.md) for the simulation design document.
+Design: [docs/sim-design.md](docs/sim-design.md).
 
 ## Installation
 
@@ -48,13 +46,13 @@ uv run spacesim2 dev graph
 uv run spacesim2 --help
 ```
 
-Galaxy size is adjustable on both `ui` and `run` via `--planets`, `--actors`,
-`--makers`, and `--ships`.
+Both `ui` and `run` take `--planets`, `--actors`, `--makers`, and `--ships`
+to size the galaxy.
 
 ## Development
 
-See [CLAUDE.md](CLAUDE.md) for the full development workflow (test, type-check,
-lint, and simulation-evaluation loop). Quick start:
+[CLAUDE.md](CLAUDE.md) has the full workflow: tests, type check, lint, and
+the simulation evaluation loop. Quick start:
 
 ```bash
 uv sync --all-extras       # dev + analysis dependencies

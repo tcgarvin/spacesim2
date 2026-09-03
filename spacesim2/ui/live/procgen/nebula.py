@@ -1,8 +1,8 @@
 """Full-screen nebula backdrop plus a multi-layer parallax starfield.
 
-The nebula is baked once into a Surface (regenerated only on resize): fBm noise
-mapped through the house nebula tints over the dark void. The starfield is a few
-depth layers of points that shift against camera pan to give parallax depth.
+The nebula is fBm noise mapped through the house nebula tints over the dark
+void, baked once into a Surface and regenerated only on resize. The starfield
+is a few depth layers of points that shift against camera pan for parallax.
 """
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ import pygame
 from spacesim2.ui.live import assets
 from spacesim2.ui.live.procgen.noise import fbm
 
-# Parallax layers: (star_count, depth, brightness). Smaller depth = farther =
-# moves less when the camera pans.
+# Parallax layers: (star_count, depth, brightness). Smaller depth is farther
+# away and moves less when the camera pans.
 _STAR_LAYERS: Tuple[Tuple[int, float, int], ...] = (
     (220, 0.15, 110),
     (140, 0.35, 170),
@@ -31,7 +31,7 @@ def _build_nebula_surface(size: Tuple[int, int], seed: int) -> pygame.Surface:
     w, h = max(1, width // scale), max(1, height // scale)
 
     base = fbm(w, h, octaves=5, seed=seed, base_cells=2)
-    # A second, larger-scale field masks where clouds appear (lots of empty void).
+    # A second, larger-scale field masks where clouds appear, leaving void.
     mask = fbm(w, h, octaves=3, seed=seed + 100, base_cells=1)
     density = np.clip((base * mask - 0.25) * 2.2, 0.0, 1.0)
 
@@ -83,7 +83,7 @@ class Nebula:
         self._stars = self._build_stars(size, self._seed)
 
     def draw(self, surface: pygame.Surface, pan: Tuple[float, float]) -> None:
-        """Blit nebula, then parallax stars offset by camera ``pan`` (map units)."""
+        """Blit nebula, then parallax stars offset by camera ``pan`` in map units."""
         surface.blit(self._surface, (0, 0))
         width, height = self._size
         px, py = pan

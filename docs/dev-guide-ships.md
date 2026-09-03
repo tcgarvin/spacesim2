@@ -1,34 +1,38 @@
 # Ship Trading AI Development Guide
 
-This guide covers developing ship `Brain` classes for interplanetary trade.
+How to develop ship `Brain` classes for interplanetary trade. All symbols
+below live in `core/ship.py` unless noted.
 
-## Brain Interface
+## Brain interface
 
-Ship brains (subclasses of `ShipBrain`) must implement:
-- `decide_trade_actions() -> None` - Place buy/sell orders at current planet
-- `decide_travel() -> Optional[Planet]` - Decide whether to travel and where
+A ship brain subclasses `ShipBrain` and implements:
 
-## Key Patterns
+- `decide_trade_actions() -> None`: place buy and sell orders at the current
+  planet.
+- `decide_travel() -> Optional[Planet]`: decide whether to travel and where.
 
-### 1. Plan-Driven Trading (recommended)
+## Patterns
 
-Evaluate complete trade cycles BEFORE buying:
-```
-origin → buy goods → travel → sell goods
-```
+### Plan-driven trading
 
-- Account for round-trip fuel costs (conservative planning)
-- Only execute trades with minimum profit margin (e.g., 15%+)
-- Cap quantity at the destination's visible bid depth above cost and project
-  revenue by walking the bid book (`Market.get_bid_levels`) — top-of-book ×
-  quantity systematically overestimates on thin books
-- Plans with no resting destination bids are speculative: capped at
-  `SPECULATIVE_PLAN_CAP` units
-- Price in expected maintenance (2 departures × `MAINTENANCE_CHANCE` × the
-  fuel-tier repair cost) via `TradePlan.expected_maintenance_cost`
-- Example: `TraderBrain` in `ship.py`
+Evaluate the whole cycle before buying: buy at origin, travel, sell at
+destination. `TraderBrain` is the reference implementation.
 
-### 2. Checking Market Conditions
+- Charge round-trip fuel to every plan.
+- Execute only plans with margin at or above `TradePlan.MIN_MARGIN` (15%).
+- Cap quantity at the destination's visible bid depth above cost and
+  project revenue by walking the bid book (`Market.get_bid_levels`).
+  Top-of-book times quantity overestimates on thin books.
+- A plan with no resting destination bids is speculative and capped at
+  `SPECULATIVE_PLAN_CAP` units.
+- Price in expected maintenance through `TradePlan.expected_maintenance_cost`
+  (2 departures times `MAINTENANCE_CHANCE` times the fuel-tier repair cost).
+- With deferred matching the resting book holds only what the local auction
+  rejected. Plans estimate from recent traded prices and volume
+  (`DEMAND_HORIZON_TURNS`), bid into the auction at plan price, and fill
+  over up to `ACCUMULATION_PATIENCE` docked turns.
+
+### Checking market conditions
 
 ```python
 # Get current bid/ask spread
@@ -42,7 +46,7 @@ if bid is None:
     bid = market.get_avg_price(commodity)
 ```
 
-### 3. Fuel Calculations
+### Fuel calculations
 
 ```python
 # Shortest star-lane route, not the straight line (see core/galaxy.py and
@@ -60,7 +64,10 @@ adjusted_fuel = math.ceil(fuel_needed / ship.fuel_efficiency)
 fuel_round_trip = fuel_needed * 2
 ```
 
-### Fuel System Constants
+`Ship.fuel_required(distance)` applies the same rounding as departure; use
+it when planning for a specific ship so planning and consumption agree.
+
+### Fuel constants
 
 | Constant | Value | Notes |
 |----------|-------|-------|
@@ -71,64 +78,56 @@ fuel_round_trip = fuel_needed * 2
 | Maintenance cost | 5 fuel | `MAINTENANCE_CHANCE` (10%) per departure |
 | Travel time | `ceil(distance/20)` turns | Independent of fuel |
 
-### Fuel Purchasing Policy (bunker vs ration)
+### Fuel purchasing: bunker or ration
 
-`TraderBrain` buys fuel price-aware (`_opportunistic_fuel_topup`):
+`TraderBrain._opportunistic_fuel_topup` buys fuel price-aware:
 
-- **Bunker** (fill the tank) only when the local ask is within
-  `FUEL_BUNKER_PREMIUM` (30%) of the galaxy's cheapest believable fuel price —
-  the min over current asks and 30-day averages backed by real trades
-  (`_fuel_value_reference`). Bunkering beyond the survival target is capped at
-  `FUEL_BUNKER_BUDGET_FRACTION` (50%) of cash so fuel never crowds out trading
-  capital.
-- **Ration** at scarcity prices: buy only up to `_fuel_survival_target()`
-  (two shortest round trips or the escape leg, whichever is larger). Ships
-  that filled 50-unit tanks at spike prices (40-85/unit vs single-digit cargo
-  margins) reliably traded themselves broke.
+- Bunker (fill the tank) only when the local ask is within
+  `FUEL_BUNKER_PREMIUM` (30%) of the galaxy's cheapest believable fuel
+  price, which is the min over current asks and 30-day averages backed by
+  real trades (`_fuel_value_reference`). Bunkering beyond the survival
+  target spends at most `FUEL_BUNKER_BUDGET_FRACTION` (50%) of cash so fuel
+  does not crowd out trading capital.
+- Ration at scarcity prices: buy only up to `_fuel_survival_target()`, the
+  larger of two shortest round trips and the escape leg. Filling a tank at
+  spike prices bankrupts ships.
 
-Standing fuel rescue bids are likewise capped at the survival target — a
-tank-sized bid reserves most of the ship's money for as long as it rests
+Standing fuel rescue bids are capped at the survival target for the same
+reason: a tank-sized bid reserves most of the ship's money while it rests
 unfilled.
 
-### 4. Cargo-Before-Travel Pattern
+### Cargo before travel
 
-- Ships should acquire cargo BEFORE deciding to travel
-- In `decide_trade_actions()`: evaluate trades and place buy orders
-- In `decide_travel()`: check if have cargo, then pick best destination
-- This ensures ships don't travel empty or without a plan
+Acquire cargo before deciding to travel. `decide_trade_actions()` evaluates
+plans and places buy orders; `decide_travel()` checks for cargo and picks
+the destination. Ships then never fly empty or without a plan.
 
-### 5. Sell Location Strategy
+### Sell location
 
-- Don't sell cargo immediately upon acquisition
-- Check if better prices exist at other planets (>15% higher)
-- Hold cargo and travel if worthwhile
-- Only sell locally if no better destination exists
+Do not sell cargo where it was bought. Check other planets for a better
+price (15% or more higher), hold and travel if worthwhile, and sell locally
+only when no better destination exists.
 
-## Common Pitfalls
+## Common pitfalls
 
 | Pitfall | Solution |
 |---------|----------|
-| Immediate selling | Don't sell at origin - check destinations first |
+| Immediate selling | Check destinations before selling at origin |
 | Insufficient fuel | Verify fuel before traveling |
-| Ignoring fuel costs | Factor fuel into all profit calculations |
-| No fallback action | Always have default (buy fuel, wait) |
-| Forgetting order delays | Cargo arrives NEXT turn after placing orders |
+| Ignoring fuel costs | Factor fuel into every profit calculation |
+| No fallback action | Always have a default (buy fuel, wait) |
+| Forgetting order delays | Cargo arrives the turn after orders are placed |
 
-## Economic Dynamics & Profitability
+## Expected trading behavior
 
-**Expected Trading Behavior**:
-- Profitable trades are **not guaranteed** in early turns - markets need time to develop price differentials
-- Ships may wait many turns (10-50+) before finding profitable opportunities
-- Some ships will lose money - realistic trading has winners and losers
-- With 5+ planets, expect more frequent trading opportunities than with 2 planets
+- Profitable trades are not guaranteed early. Ships may wait 10-50 turns
+  for a first opportunity, and some ships lose money.
+- More planets mean more opportunities.
+- Ships do not trade when spreads are too small, when there are bids but no
+  asks, when other ships bought the goods first, or when fuel erases the
+  margin.
 
-**Why Ships Don't Trade Immediately**:
-1. **Insufficient price spreads**: All planets produce similar goods at similar prices initially
-2. **No sellers**: Markets may have buy orders (bids) but no sell orders (asks)
-3. **Competition**: Other ships may buy available goods before your ship's turn
-4. **Fuel costs**: Even with price differential, fuel costs can eliminate profit margin
-
-## Debugging "Ships Not Trading"
+## Debugging ships that do not trade
 
 ```python
 # Check if profitable opportunities exist
@@ -144,11 +143,12 @@ for ship in sim.ships:
             print(f'{planet.name}: bid={bid}, ask={ask}')
 ```
 
-If `ask=None` for all planets, no one is selling - this is normal in early simulation or with insufficient market makers.
+If `ask` is `None` on every planet, no one is selling. That is normal early
+in a run or with too few market makers.
 
-## TradePlan Class
+## TradePlan
 
-The `TradePlan` dataclass (in `ship.py`) represents a complete trade opportunity:
+The `TradePlan` dataclass holds one complete trade opportunity:
 
 ```python
 @dataclass
@@ -162,6 +162,7 @@ class TradePlan:
     distance: float
     fuel_needed_one_way: int
     fuel_price_at_origin: int
+    expected_maintenance_cost: int = 0
 
     # Computed properties:
     # - fuel_needed_round_trip
@@ -170,5 +171,5 @@ class TradePlan:
     # - expected_revenue
     # - expected_profit
     # - profit_margin
-    # - is_profitable(min_margin=0.15)
+    # - is_profitable()   # expected_profit > 0 and margin >= MIN_MARGIN
 ```

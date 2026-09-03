@@ -1,7 +1,7 @@
 # Live Galaxy View
 
-`uv run spacesim2 ui` opens the live MOO-II-style galaxy view (it replaced
-the old static 3-pane inspector — see `docs/decision-log.md`, 2026-07-11).
+`uv run spacesim2 ui` opens the live galaxy view. It replaced the static
+3-pane inspector; see `docs/decision-log.md` (2026-07-11).
 
 ## Directory map
 
@@ -30,76 +30,73 @@ tools/assetgen/             offline AI asset pipeline (dev-only, never runs at r
   staging/                  gitignored raw candidates
 ```
 
-## Threading & frame protocol
+## Threading and frame protocol
 
-At the 100-planet default a turn costs ~1.3 s, so turns cannot run on the
-render thread. The contract between the UI and the simulation is deliberately
-thin (decision log, 2026-09-02):
+A 100-planet turn takes about 1.3 s, so turns run off the render thread. The
+UI and the simulation share one thin contract (decision log, 2026-09-02):
 
 - **The worker owns the sim.** `SimulationWorker` runs `run_turn` on a daemon
-  thread under `_sim_lock`, then builds one immutable `TurnFrame` and
-  publishes it by reference swap (`latest_frame`). Readers hold a frozen
-  object and need no lock.
+  thread under `_sim_lock`, builds one immutable `TurnFrame`, and publishes
+  it by reference swap (`latest_frame`). Readers hold a frozen object and
+  need no lock.
 - **A frame is sized to the screen, not the sim.** Per planet: position,
-  wellbeing, population. Per ship: route waypoints + progress. The HUD vitals.
-  Nothing else — never a copy of every actor's inventory or order book. The
-  one expensive input, the per-planet actor wellbeing sweep, runs once per
-  turn (`planet_wellbeing_by_name`) and is shared with `HistoryRecorder.record`.
+  wellbeing, population. Per ship: route waypoints and progress. Plus the
+  HUD vitals. It never copies actor inventories or order books. The one
+  expensive input, the per-planet wellbeing sweep
+  (`planet_wellbeing_by_name`), runs once per turn and is shared with
+  `HistoryRecorder.record`.
 - **Detail is a subscription.** Setting `GalaxyScene.selection` subscribes
-  the worker to that `(kind, name)`; subsequent frames carry its
-  `PlanetDetail`/`ShipDetail`. A subscription made while the worker is idle
-  is serviced immediately (non-blocking `_sim_lock` try-acquire) so the
-  panel opens at once; one made mid-turn waits for the boundary and the
-  panel simply doesn't draw until then. Hover never subscribes.
+  the worker to that `(kind, name)`; later frames carry its
+  `PlanetDetail` or `ShipDetail`. A subscription made while the worker is
+  idle is serviced at once through a non-blocking `_sim_lock` try-acquire,
+  so the panel opens immediately. One made mid-turn waits for the turn
+  boundary and the panel does not draw until then. Hover never subscribes.
 - **Pacing without debt.** The director converts wall time into
-  `request_turn()` calls; the worker keeps at most one pending request, so a
+  `request_turn()` calls. The worker keeps at most one pending request, so a
   sim slower than the requested rate runs flat out instead of bursting
   several turns in one frame. Ships lerp between the previous and latest
-  frame's positions.
+  frame positions.
 - **The render thread never touches core objects.** `GalaxyScene`, `hud`,
-  `info_panel` and `Director` read only `TurnFrame`; `view_model.py` builders
-  run only on the worker (lanes are the one static exception, cached once).
-  `tests/test_live_worker.py` pins this by stubbing the sim out after a frame
-  is built and rendering anyway.
-- **Headless mode.** Until `start()` is called the worker is synchronous:
+  `info_panel` and `Director` read only `TurnFrame`. `view_model.py`
+  builders run only on the worker; lanes are the one static exception,
+  cached once. `tests/test_live_worker.py` pins this by stubbing the sim out
+  after a frame is built and rendering anyway.
+- **Headless mode.** Until `start()` is called the worker is synchronous and
   `request_turn()` runs the turn on the caller. `LiveGalaxyApp.initialize`
-  leaves it that way; `run()` starts the thread and `stop()`s (joins) it on
-  quit. Tests drive turns deterministically with `run_one_turn_now()`.
+  leaves it that way; `run()` starts the thread and `stop()` joins it on
+  quit. Tests drive turns with `run_one_turn_now()`.
 
-The GIL still applies: a pure-Python turn steals render slices, so the map
-is choppier while a turn runs, but input, panning and the panel stay live.
+The GIL still applies. A pure-Python turn steals render slices, so the map is
+choppier while a turn runs, but input, panning and the panel stay live.
 
 ## Star lanes and the spiral galaxy
 
 Planets sit on a spiral (`core/galaxy.py`) inside a `width x height` box that
-grows with planet count, and ships fly only along star lanes. The view
-reflects that:
+grows with planet count, and ships fly only along star lanes.
 
-- **Camera** fits the whole `galaxy_size` box (not a fixed 0..100 square) with
-  a margin, reserving the charts strip along the bottom so the fitted galaxy
-  is never hidden behind it; min/max zoom derive from that fit.
-- **Lanes** (`view_model.lanes()`, cached) are drawn first as thin dim lines,
-  the galaxy's fixed skeleton. `ship_view` no longer draws an origin→dest
-  chord.
+- **Camera** fits the whole `galaxy_size` box with a margin, not a fixed
+  0..100 square. It reserves the charts strip along the bottom so the fitted
+  galaxy is never hidden behind it. Min and max zoom derive from that fit.
+- **Lanes** (`view_model.lanes()`, cached) are drawn first as thin dim
+  lines. `ship_view` draws no origin-to-destination chord.
 - **Ship position** is interpolated along the ship's lane route
   (`ShipSnapshot.waypoints`, from `ship.route`) by arc-length fraction
-  (`director.polyline_point`); heading follows the current segment so ships
-  visibly turn at waypoints. Forced travel states with no core route fall back
-  to the `(origin, dest)` chord.
-- **Highlights**: selecting a ship draws its full route in gold (hover: grey);
-  selecting a planet draws its incident lanes in blue. The ship panel's route
-  line lists every hop (`Vesper -> Kael -> Orin (42%)`).
-- **Declutter**: planet labels only render once worlds are ≥
-  `LABEL_MIN_RADIUS_PX` on screen (hovered/selected worlds are always
-  labelled), and worlds never shrink below `MIN_PLANET_PX` so they stay
+  (`director.polyline_point`). Heading follows the current segment, so ships
+  turn at waypoints. Forced travel states with no core route fall back to
+  the `(origin, dest)` chord.
+- **Highlights**: selecting a ship draws its full route in gold, hovering in
+  grey; selecting a planet draws its incident lanes in blue. The ship
+  panel's route line lists every hop (`Vesper -> Kael -> Orin (42%)`).
+- **Declutter**: planet labels render only once worlds are at least
+  `LABEL_MIN_RADIUS_PX` on screen. Hovered and selected worlds are always
+  labelled. Worlds never shrink below `MIN_PLANET_PX`, so they stay
   clickable at fit zoom on a 100-planet galaxy.
 
 ## Art cohesion rule
 
-Cross-provider cohesion is enforced two ways: a shared house-style reference
-image + fixed palette passed to both generators (`style_ref` to PixelLab,
-reference image to Nano Banana/Gemini), and a **palette-snap** in
-`postprocess.py` that quantizes every non-pixel-native output to that shared
-palette. This is what makes two different generators look like one game. The
-renderer falls back to procedural placeholders for any asset not yet
-promoted, so code and art never block each other.
+Two mechanisms keep output from different generators looking like one game:
+a shared house-style reference image and fixed palette passed to both
+generators (`style_ref` to PixelLab, reference image to Nano Banana/Gemini),
+and a palette snap in `postprocess.py` that quantizes every non-pixel-native
+output to that palette. The renderer falls back to procedural placeholders
+for any asset not yet promoted, so code and art never block each other.

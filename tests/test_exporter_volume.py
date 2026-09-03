@@ -70,7 +70,7 @@ def test_volume_by_commodity_sums_per_commodity() -> None:
 
 
 def test_volume_matches_old_full_history_scan() -> None:
-    """The single-pass volume equals the old O(history x commodities) scan."""
+    """Single-pass volume equals a full history scan per commodity."""
     food = _commodity("food")
     fuel = _commodity("nova_fuel")
     market = Market()

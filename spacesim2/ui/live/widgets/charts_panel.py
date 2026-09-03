@@ -1,15 +1,14 @@
 """Toggleable bottom strip of live time-series charts.
 
-Owns the small amount of view state the charts need — whether the strip is
-showing and which commodity is selected — and lays out a price+volume chart
-beside a citizen-wellbeing chart across the bottom third of the screen. Reads
-everything from a :class:`~spacesim2.ui.live.history.HistoryRecorder`; draws
-nothing about the simulation it isn't handed.
+Owns the view state the charts need, whether the strip is showing and which
+commodity is selected, and lays out a price and volume chart beside a
+citizen-wellbeing chart across the bottom third of the screen. Reads
+everything from a :class:`~spacesim2.ui.live.history.HistoryRecorder`.
 
-The selected commodity is shown prominently with ``‹ name ›`` affordances so
-cycling is discoverable, not a hidden keybinding. When the scene has a planet
-selected the strip scopes itself to that planet's market and wellbeing instead
-of the galaxy aggregate, and shrinks to clear the drill-down panel.
+The selected commodity is shown with ``‹ name ›`` affordances so cycling is
+discoverable. When the scene has a planet selected the strip scopes itself to
+that planet's market and wellbeing instead of the galaxy aggregate, and
+shrinks to clear the drill-down panel.
 """
 
 from __future__ import annotations
@@ -26,14 +25,14 @@ from spacesim2.ui.live.widgets import chart
 MARGIN = 16
 HUD_RESERVE = 28  # leave the bottom status line clear
 STRIP_FRACTION = 0.34  # share of the window height the strip occupies
-# Tall enough for the large selector title plus the small meta line beneath it,
-# so the plot's max-value label doesn't collide with the header text.
+# Tall enough for the large selector title plus the small meta line beneath
+# it, so the plot's max-value label does not collide with the header text.
 HEADER_H = 56
 GUTTER = 24
 
 
 def strip_reserve_px(screen_height: int) -> int:
-    """Pixels the charts strip (plus HUD line) covers along the bottom edge."""
+    """Pixels the charts strip and HUD line cover along the bottom edge."""
     return HUD_RESERVE + int(screen_height * STRIP_FRACTION)
 
 
@@ -86,7 +85,7 @@ class ChartsPanel:
             return  # window too narrow to chart anything legible
         chart.draw_panel_background(surface, strip)
 
-        # Split into a wide price/volume column and a narrower wellbeing column.
+        # Wide price and volume column beside a narrower wellbeing column.
         inner = strip.inflate(-2 * GUTTER, -GUTTER)
         price_w = int(inner.width * 0.64)
         price_col = pygame.Rect(inner.left, inner.top, price_w, inner.height)

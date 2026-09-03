@@ -1,8 +1,8 @@
 """Tests for the UI/simulation frame protocol: worker, TurnFrame, subscriptions.
 
-The render thread must only ever read immutable frames; these tests pin the
-synchronous (headless) worker behaviour and the invariant that rendering
-succeeds without touching simulation objects at all.
+The render thread must only read immutable frames. These tests cover the
+synchronous headless worker and the invariant that rendering never touches
+simulation objects.
 """
 
 import os
@@ -108,12 +108,12 @@ def test_director_interpolates_between_frames_not_live_positions() -> None:
     worker = _worker(sim)
     director = Director(worker, turns_per_second=10.0)
     before = {r.snapshot.name: r.pos for r in director.rendered_ships()}
-    # A whole interval elapses: one turn is requested and run synchronously.
+    # A whole interval elapses, so one turn is requested and run synchronously.
     director.update(0.1)
     assert worker.latest_frame.turn == sim.current_turn
     director.refresh_frame()  # what the scene does at the top of each draw
-    # Immediately after adopting the new frame we are at alpha 0: ships sit at
-    # their previous positions and glide toward the new ones over the interval.
+    # Right after adopting the new frame alpha is 0: ships sit at their
+    # previous positions and glide toward the new ones over the interval.
     assert director.alpha == 0.0
     for rendered in director.rendered_ships():
         assert rendered.pos == pytest.approx(before[rendered.snapshot.name])
@@ -132,10 +132,10 @@ def test_paused_director_requests_no_turns() -> None:
 
 
 def test_render_never_touches_simulation_objects(monkeypatch) -> None:
-    """Rendering must be served entirely from the frozen frame.
+    """Rendering is served entirely from the frozen frame.
 
     After the frame is built, every snapshot builder is replaced with one that
-    raises. A render pass (galaxy, panel, HUD, charts) must still succeed.
+    raises. A render pass over galaxy, panel, HUD, and charts must still pass.
     """
     sim = _sim()
     app = LiveGalaxyApp(sim, speed=4.0, size=(900, 600))
@@ -164,7 +164,7 @@ def test_render_never_touches_simulation_objects(monkeypatch) -> None:
         for _ in range(3):
             app.render()
         assert scene._panel_rect is not None, "planet panel drew from the frame"
-        # Hover/pick and the HUD are frame-served too.
+        # Hover, pick, and the HUD are frame-served too.
         assert app._camera is not None
         planet_pos = app._camera.world_to_screen(scene._director.frame.planets[0].pos)
         picked = scene.pick(planet_pos)
@@ -175,7 +175,7 @@ def test_render_never_touches_simulation_objects(monkeypatch) -> None:
 
 
 def test_threaded_worker_advances_turns_and_stops_cleanly() -> None:
-    """The real thread path: requests are serviced, stop() joins the thread."""
+    """On the real thread, requests are serviced and stop() joins the thread."""
     sim = _sim()
     worker = _worker(sim)
     start_turn = sim.current_turn

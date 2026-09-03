@@ -1,6 +1,4 @@
-"""
-Data logging interface for actors and the simulation.  Should in general be attached to the simulation
-"""
+"""Per-turn logging for selected actors, attached to the simulation."""
 
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
@@ -31,10 +29,9 @@ class ActorTurnLog:
 class DataLogger:
     """Collects per-turn logs for a selected subset of actors.
 
-    Only the current turn's logs are retained: every consumer (headless UI,
-    exporter) reads a turn's data before the next turn begins, so ``set_turn``
-    discards the previous turn's entries. This keeps memory bounded at
-    O(logged actors) instead of O(turns x logged actors).
+    Only the current turn is retained. Every consumer (headless UI, exporter)
+    reads a turn before the next begins, so ``set_turn`` discards the previous
+    turn. Memory is O(logged actors), not O(turns x logged actors).
     """
 
     def __init__(self) -> None:
@@ -64,13 +61,13 @@ class DataLogger:
     def logged_actor_names(self) -> AbstractSet[str]:
         """Live, read-only view of the logged actors' names.
 
-        Handed to markets as their ``order_event_filter``; being a view, it
-        reflects actors added after setup (``--log-actors`` wiring).
+        Markets hold it as their ``order_event_filter``. Being a view, it
+        reflects actors added after setup by ``--log-actors``.
         """
         return self._actors_to_log.keys()
 
     def _turn_log(self, actor: LoggableActor) -> ActorTurnLog:
-        """Get (creating if needed) the current turn's log for an actor."""
+        """Current turn's log for an actor, created on first use."""
         return self._actor_turn_logs[self._get_actor_sim_log_key(actor)]
 
     def log_actor_metrics(self, actor: LoggableActor) -> None:
@@ -97,7 +94,6 @@ class DataLogger:
             return
 
         turn_log = self._turn_log(actor)
-        # Convert inventory to dict with commodity names as keys
         turn_log.inventory = {
             commodity.id: quantity
             for commodity, quantity in actor.inventory.commodities.items()
@@ -107,10 +103,8 @@ class DataLogger:
         if not self.is_actor_logged(actor):
             return
 
-        # Use actor's method to get this turn's market activity
         market_data = actor.get_market_activity_this_turn()
 
-        # Serialize the data for logging
         turn_log = self._turn_log(actor)
         turn_log.market_status = {
             "current_orders": market_data.get("current_orders", {}),
@@ -164,15 +158,8 @@ class DataLogger:
     ) -> ActorTurnLog:
         """Return the actor's log for the current turn.
 
-        Only the current turn is retained (older turns are discarded by
-        ``set_turn``), so requesting a past turn is an error.
-
-        Args:
-            actor: The actor whose log to fetch.
-            turn: Must be the current turn or None (defaults to current).
-
-        Raises:
-            ValueError: If ``turn`` is not the current turn.
+        Raises ``ValueError`` if ``turn`` is given and is not the current
+        turn; ``set_turn`` has already discarded older turns.
         """
         if turn is not None and turn != self.current_turn:
             raise ValueError(

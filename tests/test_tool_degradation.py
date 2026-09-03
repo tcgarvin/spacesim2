@@ -13,10 +13,9 @@ from .helpers import get_actor
 
 
 def create_sim_with_tool_process():
-    """Helper to create a simulation with a process that requires tools."""
+    """Simulation with one process that requires simple_tools."""
     sim = Simulation()
 
-    # Set up commodity registry
     sim.commodity_registry = CommodityRegistry()
     sim.commodity_registry._commodities["input_commodity"] = CommodityDefinition(
         id="input_commodity",
@@ -37,10 +36,8 @@ def create_sim_with_tool_process():
         description="Test tool",
     )
 
-    # Create process registry
     sim.process_registry = ProcessRegistry(sim.commodity_registry)
 
-    # Add a test process that requires tools
     process_def = ProcessDefinition(
         id="test_process",
         name="Test Process",
@@ -57,118 +54,100 @@ def create_sim_with_tool_process():
 
 
 def test_tool_not_consumed_on_successful_process():
-    """Test that tools are not automatically consumed when process succeeds."""
+    """A successful process keeps its tools when the break roll misses."""
     sim = create_sim_with_tool_process()
 
-    # Create planet
     market = Market()
     planet = Planet("Test Planet", market)
 
-    # Create actor with inputs and tools
     actor = get_actor("Test Actor", sim, planet=planet)
     actor.inventory.add_commodity("input_commodity", 5)
     actor.inventory.add_commodity("simple_tools", 3)
 
-    # Execute process with controlled randomness (no degradation)
-    # Patch in commands module specifically
     with patch(
         "spacesim2.core.commands.random.random", return_value=0.5
-    ):  # Above 0.01 threshold
+    ):  # above the 0.01 break threshold
         command = ProcessCommand("test_process")
         result = command.execute(actor)
 
     assert result is True
-    assert actor.inventory.get_quantity("simple_tools") == 3  # Tools not consumed
+    assert actor.inventory.get_quantity("simple_tools") == 3
 
 
 def test_tool_breaks_when_random_below_threshold():
-    """Test that tool breaks when random value is below threshold."""
+    """One tool breaks when the random roll is below the threshold."""
     sim = create_sim_with_tool_process()
 
-    # Create planet
     market = Market()
     planet = Planet("Test Planet", market)
 
-    # Create actor with inputs and tools
     actor = get_actor("Test Actor", sim, planet=planet)
     actor.inventory.add_commodity("input_commodity", 5)
     actor.inventory.add_commodity("simple_tools", 3)
 
-    # Execute process with controlled randomness (force degradation)
-    # Patch in commands module specifically
     with patch(
         "spacesim2.core.commands.random.random", return_value=0.005
-    ):  # Below 0.01 threshold
+    ):  # below the 0.01 break threshold
         command = ProcessCommand("test_process")
         result = command.execute(actor)
 
     assert result is True
-    assert actor.inventory.get_quantity("simple_tools") == 2  # One tool broke
+    assert actor.inventory.get_quantity("simple_tools") == 2
 
 
 def test_tool_break_logged_when_data_logger_present():
-    """Test that tool breakage is logged via data_logger."""
+    """A tool break is logged through the data logger."""
     sim = create_sim_with_tool_process()
 
-    # Add mock data logger
     mock_logger = MagicMock()
     sim.data_logger = mock_logger
 
-    # Create planet
     market = Market()
     planet = Planet("Test Planet", market)
 
-    # Create actor with inputs and tools
     actor = get_actor("Test Actor", sim, planet=planet)
     actor.inventory.add_commodity("input_commodity", 5)
     actor.inventory.add_commodity("simple_tools", 3)
 
-    # Execute process with controlled randomness (force degradation)
-    # Patch in commands module specifically
     with patch(
         "spacesim2.core.commands.random.random", return_value=0.005
-    ):  # Below 0.01 threshold
+    ):  # below the 0.01 break threshold
         command = ProcessCommand("test_process")
         result = command.execute(actor)
 
     assert result is True
-    # Check that log_actor_note was called
     mock_logger.log_actor_note.assert_called_once()
     call_args = mock_logger.log_actor_note.call_args
     assert call_args[0][0] == actor
     assert "Tool broke" in call_args[0][1]
-    assert "simple_tools" in call_args[0][1]  # String ID in test setup
+    assert "simple_tools" in call_args[0][1]  # string id in this setup
 
 
 def test_tool_degradation_only_after_successful_process():
-    """Test that tools don't degrade if the process fails."""
+    """A process that fails for missing inputs does not roll for tool breaks."""
     sim = create_sim_with_tool_process()
 
-    # Create planet
     market = Market()
     planet = Planet("Test Planet", market)
 
-    # Create actor with tools but NO inputs - process should fail
+    # Tools but no input_commodity, so the process fails.
     actor = get_actor("Test Actor", sim, planet=planet)
     actor.inventory.add_commodity("simple_tools", 3)
-    # Note: no input_commodity added
 
-    # Try to execute process - should fail due to missing inputs
     with patch(
         "spacesim2.core.commands.random.random", return_value=0.005
-    ):  # Would cause degradation
+    ):  # would break a tool if rolled
         command = ProcessCommand("test_process")
         result = command.execute(actor)
 
     assert result is False
-    assert actor.inventory.get_quantity("simple_tools") == 3  # Tools unchanged
+    assert actor.inventory.get_quantity("simple_tools") == 3
 
 
 def test_tool_degradation_probability_is_independent_per_tool():
-    """Test that with multiple tools required, each has independent degradation chance."""
+    """Each required tool rolls for breakage independently."""
     sim = Simulation()
 
-    # Set up commodity registry with two tool types
     sim.commodity_registry = CommodityRegistry()
     sim.commodity_registry._commodities["input_commodity"] = CommodityDefinition(
         id="input_commodity",
@@ -195,10 +174,8 @@ def test_tool_degradation_probability_is_independent_per_tool():
         description="Second tool",
     )
 
-    # Create process registry
     sim.process_registry = ProcessRegistry(sim.commodity_registry)
 
-    # Add a process requiring both tools
     process_def = ProcessDefinition(
         id="multi_tool_process",
         name="Multi Tool Process",
@@ -211,17 +188,15 @@ def test_tool_degradation_probability_is_independent_per_tool():
     )
     sim.process_registry._processes["multi_tool_process"] = process_def
 
-    # Create planet
     market = Market()
     planet = Planet("Test Planet", market)
 
-    # Create actor
     actor = get_actor("Test Actor", sim, planet=planet)
     actor.inventory.add_commodity("input_commodity", 5)
     actor.inventory.add_commodity("tool_a", 3)
     actor.inventory.add_commodity("tool_b", 3)
 
-    # Both tools break (both random calls below threshold)
+    # Both rolls are below the threshold, so both tools break.
     random_values = iter([0.005, 0.005])
     with patch(
         "spacesim2.core.commands.random.random", side_effect=lambda: next(random_values)
@@ -230,15 +205,14 @@ def test_tool_degradation_probability_is_independent_per_tool():
         result = command.execute(actor)
 
     assert result is True
-    assert actor.inventory.get_quantity("tool_a") == 2  # One broke
-    assert actor.inventory.get_quantity("tool_b") == 2  # One broke
+    assert actor.inventory.get_quantity("tool_a") == 2
+    assert actor.inventory.get_quantity("tool_b") == 2
 
 
 def test_process_without_tools_has_no_degradation():
-    """Test that processes without tool requirements don't trigger degradation."""
+    """A process with no tool requirements runs without any break roll."""
     sim = Simulation()
 
-    # Set up commodity registry
     sim.commodity_registry = CommodityRegistry()
     sim.commodity_registry._commodities["biomass"] = CommodityDefinition(
         id="biomass",
@@ -247,10 +221,8 @@ def test_process_without_tools_has_no_degradation():
         description="Raw biomass",
     )
 
-    # Create process registry
     sim.process_registry = ProcessRegistry(sim.commodity_registry)
 
-    # Add a gathering process (no tools required)
     process_def = ProcessDefinition(
         id="gather_biomass",
         name="Gather Biomass",
@@ -263,14 +235,11 @@ def test_process_without_tools_has_no_degradation():
     )
     sim.process_registry._processes["gather_biomass"] = process_def
 
-    # Create planet
     market = Market()
     planet = Planet("Test Planet", market)
 
-    # Create actor
     actor = get_actor("Test Actor", sim, planet=planet)
 
-    # Execute process (should work fine with no tools)
     command = ProcessCommand("gather_biomass")
     result = command.execute(actor)
 
@@ -279,14 +248,12 @@ def test_process_without_tools_has_no_degradation():
 
 
 def test_statistical_tool_degradation_rate():
-    """Test that tool degradation rate is approximately 1% over many runs."""
+    """The tool break rate over many runs is about 1%."""
     sim = create_sim_with_tool_process()
 
-    # Create planet
     market = Market()
     planet = Planet("Test Planet", market)
 
-    # Run many processes and count degradation events
     num_runs = 10000
     degradation_count = 0
 
@@ -298,16 +265,13 @@ def test_statistical_tool_degradation_rate():
         command = ProcessCommand("test_process")
         command.execute(actor)
 
-        # Check if tool broke
         if actor.inventory.get_quantity("simple_tools") == 0:
             degradation_count += 1
 
-    # Expected rate is 1% (0.01)
-    # With 10000 runs, expect ~100 degradations
-    # Allow for statistical variance (roughly 3 standard deviations)
+    # Expect about 100 breaks; allow 4 standard deviations of variance.
     expected = num_runs * 0.01
     std_dev = (num_runs * 0.01 * 0.99) ** 0.5
-    tolerance = 4 * std_dev  # Very generous tolerance
+    tolerance = 4 * std_dev
 
     assert abs(degradation_count - expected) < tolerance, (
         f"Degradation rate {degradation_count / num_runs:.4f} "

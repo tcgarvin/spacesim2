@@ -26,8 +26,8 @@ class ActorType(enum.Enum):
 class Actor:
     """Represents an economic actor in the simulation."""
 
-    # Class-level default so the attribute is part of the class contract
-    # (visible to Mock(spec=Actor) in tests); instances shadow it.
+    # Class-level default so Mock(spec=Actor) sees the attribute; instances
+    # shadow it.
     skills_version: int = 0
 
     def __init__(
@@ -57,19 +57,17 @@ class Actor:
         self.food_consumed_this_turn = (
             False  # Track if actor has consumed food this turn
         )
-        self.last_action = "None"  # Track the last action performed
-        self.last_market_action = "None"  # Track the last market action
-        self.sim = sim  # Reference to the simulation
-        self.drives = drives  # List of ActorDrive instances
+        self.last_action = "None"
+        self.last_market_action = "None"
+        self.sim = sim
+        self.drives = drives
 
-        # Initialize skills
         self.skills: Dict[str, float] = {}
-        # Monotonic change counter, bumped whenever a skill rating is set.
-        # Together with Inventory.version it lets per-turn brain caches
-        # detect actor-state changes cheaply (see actor_brain.BrainCache).
+        # Bumped whenever a skill rating is set. With Inventory.version it
+        # lets brain caches detect actor-state changes cheaply. See
+        # actor_brain.BrainCache.
         self.skills_version: int = 0
 
-        # Apply any initial skills provided
         if initial_skills:
             for skill_id, rating in initial_skills.items():
                 self.skills[skill_id] = rating
@@ -80,53 +78,28 @@ class Actor:
         )
 
     def get_skill_rating(self, skill_id: str) -> float:
-        """Get the actor's rating for a specific skill.
-
-        Args:
-            skill_id: The ID of the skill to check
-
-        Returns:
-            The actor's rating for the skill, defaulting to 0.5 if not found
-        """
+        """Rating for a skill; 0.5 (unskilled) if the actor lacks it."""
         return self.skills.get(skill_id, 0.5)
 
     def set_skill_rating(self, skill_id: str, rating: float) -> None:
-        """Set the actor's rating for a specific skill.
-
-        Args:
-            skill_id: The ID of the skill to set
-            rating: The new rating for the skill
-        """
-        self.skills[skill_id] = max(0.5, min(3.0, rating))  # Clamp between 0.5 and 3.0
+        """Set a skill rating, clamped to [0.5, 3.0]."""
+        self.skills[skill_id] = max(0.5, min(3.0, rating))
         self.skills_version += 1
 
     def improve_skill(self, skill_id: str, amount: float) -> None:
-        """Improve the actor's rating for a specific skill.
-
-        Args:
-            skill_id: The ID of the skill to improve
-            amount: The amount to increase the skill rating by
-        """
+        """Raise a skill rating by ``amount``."""
         current_rating = self.get_skill_rating(skill_id)
         self.set_skill_rating(skill_id, current_rating + amount)
 
     def take_turn(self) -> None:
-        """Perform actions for this turn.
-
-        Each turn consists of:
-        1. Consume food
-        2. One economic action (e.g., government work, production)
-        3. Optional market actions
-        """
-        # Step 2: Perform economic action
+        """Take one turn: an economic action, market actions, then drive ticks."""
         economic_command = self.brain.decide_economic_action(self)
         if economic_command:
             economic_command.execute(self)
             self.sim.data_logger.log_actor_command(self, economic_command)
 
-        # Step 3: Perform market actions. Brains cancel-and-repost their whole
-        # book; pruning drops the pairs that would recreate an identical order
-        # (a market-state no-op) so unchanged quotes stay resting in the book.
+        # Brains cancel and repost their whole book; pruning drops pairs that
+        # would recreate an identical order so unchanged quotes keep resting.
         market_commands = self.brain.decide_market_actions(self)
         if self.planet and market_commands:
             market_commands = prune_unchanged_order_commands(
@@ -135,12 +108,10 @@ class Actor:
         market_actions = []
         for command in market_commands:
             success = command.execute(self)
-            # Log all market commands to data logger
             self.sim.data_logger.log_actor_command(self, command)
-            # Only log buy/sell order commands for market action summary.
-            # Exact-class checks: isinstance on these ABC-derived commands
-            # routes through abc.__instancecheck__, measurable at this call
-            # frequency (every market command, every actor, every turn).
+            # Only buy/sell orders go in the summary. Exact-class checks:
+            # isinstance on these ABC-derived commands goes through
+            # abc.__instancecheck__, which costs at this call frequency.
             command_class = command.__class__
             is_buy = command_class is PlaceBuyOrderCommand
             if success and (is_buy or command_class is PlaceSellOrderCommand):
@@ -154,7 +125,6 @@ class Actor:
                     f"{commodity_name} at {order_command.price}"
                 )
 
-        # Update the actor's last market action summary
         if market_actions:
             self.last_market_action = "; ".join(market_actions)
         else:
@@ -168,22 +138,19 @@ class Actor:
         self.sim.data_logger.log_actor_market_status(self)
 
     def can_execute_process(self, process_id: str) -> bool:
-        """Check if actor can execute a process without actually executing it."""
-        # Actor always has sim reference
-
+        """Whether the actor could run the process now, without running it."""
         process = self.sim.process_registry.get_process(process_id)
         if not process:
             return False
         return self.can_execute(process)
 
     def can_execute(self, process: "ProcessDefinition") -> bool:
-        """Like ``can_execute_process``, for callers already holding the
-        definition (hot paths scan the whole registry; re-resolving each
-        process by id was a measurable cost)."""
-        # process.requirements is the precomputed flattening of inputs (at
-        # their quantities) plus tools and facilities (at 1), in the same
-        # check order as the original three loops — one pass, one bound
-        # method lookup.
+        """Like ``can_execute_process`` for callers holding the definition.
+
+        Hot paths scan the whole registry, so they skip the id lookup.
+        """
+        # process.requirements flattens inputs at their quantities plus tools
+        # and facilities at 1, in check order: one pass, one method lookup.
         has_quantity = self.inventory.has_quantity
         for commodity, quantity in process.requirements:
             if not has_quantity(commodity, quantity):
@@ -191,7 +158,7 @@ class Actor:
         return True
 
     def get_market_activity_since_last_check(self) -> Dict:
-        """Actor decides what's relevant - since they last checked."""
+        """Open orders plus events and transactions since the last check."""
         if not self.planet:
             return {}
 
@@ -204,7 +171,6 @@ class Actor:
             self, since_turn=self.last_market_check_turn
         )
 
-        # Update context
         self.last_market_check_turn = self.sim.current_turn
 
         return {
@@ -214,7 +180,7 @@ class Actor:
         }
 
     def get_market_activity_this_turn(self) -> Dict:
-        """Actor decides: just this turn's activity."""
+        """Open orders plus this turn's events and transactions."""
         if not self.planet:
             return {}
 
@@ -230,7 +196,7 @@ class Actor:
         }
 
     def get_market_activity_last_n_turns(self, n: int) -> Dict:
-        """Actor decides: last N turns."""
+        """Open orders plus events and transactions from the last ``n`` turns."""
         if not self.planet:
             return {}
 

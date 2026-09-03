@@ -1,16 +1,16 @@
 """Turn pacing and anti-slideshow ship interpolation.
 
-The simulation advances in discrete turns on the worker thread, but we render
-at ~60fps. The director converts real elapsed time into turn *requests*
-(``turns_per_second``) and, between published frames, interpolates each ship's
-*map position* between the previous and the latest
-:class:`~spacesim2.ui.live.frame.TurnFrame` so ships glide smoothly instead of
-teleporting. The director never touches the simulation itself.
+The simulation advances in discrete turns on the worker thread; rendering runs
+at about 60 fps. The director converts elapsed real time into turn requests at
+``turns_per_second`` and, between published frames, interpolates each ship's
+map position between the previous and latest
+:class:`~spacesim2.ui.live.frame.TurnFrame` so ships glide instead of
+teleporting. The director never touches the simulation.
 
-Interpolating position (rather than ``travel_progress``) is deliberate: when a
-ship arrives, the core resets progress to 0, so interpolating progress would slide
-the ship backwards. Positions go origin->along-route->dest monotonically, so a
-position lerp always reads as forward motion.
+Position is interpolated rather than ``travel_progress`` because the core
+resets progress to 0 on arrival, which would slide the ship backwards. Positions
+advance origin, route, destination monotonically, so a position lerp always
+reads as forward motion.
 """
 
 from __future__ import annotations
@@ -32,10 +32,10 @@ def polyline_point(
 ) -> Tuple[Tuple[float, float], float]:
     """Point at ``fraction`` (0..1) of a polyline's arc length, and its heading.
 
-    Heading is the direction (radians) of the segment the point lies on, so a
-    ship visibly turns at each waypoint. A single-point polyline (a docked
-    ship) yields that point with heading 0; a degenerate zero-length polyline
-    likewise reports heading 0.
+    Heading is the direction in radians of the segment the point lies on, so a
+    ship turns at each waypoint. A single-point polyline, meaning a docked
+    ship, yields that point with heading 0. A zero-length polyline also
+    reports heading 0.
     """
     if not waypoints:
         raise ValueError("polyline needs at least one waypoint")
@@ -84,8 +84,8 @@ class Director:
         self.turns_per_second = max(MIN_SPEED, min(MAX_SPEED, turns_per_second))
         self.paused = paused
         self._accumulator = 0.0
-        # The frame being drawn and the one before it; ships lerp between the
-        # two. Seconds since the current frame arrived drive the lerp.
+        # Ships lerp from their positions in the previous frame to the current
+        # one, driven by seconds since the current frame arrived.
         self._frame = worker.latest_frame
         self._prev_pos: Dict[str, Tuple[float, float]] = self._positions(self._frame)
         self._since_frame = 0.0
@@ -117,8 +117,8 @@ class Director:
         self._accumulator += dt
         seconds_per_turn = 1.0 / self.turns_per_second
         if self._accumulator >= seconds_per_turn:
-            # No catch-up debt: if the sim can't keep the requested pace it
-            # just runs continuously, one turn after another.
+            # No catch-up debt: a sim slower than the requested pace runs
+            # continuously, one turn after another.
             self._accumulator = 0.0
             self._worker.request_turn()
 
@@ -128,10 +128,10 @@ class Director:
         if latest is self._frame:
             return
         if latest.turn != self._frame.turn:
-            # A new turn: what we were drawing becomes the lerp origin.
+            # New turn: the frame being drawn becomes the lerp origin.
             self._prev_pos = self._positions(self._frame)
             self._since_frame = 0.0
-        # Same turn, refreshed details: positions are unchanged, just adopt it.
+        # Same turn with refreshed details leaves positions unchanged.
         self._frame = latest
 
     @staticmethod

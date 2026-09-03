@@ -6,10 +6,9 @@ __all__ = ["SimulationData"]
 
 
 def __getattr__(name: str) -> Any:
-    # Lazy (PEP 562) so subpackages that don't need the optional analysis
-    # extra — e.g. analysis.summary, imported by the headless CLI's
-    # --summary path — work in environments without polars installed
-    # (docs/performance.md's free-threaded side venv).
+    # Lazy per PEP 562 so modules that do not need the optional analysis
+    # extra, such as analysis.summary on the CLI's --summary path, work
+    # without polars installed. See docs/performance.md.
     if name == "SimulationData":
         from spacesim2.analysis.loading.loader import SimulationData
 

@@ -6,16 +6,10 @@ import yaml
 
 
 class Skill:
-    """Represents a skill that actors can possess at different levels."""
+    """A skill that actors hold at varying levels."""
 
     def __init__(self, id: str, name: str, description: str):
-        """Initialize a skill definition.
-
-        Args:
-            id: Unique identifier for the skill
-            name: Human-readable name
-            description: Description of what the skill represents
-        """
+        """Initialize a skill definition."""
         self.id = id
         self.name = name
         self.description = description
@@ -32,19 +26,11 @@ class SkillsRegistry:
         self._skills: Dict[str, Skill] = {}
 
     def register_skill(self, skill: Skill) -> None:
-        """Register a skill in the registry.
-
-        Args:
-            skill: The skill to register
-        """
+        """Register a skill."""
         self._skills[skill.id] = skill
 
     def load_from_file(self, filepath: str | Path) -> None:
-        """Load skills from a YAML file.
-
-        Args:
-            filepath: Path to the YAML file
-        """
+        """Load skills from a YAML file."""
         try:
             with open(filepath, "r") as f:
                 skills_data = yaml.safe_load(f)
@@ -61,55 +47,37 @@ class SkillsRegistry:
 
 
 class SkillCheck:
-    """Utility class for performing skill checks."""
+    """Skill check rolls."""
 
     @staticmethod
     def success_check(skill_rating: float) -> bool:
-        """Determine if a skill check succeeds.
+        """Roll a success check.
 
-        Args:
-            skill_rating: The actor's skill rating
-
-        Returns:
-            True if the check succeeds, False otherwise
+        A rating of 1.0 or more always succeeds; below that the success
+        probability equals the rating.
         """
-        # Skill rating ≥ 1.0: 100% success
         if skill_rating >= 1.0:
             return True
 
-        # Skill rating < 1.0: Success probability proportional to rating
-        # (e.g., 0.8 rating → 80% success chance)
         return random.random() < skill_rating
 
     @staticmethod
     def multiplier_check(skill_rating: float) -> bool:
-        """Determine if a skill check results in a multiplier.
+        """Roll for an output multiplier.
 
-        Args:
-            skill_rating: The actor's skill rating
-
-        Returns:
-            True if a multiplier should be applied, False otherwise
+        Ratings at or below 1.0 never get one; above that the chance is half
+        the excess over 1.0.
         """
-        # Skill rating <= 1.0: No multiplier
         if skill_rating <= 1.0:
             return False
 
-        # Multiplier chance = (Skill Rating - 1.0) × 50%
         multiplier_chance = (skill_rating - 1.0) * 0.5
         return random.random() < multiplier_chance
 
     @staticmethod
     def get_combined_skill_rating(skill_ratings: List[float]) -> float:
-        """Calculate the combined rating for multiple skills.
-
-        Args:
-            skill_ratings: List of individual skill ratings
-
-        Returns:
-            The average of all skill ratings
-        """
+        """Average the given skill ratings; 0.5 (unskilled) if none."""
         if not skill_ratings:
-            return 0.5  # Default to unskilled if no skills provided
+            return 0.5
 
         return sum(skill_ratings) / len(skill_ratings)

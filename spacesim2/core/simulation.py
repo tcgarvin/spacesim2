@@ -31,8 +31,8 @@ from spacesim2.core.skill import SkillsRegistry
 if TYPE_CHECKING:
     from spacesim2.analysis.export.exporter import SimulationExporter
 
-# Syllable pools for procedural planet names, used once the curated list of
-# fictional names is exhausted (it has ~100 entries).
+# Syllable pools for procedural planet names, used once the curated list is
+# exhausted.
 _NAME_ONSETS = [
     "Kar",
     "Vel",
@@ -92,11 +92,10 @@ _NAME_CODAS = [
     "wyn",
 ]
 
-# Market makers must provide two-sided liquidity across *every* transportable
-# commodity, including illiquid upper-tier goods that have no organic supply yet.
-# Their starting capital is therefore scaled to the number of markets they serve
-# rather than a flat amount, so per-market depth stays meaningful as the
-# commodity tree grows. See MarketMakerBrain for how this pool is allocated.
+# Market makers quote both sides of every transportable commodity, including
+# upper-tier goods with no organic supply yet, so their starting capital scales
+# with the number of markets served and per-market depth holds as the
+# commodity tree grows. MarketMakerBrain allocates the pool.
 MARKET_MAKER_CAPITAL_PER_MARKET = 100
 
 
@@ -105,26 +104,23 @@ class Simulation:
 
     def __init__(self) -> None:
         self.planets: List[Planet] = []
-        # Star lanes joining the planets; ships travel only along lanes (see
-        # core/galaxy.py). Empty until setup_simple builds the galaxy — a
-        # hand-built world must populate it (StarLaneNetwork.complete gives
-        # the legacy any-to-any model).
+        # Star lanes joining the planets; ships travel only along lanes. See
+        # core/galaxy.py. Empty until setup_simple builds the galaxy; a
+        # hand-built world must populate it. StarLaneNetwork.complete gives
+        # the any-to-any model.
         self.star_lanes = StarLaneNetwork()
         # Bounding box of the planet layout (map units), for renderers.
         self.galaxy_size: Tuple[float, float] = (100.0, 100.0)
         self.actors: List[Actor] = []
         self.ships: List[Ship] = []
         self.current_turn = 0
-        # Threaded actor phase (core/parallel.py). >1 shards planets across
-        # a thread pool; real speedup needs a free-threaded interpreter.
-        # See docs/performance.md.
+        # Threaded actor phase (core/parallel.py). Above 1, planets are
+        # sharded across a thread pool; a real speedup needs a free-threaded
+        # interpreter. See docs/performance.md.
         self.parallel_workers: int = 1
         self._actor_phase_pool: Optional[ThreadPoolExecutor] = None
         self._actor_phase_pool_size: int = 0
 
-        # Initialize registries
-        # base_dir = Path(__file__).parent.parent.parent
-        # data_dir = base_dir / 'data'
         data_dir = Path("data")
         commodities_path = data_dir / "commodities.yaml"
         processes_path = data_dir / "processes.yaml"
@@ -145,16 +141,9 @@ class Simulation:
     def _generate_planet_names(self, num_planets: int) -> List[str]:
         """Pick ``num_planets`` unique planet names.
 
-        Curated fictional names are used first, then procedural names so any
-        galaxy size gets unique, readable names.
-
-        Args:
-            num_planets: Number of names to generate
-
-        Returns:
-            List of unique planet names
+        Curated names come first, then procedural ones, so any galaxy size
+        gets unique, readable names.
         """
-        # Collection of fictional planet names from various sci-fi sources
         fictional_names = [
             "Drakoon",
             "Veyrahn",
@@ -273,17 +262,11 @@ class Simulation:
 
     @staticmethod
     def _generate_procedural_name(used: set[str]) -> str:
-        """Generate a unique, readable procedural planet name.
+        """Generate a readable planet name not in ``used``.
 
-        Combines onset/middle/coda syllables (e.g. "Karendor", "Velvex");
-        collisions retry with fresh syllables, and after a bounded number of
-        attempts a numeric suffix guarantees uniqueness.
-
-        Args:
-            used: Names already taken; the returned name is not in this set.
-
-        Returns:
-            A unique planet name.
+        Joins onset, optional middle, and coda syllables, such as "Karendor"
+        or "Velvex". Collisions retry; after 100 attempts a numeric suffix
+        guarantees uniqueness.
         """
         for _ in range(100):
             name = random.choice(_NAME_ONSETS)
@@ -293,7 +276,7 @@ class Simulation:
             name = name.capitalize()
             if name not in used:
                 return name
-        # Extremely unlikely fallback: append a counter for guaranteed uniqueness.
+        # Fallback: a numeric suffix guarantees uniqueness.
         base = name
         suffix = 2
         while f"{base}-{suffix}" in used:
@@ -309,19 +292,18 @@ class Simulation:
         arms: int = DEFAULT_ARMS,
         lane_density: float = DEFAULT_LANE_DENSITY,
     ) -> None:
-        """Set up a simple simulation with multiple planets, actors, and ships.
+        """Build a galaxy of planets, actors, and ships.
 
-        Planets are laid out on a spiral galaxy and joined by star lanes (see
-        ``core/galaxy.py``); ships can only travel along lanes.
+        Planets lie on a spiral and are joined by star lanes; ships travel
+        only along lanes. See ``core/galaxy.py``.
 
         Args:
-            num_planets: Number of planets to create
-            num_regular_actors: Number of regular actors to create per planet
-            num_market_makers: Number of market makers to create per planet
-            num_ships: Number of ships to create per planet
-            arms: Number of spiral arms in the galaxy layout
-            lane_density: Fraction of optional local star lanes kept beyond
-                the spanning tree (0 = tree only, 1 = every local lane)
+            num_regular_actors: Regular actors per planet.
+            num_market_makers: Market makers per planet.
+            num_ships: Ships per planet.
+            arms: Spiral arm count.
+            lane_density: Fraction of optional local lanes kept beyond the
+                spanning tree; 0 is tree only, 1 is every local lane.
         """
         names = self._generate_planet_names(num_planets)
         layout = generate_spiral_layout(
@@ -329,31 +311,26 @@ class Simulation:
         )
         planet_data = [(name, x, y) for name, (x, y) in zip(names, layout.positions)]
 
-        # Generate planet attributes. Guarantee at least one abundant fuel
-        # source: nova_fuel_ore rolls are bimodal, so a galaxy can otherwise
-        # come up all-poor (~3% of 5-planet worlds), leaving no viable fuel
-        # production anywhere — every ship eventually strands no matter how
-        # carefully it plans.
+        # Guarantee at least one abundant fuel source. nova_fuel_ore rolls
+        # are bimodal, so a galaxy can come up all-poor, with no viable fuel
+        # production anywhere and every ship eventually stranded.
         attribute_rolls = [PlanetAttributes.generate_random() for _ in planet_data]
         if attribute_rolls and all(a.nova_fuel_ore < 0.7 for a in attribute_rolls):
             random.choice(attribute_rolls).nova_fuel_ore = random.uniform(0.7, 1.0)
 
-        # Create the planets with their markets
         for (name, x, y), attributes in zip(planet_data, attribute_rolls):
-            # Create and initialize the market for the planet
             planet_market = Market()
             planet_market.commodity_registry = (
                 self.commodity_registry
             )  # Give market access to commodity registry
-            # Record order events only for actors selected for the logging
-            # pipeline (a live view, so --log-actors selection made after
-            # setup is honored). See Market.order_event_filter.
+            # Record order events only for logged actors. This is a live
+            # view, so a --log-actors selection made after setup is honored.
+            # See Market.order_event_filter.
             planet_market.order_event_filter = self.data_logger.logged_actor_names()
 
             planet = Planet(name, planet_market, x=x, y=y, attributes=attributes)
             self.planets.append(planet)
 
-            # Create actors for each planet
             self._setup_planet_actors(
                 planet=planet,
                 num_regular_actors=num_regular_actors,
@@ -363,7 +340,6 @@ class Simulation:
 
         self._apply_layout_lanes(layout)
 
-        # Create ships and distribute them across planets
         self._setup_ships(num_ships)
 
     def _apply_layout_lanes(self, layout: GalaxyLayout) -> None:
@@ -385,24 +361,14 @@ class Simulation:
         num_market_makers: int,
         actor_name_prefix: str,
     ) -> None:
-        """Set up actors for a specific planet.
-
-        Args:
-            planet: The planet to add actors to
-            num_regular_actors: Number of regular actors to create
-            num_market_makers: Number of market makers to create
-            actor_name_prefix: Prefix for actor names
-        """
-        # Create regular actors with varying production efficiencies and skills
-        # Split 50/50 between Colonists and Industrialists
+        """Create a planet's regular actors and market makers."""
+        # Regular actors split evenly between colonists and industrialists.
         num_colonists = num_regular_actors // 2
         num_industrialists = num_regular_actors - num_colonists
 
-        # Invariant across all actors on this planet — hoisted out of the
-        # per-actor loops so setup stays cheap at large populations.
+        # Same for every actor on the planet, so computed once.
         all_skills = list(self.skills_registry._skills.keys())
 
-        # Create Colonist and Industrialist actors
         regular_actor_specs = [
             ("Colonist", ColonistBrain, num_colonists),
             ("Industrialist", IndustrialistBrain, num_industrialists),
@@ -411,7 +377,6 @@ class Simulation:
             for i in range(1, count + 1):
                 initial_skills = self._random_initial_skills(all_skills)
 
-                # Initialize actor drives
                 drives: list[ActorDrive] = [
                     Drive(commodity_registry=self.commodity_registry)
                     for Drive in (FoodDrive, ClothingDrive, ShelterDrive, HealthDrive)
@@ -430,17 +395,14 @@ class Simulation:
                 self.actors.append(actor)
                 planet.add_actor(actor)
 
-        # Create market makers with balanced skills
         num_markets = sum(
             1 for c in self.commodity_registry.all_commodities() if c.transportable
         )
         market_maker_capital = MARKET_MAKER_CAPITAL_PER_MARKET * max(1, num_markets)
 
         for i in range(num_market_makers):
-            # Market makers get average skill levels
             initial_skills = {skill_id: 1.0 for skill_id in all_skills}
 
-            # Initialize actor drives
             drives = [
                 Drive(commodity_registry=self.commodity_registry)
                 for Drive in (FoodDrive, ClothingDrive, ShelterDrive, HealthDrive)
@@ -461,15 +423,9 @@ class Simulation:
 
     @staticmethod
     def _random_initial_skills(all_skills: List[str]) -> Dict[str, float]:
-        """Roll random initial skill levels with 1-3 specialties.
+        """Roll initial skill levels with 1-3 specialties.
 
-        Specialty skills rate 1.0-2.0; the rest 0.5-1.0.
-
-        Args:
-            all_skills: All skill ids in the registry.
-
-        Returns:
-            Mapping of skill id to initial skill level.
+        Specialties rate 1.0-2.0; the rest 0.5-1.0.
         """
         num_specialties = random.randint(1, min(3, len(all_skills)))
         specialty_skills = set(random.sample(all_skills, num_specialties))
@@ -481,23 +437,15 @@ class Simulation:
         }
 
     def _setup_ships(self, num_ships: int) -> None:
-        """Set up ships for the simulation.
-
-        Args:
-            num_ships: Number of ships to create per planet
-        """
+        """Create ``num_ships`` ships per planet, at random start planets."""
         if not self.planets:
             return
 
-        # Create num_ships per planet
         total_ships = num_ships * len(self.planets)
 
-        # Create ships with varying fuel efficiency
         for i in range(total_ships):
-            # Random fuel efficiency between 0.8 and 1.2
             efficiency = random.uniform(0.8, 1.2)
 
-            # Randomly assign a starting planet
             planet = random.choice(self.planets)
 
             ship = Ship(
@@ -508,23 +456,17 @@ class Simulation:
                 initial_money=1000,
             )
 
-            # Give ships some starting fuel
             nova_fuel = self.commodity_registry["nova_fuel"]
             ship.cargo.add_commodity(nova_fuel, 30)
 
-            # Add ship to simulation and planet
             self.ships.append(ship)
             planet.add_ship(ship)
 
-            # Simulation reference already set in constructor
-
     def run_turn(self) -> None:
-        """Run a single turn of the simulation."""
+        """Run one turn: actors, then ships, then market matching."""
         self.current_turn += 1
         self.data_logger.set_turn(self.current_turn)
-        # Update market turn counters
         for planet in self.planets:
-            # Market is guaranteed to exist
             planet.market.set_current_turn(self.current_turn)
 
         if self.parallel_workers > 1 and len(self.planets) >= 2:
@@ -532,30 +474,22 @@ class Simulation:
 
             run_actor_phase_threaded(self, self.parallel_workers)
         else:
-            # Randomize actor order
             random.shuffle(self.actors)
 
-            # Each actor takes their turn
             for actor in self.actors:
                 actor.take_turn()
 
-        # Randomize ship order
         random.shuffle(self.ships)
 
-        # Each ship takes their turn
         for ship in self.ships:
             ship.take_turn()
 
-        # Process markets
         self._process_markets()
 
-        # Export data if exporter is attached
         if self.exporter:
             self.exporter.export_turn(self, self.current_turn)
 
     def _process_markets(self) -> None:
-        """Process all markets at the end of the turn."""
+        """Match orders on every market at the end of the turn."""
         for planet in self.planets:
-            # Market is guaranteed to exist
-            # Execute trades
             planet.market.match_orders()

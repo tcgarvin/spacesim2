@@ -1,9 +1,9 @@
 """Camera mapping galaxy map-space to screen pixels, with zoom and pan.
 
-The galaxy lives in a ``width x height`` box (``Simulation.galaxy_size``; it
-grows with planet count and is rarely square). The camera centers on a map
-point and scales by ``zoom`` pixels per map unit, so panning/zooming never
-touches entity state.
+The galaxy lives in the ``width x height`` box ``Simulation.galaxy_size``,
+which grows with planet count and is rarely square. The camera centers on a
+map point and scales by ``zoom`` pixels per map unit, so panning and zooming
+never touch entity state.
 """
 
 from __future__ import annotations
@@ -28,8 +28,8 @@ class Camera:
         Args:
             screen_size: Window size in pixels.
             galaxy_size: Galaxy box in map units (``Simulation.galaxy_size``).
-            bottom_reserve_px: Pixels along the bottom edge covered by chrome
-                (the charts strip); the fit keeps the galaxy above it.
+            bottom_reserve_px: Pixels along the bottom edge covered by the
+                charts strip; the fit keeps the galaxy above it.
         """
         width, height = galaxy_size
         if width <= 0.0 or height <= 0.0:
@@ -51,8 +51,8 @@ class Camera:
         """Fit the whole galaxy, with margin, into the unreserved screen area."""
         self.zoom = self._fit_zoom()
         self.center_x = self._galaxy_w / 2.0
-        # The galaxy center should land in the middle of the usable area,
-        # which sits half the reserve above the screen center.
+        # The usable area's middle sits half the reserve above the screen
+        # center.
         self.center_y = self._galaxy_h / 2.0 + (self._bottom_reserve / 2.0) / self.zoom
 
     @property
@@ -97,7 +97,6 @@ class Camera:
         before = self.screen_to_world(screen_pos)
         self.zoom = max(self._min_zoom, min(self._max_zoom, self.zoom * factor))
         after = self.screen_to_world(screen_pos)
-        # Shift center so the cursor stays over the same world point.
         self.center_x += before[0] - after[0]
         self.center_y += before[1] - after[1]
 
@@ -108,6 +107,6 @@ class Camera:
         return x, y
 
     def pan_pixels(self, dx: int, dy: int) -> None:
-        """Drag the view by a pixel delta (mouse drag)."""
+        """Drag the view by a pixel delta."""
         self.center_x -= dx / self.zoom
         self.center_y -= dy / self.zoom

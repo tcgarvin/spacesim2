@@ -9,13 +9,11 @@ from spacesim2.core.ship import Ship, ShipStatus
 
 class TestShip(unittest.TestCase):
     def setUp(self):
-        # Create planets for testing
         self.earth_market = Market()
         self.mars_market = Market()
         self.earth = Planet("Earth", self.earth_market, 0, 0)
         self.mars = Planet("Mars", self.mars_market, 50, 0)  # 50 units away from Earth
 
-        # Create commodity registry with fuel
         self.commodity_registry = CommodityRegistry()
         self.fuel = CommodityDefinition(
             id="nova_fuel",
@@ -25,7 +23,6 @@ class TestShip(unittest.TestCase):
         )
         self.commodity_registry._commodities["nova_fuel"] = self.fuel
 
-        # Create a mock simulation
         planets = [self.earth, self.mars]
         self.mock_sim = type(
             "MockSimulation",
@@ -37,11 +34,9 @@ class TestShip(unittest.TestCase):
             },
         )()
 
-        # Create a ship
         self.ship = Ship("TestShip", self.mock_sim, self.earth)
         self.earth.add_ship(self.ship)
 
-        # Add fuel to the ship
         self.ship.cargo.add_commodity(self.fuel, 50)
 
     def test_ship_initialization(self):
@@ -57,49 +52,38 @@ class TestShip(unittest.TestCase):
     def test_fuel_calculation(self):
         distance = 50.0
         fuel_needed = Ship.calculate_fuel_needed(distance)
-        self.assertEqual(fuel_needed, 3)  # 50 / 20 = 2.5, rounded up to 3 units of fuel
+        self.assertEqual(fuel_needed, 3)  # 50 / 20 = 2.5, rounded up to 3
 
     def test_journey_start_and_progress(self):
-        # Simulation reference already set in constructor
-
-        # Start a journey to Mars
         self.assertTrue(self.ship.start_journey(self.mars))
         self.assertEqual(self.ship.status, ShipStatus.TRAVELING)
         self.assertEqual(self.ship.destination, self.mars)
 
-        # Check fuel was consumed
-        fuel_consumed = 3  # For a distance of 50 units (50/20 = 2.5, rounded to 3)
+        fuel_consumed = 3  # 50 / 20 = 2.5, rounded up to 3
         self.assertEqual(self.ship.cargo.get_quantity(self.fuel), 50 - fuel_consumed)
 
-        # Journey should take 3 turns (50 / 20 = 2.5, rounded to 3)
-        self.assertEqual(self.ship.travel_time, 3)
+        self.assertEqual(self.ship.travel_time, 3)  # 50 / 20 = 2.5, rounded up to 3
 
-        # Update for 2 turns
-        self.assertFalse(self.ship.update_journey())  # Not arrived yet
-        self.assertFalse(self.ship.update_journey())  # Not arrived yet
+        self.assertFalse(self.ship.update_journey())
+        self.assertFalse(self.ship.update_journey())
 
-        # Third turn should arrive
-        self.assertTrue(self.ship.update_journey())  # Arrived
+        self.assertTrue(self.ship.update_journey())
         self.assertEqual(self.ship.status, ShipStatus.DOCKED)
         self.assertEqual(self.ship.planet, self.mars)
         self.assertIn(self.ship, self.mars.ships)
         self.assertNotIn(self.ship, self.earth.ships)
 
     def test_insufficient_fuel(self):
-        # Create a ship with less fuel
         ship2 = Ship("FuellessShip", self.mock_sim, self.earth)
         self.earth.add_ship(ship2)
-        ship2.cargo.add_commodity(self.fuel, 2)  # Only 2 units of fuel
+        ship2.cargo.add_commodity(self.fuel, 2)
 
-        # Override the maintenance check to make sure it always returns False for this test
+        # Keep the random maintenance check out of this test.
         ship2.check_maintenance = lambda: False
 
-        # Attempt to start a journey, but should fail due to insufficient fuel
         self.assertFalse(ship2.start_journey(self.mars))
 
-        # Verify the ship's status is still docked or maintenance needed
-        # In the new implementation, there's a random chance of maintenance being needed,
-        # so we allow either status
+        # Maintenance can still be flagged at random, so either status is accepted.
         self.assertIn(ship2.status, [ShipStatus.DOCKED, ShipStatus.NEEDS_MAINTENANCE])
 
 

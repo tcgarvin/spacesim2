@@ -1,18 +1,18 @@
-"""Tier-1 analysis scratch template (token-controlled).
+"""Tier-1 analysis scratch template.
 
 Copy this, edit the analysis, and run it:
 
     uv run spacesim2 dev analyze notebooks/my_question.py
 
-CONTRACT (keep agent token cost bounded):
-  * PRINT small aggregates only -- .describe(), grouped means, .head(N).
-    Never print a raw full DataFrame.
-  * SAVE figures to tmp/ with savefig(); never display them. The agent
-    reasons over the printed numbers; the human opens the saved PNGs.
+Contract, which keeps agent token cost bounded:
+  * Print small aggregates only: .describe(), grouped means, .head(N).
+    Never print a full DataFrame.
+  * Save figures to tmp/ with savefig(); never display them. The agent
+    reads the printed numbers; the human opens the saved PNGs.
   * This is a plain script: `print()` is the output channel.
 
-For a persistent, interactive, human-facing dashboard, build a marimo
-notebook instead and open it with `marimo edit`.
+For an interactive human-facing dashboard, build a marimo notebook instead
+and open it with `marimo edit`.
 """
 
 import polars as pl
@@ -22,7 +22,7 @@ from spacesim2.analysis.loading import load_run
 r = load_run()  # most recent run, or $SPACESIM_RUN_PATH
 print(f"run: {r.simulation_id}")
 
-# --- Example: mean price per commodity over the whole run -------------------
+# Example: mean price per commodity over the whole run.
 prices = (
     r.market_snapshots.group_by("commodity_id")
     .agg(pl.col("avg_price").mean().round(2).alias("mean_price"))
@@ -30,7 +30,7 @@ prices = (
 )
 print(prices)
 
-# --- Example: a figure for the human (saved, not shown) ---------------------
+# Example: a figure for the human, saved rather than shown.
 # import matplotlib
 # matplotlib.use("Agg")  # headless backend, no window
 # import matplotlib.pyplot as plt

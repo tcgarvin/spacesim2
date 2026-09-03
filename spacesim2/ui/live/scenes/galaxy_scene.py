@@ -1,17 +1,17 @@
 """Composes a full galaxy frame and owns map interaction state.
 
-Layering order is deliberate: backdrop -> star lanes -> highlighted route ->
-ships -> planets on top so worlds read as the focal points, then selection
-chrome, charts, the drill-down panel, and a quiet HUD. The scene also owns
-picking: hovering highlights a planet or ship, clicking selects it and opens a
-live detail panel, and the charts strip scopes itself to the selected planet's
-market. Selecting a ship lights up its lane route; selecting a planet lights up
-the lanes touching it.
+Layering order: backdrop, star lanes, highlighted route, ships, then planets
+on top so worlds read as the focal points, then selection chrome, charts, the
+drill-down panel, and the HUD. The scene also owns picking: hovering
+highlights a planet or ship, clicking selects it and opens a live detail
+panel, and the charts strip scopes itself to the selected planet's market.
+Selecting a ship highlights its lane route; selecting a planet highlights the
+lanes touching it.
 
 Everything drawn comes from the director's current
 :class:`~spacesim2.ui.live.frame.TurnFrame`; the scene never reads simulation
-objects. A selection is also a *subscription* on the simulation worker, which
-is what makes the frame carry that entity's drill-down detail.
+objects. A selection is also a subscription on the simulation worker, which
+makes the frame carry that entity's drill-down detail.
 """
 
 from __future__ import annotations
@@ -55,16 +55,16 @@ class GalaxyScene:
         camera: Camera,
         size: tuple[int, int],
     ) -> None:
-        # The view model is used only for the static lane skeleton; all live
-        # state comes through the director's frame.
+        # The view model serves only the static lane skeleton; all live state
+        # comes through the director's frame.
         self._vm = view_model
         self._director = director
         self._worker = worker
         self._camera = camera
         self._nebula = Nebula(size)
         self._fonts = Fonts()
-        # Baked sprite sets are loaded once here (after the display exists so
-        # convert_alpha works) and threaded down; never per-frame or via globals.
+        # Sprite sets load once here, after the display exists so convert_alpha
+        # works, and are passed down; never per frame or through globals.
         self._planet_sprites = PlanetSprites()
         self._ship_sprites = ShipSprites()
         self._good_icons = GoodIcons()
@@ -79,10 +79,10 @@ class GalaxyScene:
 
     @selection.setter
     def selection(self, target: Optional[Selection]) -> None:
-        """Select ``target`` (or nothing), keeping the worker subscription in step.
+        """Select ``target`` or nothing, keeping the worker subscription in step.
 
-        Subscribing is what puts the entity's detail into subsequent frames;
-        hover deliberately does not subscribe since it only needs positions.
+        Subscribing puts the entity's detail into later frames. Hover does not
+        subscribe since it only needs positions.
         """
         if target == self._selection:
             return
@@ -113,10 +113,10 @@ class GalaxyScene:
         return None
 
     def handle_click(self, pos: Tuple[int, int]) -> None:
-        """Select what's under the cursor; a void click clears the selection.
+        """Select what is under the cursor; a void click clears the selection.
 
-        Clicks landing on the open detail panel are swallowed so interacting
-        with (or just touching) the panel doesn't deselect through it.
+        Clicks on the open detail panel are swallowed so touching the panel
+        does not deselect through it.
         """
         if self._panel_rect is not None and self._panel_rect.collidepoint(pos):
             return
@@ -144,19 +144,19 @@ class GalaxyScene:
     # -- Drawing ---------------------------------------------------------
 
     def draw(self, surface: pygame.Surface) -> None:
-        # Pick up the newest published frame once, so the whole pass (ships,
-        # rings, panel, HUD) draws one consistent turn.
+        # Adopt the newest published frame once so the whole pass draws one
+        # consistent turn.
         self._director.refresh_frame()
         frame = self._director.frame
         # Parallax keys off the camera center so panning drifts the starfield.
         self._nebula.draw(surface, (self._camera.center_x, self._camera.center_y))
 
-        # The lane skeleton first, then whatever route is in focus over it.
+        # Lane skeleton first, then the focused route over it.
         draw_lanes(surface, self._vm.lanes(), self._camera)
         rendered_ships = self._director.rendered_ships()
         self._draw_focus_lanes(surface, rendered_ships)
 
-        # Ships under the worlds.
+        # Ships draw under the worlds.
         for rendered in rendered_ships:
             draw_ship(surface, rendered, self._camera, self._ship_sprites)
 
@@ -186,7 +186,7 @@ class GalaxyScene:
         hud.draw_help_line(surface, self._fonts, self.selection is not None)
 
     def _planet_lanes(self, name: str) -> List[LaneSnapshot]:
-        """Lanes touching the named planet (matched by map position)."""
+        """Lanes touching the named planet, matched by map position."""
         for planet in self._director.frame.planets:
             if planet.name == name:
                 return [
@@ -253,9 +253,9 @@ class GalaxyScene:
         """Draw the selection's panel from the frame's subscribed details.
 
         The detail can lag the selection by a turn when the worker was
-        mid-turn at click time; until it arrives nothing is drawn and the
-        selection is kept. The selection is dropped only when the entity
-        itself has vanished from the frame.
+        mid-turn at click time. Until it arrives nothing is drawn and the
+        selection is kept. The selection is dropped only when the entity has
+        vanished from the frame.
         """
         if self.selection is None:
             return None

@@ -1,39 +1,30 @@
-# Simulation Architecture & Development Guide
+# Simulation Architecture and Development Guide
 
-This guide covers the simulation's internal architecture, turn execution flow, and how to test/debug simulation behavior.
+Internal architecture, turn order, and how to test and debug simulation
+behavior.
 
-## Turn Execution Order
+## Turn execution order
 
-Each turn executes in this order:
+1. Actors take turns in random order. `actor.take_turn()` runs one economic
+   action (production or work), market actions (buy and sell orders), and
+   drive processing (consumption). With `--workers N` this phase runs on a
+   thread pool; see `docs/performance.md`.
+2. Ships take turns in random order. `ship.take_turn()` advances any journey,
+   then calls `brain.decide_trade_actions()` and `brain.decide_travel()`.
+3. Every market matches its orders. All buy and sell orders match at once
+   with price-time priority, so results do not depend on actor order.
 
-1. **Actors take turns** (randomized order each turn)
-   - Each actor calls `actor.take_turn()` which executes:
-     - One economic action (production/work)
-     - Multiple market actions (buy/sell orders)
-     - Drive processing (consumption)
+Consequences:
 
-2. **Ships take turns** (randomized order each turn)
-   - Each ship calls `ship.take_turn()` which executes:
-     - Journey updates (if traveling)
-     - Trade decisions via `brain.decide_trade_actions()`
-     - Travel decisions via `brain.decide_travel()`
+- Orders are not immediate. A buy placed this turn fills at end of turn, so
+  cargo and money arrive next turn.
+- All ships see the same market state when they decide.
+- Prices can move between planning and execution.
 
-3. **Markets process all orders** (deferred matching at end of turn)
-   - ALL buy and sell orders are matched simultaneously
-   - Matching uses price-time priority
-   - This prevents order-dependency issues
+## Testing simulation behavior
 
-## Key Implications
-
-- **Orders are not immediate**: When a ship places a buy order, it won't have the cargo until AFTER the market processes (end of turn)
-- **Next-turn cargo checks**: Ships should expect cargo to arrive the turn AFTER placing orders
-- **Concurrent decisions**: All ships see the same market state when making decisions
-- **Market dynamics**: Prices can change significantly between when a plan is made and when orders execute
-
-## Testing Simulation Behavior
-
-When debugging AI or market mechanics, start with the KPI summary and Tier-1
-analysis scripts (see the `sim-evaluation` skill):
+Start with the KPI summary and Tier-1 analysis scripts (see the
+`sim-evaluation` skill):
 
 ```bash
 # Compact KPI summary with PASS/WARN/FAIL verdict
@@ -49,14 +40,13 @@ For interactive human-facing exploration, the marimo dashboard is available:
 uv run spacesim2 run --notebook   # exports data and opens notebooks/analysis_template.py
 ```
 
-See `notebooks/README.md` for notebook development patterns.
+See `notebooks/README.md` for notebook patterns.
 
-**Why 50+ turns?**: Markets need time to develop price differentials through:
-- Actors producing/consuming commodities
-- Market makers establishing price bands
-- Supply/demand imbalances emerging between planets
+Run 50 or more turns before judging behavior. Price differentials appear
+only after actors have produced and consumed, market makers have set price
+bands, and supply and demand have diverged between planets.
 
-## Core Components
+## Core components
 
 | Component | File | Description |
 |-----------|------|-------------|
@@ -68,27 +58,28 @@ See `notebooks/README.md` for notebook development patterns.
 | Process | `core/process.py` | Production recipes |
 | Commodity | `core/commodity.py` | Tradeable goods definitions |
 
-## Brain Architecture
+## Brains
 
-Actors and ships delegate decision-making to pluggable "brain" classes:
+Actors and ships delegate decisions to pluggable brain classes.
 
-**Actor Brains** (in `core/brains/`):
-- `ColonistBrain` - Flexible generalist, meets basic needs first
-- `IndustrialistBrain` - Specializes in one production recipe
-- `MarketMakerBrain` - Provides liquidity using statistical pricing
+Actor brains (`core/brains/`):
 
-**Ship Brains** (in `core/ship.py`):
-- `TraderBrain` - Plan-driven interplanetary arbitrage
+- `ColonistBrain`: generalist, meets basic needs first.
+- `IndustrialistBrain`: specializes in one production recipe.
+- `MarketMakerBrain`: provides liquidity using statistical pricing.
 
-See `docs/dev-guide-ships.md` for detailed ship AI development patterns.
+Ship brains (`core/ship.py`):
 
-## Market Mechanics
+- `TraderBrain`: plan-driven interplanetary arbitrage. See
+  `docs/dev-guide-ships.md`.
 
-### Order Types
-- **Buy Orders**: Actor reserves money, waits for match
-- **Sell Orders**: Actor reserves commodities, waits for match
+## Market mechanics
 
-### Price Discovery
+A buy order reserves money; a sell order reserves the commodity. Both wait
+for the end-of-turn match.
+
+### Price discovery
+
 ```python
 # Get current bid/ask spread
 bid, ask = market.get_bid_ask_spread(commodity)
@@ -103,9 +94,12 @@ avg = market.get_avg_price(commodity)
 avg_30 = market.get_30_day_average_price(commodity)
 ```
 
-### Order Matching Algorithm
-1. For each commodity type:
-   - Sort buy orders: highest price first, oldest first
-   - Sort sell orders: lowest price first, oldest first
-2. Match where buy price >= sell price
-3. Transaction price = seller's asking price
+`get_avg_price` returns the last recorded price when there are no recent
+trades, and 10 when the commodity has never traded.
+
+### Matching
+
+For each commodity, buy orders sort highest price first then oldest first;
+sell orders sort lowest price first then oldest first. Orders match while
+the buy price is at or above the sell price. The transaction price is the
+seller's ask.

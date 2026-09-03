@@ -1,18 +1,17 @@
 """Per-turn time-series recorder feeding the live charts.
 
-The market already keeps an unbounded per-turn ``price_history`` / ``volume_history``
-per planet-market, but the live charts need three things those raw lists don't give
-cheaply: a *bounded* window (so a long-running session can't grow without limit),
-a *galaxy-wide aggregate* across every planet market, and a citizen-wellbeing series
-(which the core records nowhere). :class:`HistoryRecorder` samples all of that once
-per turn into ring buffers the renderer can read each frame without touching core
-internals or re-aggregating.
+Each planet market keeps unbounded per-turn ``price_history`` and
+``volume_history``. The live charts need three things those lists lack: a
+bounded window so a long session cannot grow without limit, a galaxy-wide
+aggregate across every market, and a citizen-wellbeing series, which the core
+does not record. :class:`HistoryRecorder` samples all three once per turn into
+ring buffers the renderer reads each frame without touching core internals.
 
-Sampling is driven by the :class:`~spacesim2.ui.live.worker.SimulationWorker`,
-which calls :meth:`record` on the simulation thread immediately after each
-``run_turn`` (and :meth:`sample` once at startup for a turn-0 baseline). The
-charts read the series from the render thread, so writes and the list copies
-readers take are serialized by a lock. Nothing here mutates the simulation.
+The :class:`~spacesim2.ui.live.worker.SimulationWorker` calls :meth:`record`
+on the simulation thread after each ``run_turn``, and :meth:`sample` once at
+startup for a turn-0 baseline. Charts read from the render thread, so a lock
+serializes writes against the list copies readers take. Nothing here mutates
+the simulation.
 """
 
 from __future__ import annotations
@@ -27,17 +26,15 @@ from spacesim2.core.planet import Planet
 from spacesim2.core.simulation import Simulation
 from spacesim2.ui.live.view_model import planet_wellbeing_by_name
 
-# How many turns of history to retain. At one point per turn this is plenty for a
-# scrolling chart while staying tiny in memory (a few thousand floats per series).
+# Turns of history to retain, one point per turn.
 DEFAULT_WINDOW = 2048
 
 
 def _global_wellbeing(sim: Simulation, wellbeing_by_name: Mapping[str, float]) -> float:
     """Mean welfare across every regular actor in the galaxy, in [0, 1].
 
-    Weights each planet's mean by its regular population so it matches averaging
-    over the whole population (a planet with more colonists counts for more).
-    Market makers are excluded — they are economic plumbing, not colonists.
+    Weights each planet's mean by its regular population so the result equals
+    the mean over all colonists. Market makers are excluded.
     """
     weighted = 0.0
     population = 0
@@ -55,13 +52,11 @@ def _galaxy_price_and_volume(
 ) -> tuple[float, float]:
     """Galaxy-wide strike price and total volume for ``commodity`` this turn.
 
-    The strike price is volume-weighted across planet markets (a market that
-    actually traded should dominate the headline price). When no market traded
-    this turn we fall back to each market's own valuation (``get_avg_price``,
-    which carries the last price forward and never returns zero) so the line
-    stays continuous instead of dropping to a misleading zero — important for the
-    turn-0 baseline, before any market has traded. Returns
-    ``(price, total_volume)``.
+    The strike price is volume-weighted across planet markets. When no market
+    traded this turn it falls back to the mean of each market's ``get_avg_price``,
+    which carries the last price forward and never returns zero, so the line
+    stays continuous. This matters for the turn-0 baseline, before any market
+    has traded. Returns ``(price, total_volume)``.
     """
     weighted_price = 0.0
     total_volume = 0.0
@@ -90,9 +85,8 @@ def _planet_price_and_volume(
 ) -> tuple[float, float]:
     """One planet market's strike price and volume for ``commodity`` this turn.
 
-    Mirrors the galaxy aggregate's continuity rule: on a turn with no trades the
-    price falls back to the market's own valuation (last strike carried forward)
-    so the local line never drops to a misleading zero.
+    Same continuity rule as the galaxy aggregate: on a turn with no trades the
+    price falls back to the market's own valuation.
     """
     market = planet.market
     volumes = market.volume_history.get(commodity, [])
@@ -113,8 +107,8 @@ class HistoryRecorder:
     def __init__(self, simulation: Simulation, window: int = DEFAULT_WINDOW) -> None:
         self._sim = simulation
         self._window = window
-        # Serializes the per-turn append (simulation thread) against the list
-        # copies the chart readers take (render thread).
+        # Serializes the simulation thread's append against the list copies
+        # chart readers take on the render thread.
         self._lock = threading.Lock()
         self.commodities: List[CommodityDefinition] = [
             c
@@ -142,7 +136,7 @@ class HistoryRecorder:
         self._planet_wellbeing: Dict[str, Deque[float]] = {
             p.name: deque(maxlen=window) for p in simulation.planets
         }
-        # Capture a turn-0 baseline so the charts have a point before any turn runs.
+        # Turn-0 baseline so the charts have a point before any turn runs.
         self.sample()
 
     def sample(self) -> None:
@@ -152,8 +146,8 @@ class HistoryRecorder:
     def record(self, wellbeing_by_name: Mapping[str, float]) -> None:
         """Record one data point using an already-computed wellbeing sweep.
 
-        The worker passes the same per-planet map it builds the frame from, so
-        the galaxy's actors are walked once per turn, not once per consumer.
+        The worker passes the same per-planet map it builds the frame from,
+        so actors are walked once per turn.
         """
         with self._lock:
             self._turns.append(self._sim.current_turn)
@@ -164,7 +158,7 @@ class HistoryRecorder:
                 self._volume[commodity.id].append(volume)
             for planet in self._sim.planets:
                 if planet.name not in self._planet_wellbeing:
-                    continue  # planet added after startup; not tracked
+                    continue  # planet added after startup is not tracked
                 self._planet_wellbeing[planet.name].append(
                     wellbeing_by_name.get(planet.name, 0.0)
                 )

@@ -1,14 +1,11 @@
 """Compact, population-wide behavioral summary of a simulation.
 
-This is the Tier-0 "smoke" readout for the agent dev loop: a small,
-machine-readable dict of macro KPIs computed directly from the live
-``Simulation`` object (not the sampled Parquet logs), plus a coarse
-PASS/WARN/FAIL verdict against expected ranges.
-
-The goal is token efficiency: an agent runs one command and reads ~20
-numbers and a verdict, instead of loading Parquet or a rendered notebook.
-For open-ended questions, write a Tier-1 analysis script instead (see the
-``sim-evaluation`` skill).
+The Tier-0 readout for the agent dev loop: a small machine-readable dict of
+macro KPIs computed from the live ``Simulation`` object, not the sampled
+Parquet logs, plus a coarse PASS/WARN/FAIL verdict against expected ranges.
+An agent runs one command and reads about 20 numbers and a verdict. For
+open-ended questions, write a Tier-1 analysis script instead; see the
+``sim-evaluation`` skill.
 """
 
 from __future__ import annotations
@@ -19,14 +16,13 @@ from typing import Dict, List
 from spacesim2.core.actor import ActorType
 from spacesim2.core.simulation import Simulation
 
-# Verdict thresholds are deliberately *catastrophe floors*, not aspirational
-# targets: a healthy run can sit well above them. They flag runs that are
-# unambiguously broken regardless of design intent, avoiding alarm fatigue.
+# Verdict thresholds are catastrophe floors, not targets: a healthy run sits
+# well above them. They flag runs that are broken regardless of design
+# intent, which avoids alarm fatigue. Values are (warn, fail) mean health.
 #
-# Only `food` (the survival need) is thresholded by default. Comfort-tier
-# drives (shelter, clothing, health) ramp slowly and their intended
-# steady-state level is a design decision — they are *reported* in `drives`
-# but not asserted here. Add them once a target steady state is defined.
+# Only `food`, the survival need, is thresholded. Comfort-tier drives ramp
+# slowly and their intended steady state is a design decision, so they are
+# reported in `drives` but not asserted. Add them once a target is defined.
 _DRIVE_HEALTH_THRESHOLDS: Dict[str, tuple[float, float]] = {
     "food": (0.80, 0.50),
 }
@@ -34,19 +30,15 @@ _DRIVE_HEALTH_THRESHOLDS: Dict[str, tuple[float, float]] = {
 # Survival commodity whose market must stay alive for the economy to function.
 _LIVENESS_COMMODITY = "food"
 
-# A drive instance is counted as "deprived" when its debt exceeds this.
+# A drive instance counts as deprived when its debt exceeds this.
 _DEPRIVED_DEBT = 0.80
 
 
 def compute_summary(sim: Simulation) -> Dict[str, object]:
     """Compute a compact KPI summary from a finished simulation.
 
-    Args:
-        sim: The simulation to summarize (after running its turns).
-
-    Returns:
-        A JSON-serializable dict of macro KPIs plus a ``verdict`` block.
-        Numeric values are rounded for compact, stable output.
+    Returns a JSON-serializable dict of macro KPIs plus a ``verdict`` block.
+    Numeric values are rounded for compact, stable output.
     """
     regular_actors = [a for a in sim.actors if a.actor_type == ActorType.REGULAR]
 
@@ -85,9 +77,9 @@ def _summarize_money(regular_actors: List) -> Dict[str, float]:
 def _summarize_drives(regular_actors: List) -> Dict[str, Dict[str, float]]:
     """Aggregate per-drive metrics across the population.
 
-    Returns a mapping of drive name -> {mean_health, mean_debt, pct_deprived},
-    where pct_deprived is the fraction of actors whose debt for that drive
-    exceeds the deprivation threshold.
+    Returns drive name to {mean_health, mean_debt, pct_deprived}, where
+    pct_deprived is the fraction of actors whose debt for that drive exceeds
+    `_DEPRIVED_DEBT`.
     """
     health: Dict[str, List[float]] = {}
     debt: Dict[str, List[float]] = {}
@@ -113,7 +105,7 @@ def _summarize_drives(regular_actors: List) -> Dict[str, Dict[str, float]]:
 
 
 def _summarize_inventory(sim: Simulation) -> Dict[str, int]:
-    """Sum every commodity held across all actors (population-wide stock)."""
+    """Population-wide stock: units of each commodity held across all actors."""
     totals: Dict[str, int] = {}
     for actor in sim.actors:
         for commodity, quantity in actor.inventory.commodities.items():
@@ -124,8 +116,8 @@ def _summarize_inventory(sim: Simulation) -> Dict[str, int]:
 def _summarize_prices(sim: Simulation) -> Dict[str, float]:
     """Mean 30-day average price per commodity, averaged across planet markets.
 
-    Commodities with no trading history on any market are omitted (rather
-    than reported as a misleading zero).
+    Commodities with no trading history on any market are omitted rather
+    than reported as zero.
     """
     per_commodity: Dict[str, List[float]] = {}
     for planet in sim.planets:
@@ -147,9 +139,8 @@ def _build_verdict(
     """Derive a coarse PASS/WARN/FAIL catastrophe verdict.
 
     Checks survival-drive health floors and that the survival commodity's
-    market is still trading. The overall status is the worst signal. Each
-    flag is human-readable so an agent can act on the verdict without
-    re-deriving it from the raw numbers.
+    market is still trading. The overall status is the worst signal. Flags
+    are human-readable so an agent can act without re-deriving them.
     """
     flags: List[str] = []
     status = "PASS"
@@ -166,7 +157,7 @@ def _build_verdict(
                 status = "WARN"
             flags.append(f"{name} health {mean_health:.2f} < {warn:.2f}")
 
-    # Market liveness: a frozen survival market is a catastrophic regression.
+    # A frozen survival market is a catastrophic regression.
     if _LIVENESS_COMMODITY not in prices:
         status = "FAIL"
         flags.append(f"no {_LIVENESS_COMMODITY} market activity (dead market)")

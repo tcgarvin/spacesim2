@@ -5,10 +5,10 @@ from spacesim2.core.simulation import Simulation
 
 
 class TestFictionalPlanets:
-    """Test the fictional planet generation system."""
+    """Fictional planet generation."""
 
     def test_generates_correct_number_of_planets(self):
-        """Test that the correct number of planets are generated."""
+        """setup_simple creates the requested number of planets."""
         sim = Simulation()
         sim.setup_simple(
             num_planets=5, num_regular_actors=1, num_market_makers=1, num_ships=1
@@ -17,7 +17,7 @@ class TestFictionalPlanets:
         assert len(sim.planets) == 5
 
     def test_planets_have_fictional_names(self):
-        """Test that planets have fictional names, not Sol system names."""
+        """Planet names are fictional, not Sol system names."""
         sim = Simulation()
         sim.setup_simple(
             num_planets=3, num_regular_actors=1, num_market_makers=1, num_ships=1
@@ -35,12 +35,11 @@ class TestFictionalPlanets:
         }
         planet_names = {planet.name for planet in sim.planets}
 
-        # Should have no overlap with Sol system names
         assert len(planet_names.intersection(sol_system_names)) == 0
 
     def test_minimum_distance_separation(self):
-        """Test that planets are at least 10 units apart."""
-        random.seed(42)  # For reproducible test
+        """Planets are at least 10 units apart."""
+        random.seed(42)
         sim = Simulation()
         sim.setup_simple(
             num_planets=4, num_regular_actors=1, num_market_makers=1, num_ships=1
@@ -49,7 +48,7 @@ class TestFictionalPlanets:
         min_distance = float("inf")
         for i, planet1 in enumerate(sim.planets):
             for j, planet2 in enumerate(sim.planets):
-                if i < j:  # Only check each pair once
+                if i < j:
                     distance = math.sqrt(
                         (planet1.x - planet2.x) ** 2 + (planet1.y - planet2.y) ** 2
                     )
@@ -60,7 +59,7 @@ class TestFictionalPlanets:
         )
 
     def test_planets_within_map_bounds(self):
-        """Test that all planets are within reasonable map bounds."""
+        """Planets lie within the galaxy bounds."""
         sim = Simulation()
         sim.setup_simple(
             num_planets=6, num_regular_actors=1, num_market_makers=1, num_ships=1
@@ -76,7 +75,7 @@ class TestFictionalPlanets:
             )
 
     def test_unique_planet_names(self):
-        """Test that all planet names are unique."""
+        """Planet names are unique."""
         sim = Simulation()
         sim.setup_simple(
             num_planets=8, num_regular_actors=1, num_market_makers=1, num_ships=1
@@ -88,19 +87,16 @@ class TestFictionalPlanets:
         )
 
     def test_position_generation_with_limited_space(self):
-        """Test that position generation handles cases where space is limited."""
-        # Test with many planets in small space - should still work but may generate fewer
+        """Crowded placement still keeps planets 10 units apart."""
         sim = Simulation()
 
-        # This should work but may generate fewer planets than requested if space is too constrained
+        # May place fewer planets than requested when space runs out.
         sim.setup_simple(
             num_planets=20, num_regular_actors=1, num_market_makers=1, num_ships=1
         )
 
-        # Should generate at least some planets
         assert len(sim.planets) > 0
 
-        # If multiple planets generated, check minimum distance
         if len(sim.planets) > 1:
             min_distance = float("inf")
             for i, planet1 in enumerate(sim.planets):

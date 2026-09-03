@@ -7,15 +7,13 @@ import yaml
 
 @dataclass(frozen=True, eq=False)
 class CommodityDefinition:
-    """Definition of a commodity in the simulation.
+    """Definition of a commodity.
 
-    Commodities are singletons owned by ``CommodityRegistry`` (each id is
-    constructed exactly once), so identity is the correct equality semantics.
-    ``eq=False`` makes the dataclass inherit ``object``'s identity-based
-    ``__hash__``/``__eq__`` instead of generating field-by-field versions. These
-    objects are used as dict keys on extremely hot paths (inventories, order
-    books, price histories); the generated hash re-hashed all four fields on
-    every lookup and dominated the profile. Identity hash is O(1) on the id().
+    Commodities are singletons owned by ``CommodityRegistry``, one object per
+    id, so identity is the right equality. ``eq=False`` keeps ``object``'s
+    identity ``__hash__``/``__eq__``. These objects are dict keys on hot paths
+    (inventories, order books, price histories), and a field-based hash would
+    rehash all four fields on every lookup.
     """
 
     id: str
@@ -32,10 +30,9 @@ class CommodityRegistry:
 
     def __init__(self) -> None:
         self._commodities: Dict[str, CommodityDefinition] = {}
-        # Cached snapshot returned by all_commodities(); rebuilt after any
-        # registration. The registry is append-only during setup and immutable
-        # afterward, so handing out one shared list is safe as long as callers
-        # never mutate it (see all_commodities docstring).
+        # Shared list returned by all_commodities(); dropped on registration.
+        # The registry is immutable after setup, so sharing is safe as long as
+        # callers never mutate it.
         self._all_cache: Optional[List[CommodityDefinition]] = None
 
     def load_from_file(self, filepath: str | Path) -> None:
@@ -66,10 +63,9 @@ class CommodityRegistry:
         return self._commodities.get(commodity_id)
 
     def all_commodities(self) -> List[CommodityDefinition]:
-        """Get all commodity definitions.
+        """All commodity definitions, as a cached shared list.
 
-        Returns a cached list (this is called thousands of times per turn on
-        hot paths). Callers must treat the returned list as read-only.
+        Called on hot paths every turn. Callers must not mutate the result.
         """
         if self._all_cache is None:
             self._all_cache = list(self._commodities.values())
@@ -86,19 +82,18 @@ class CommodityRegistry:
 class Inventory:
     """Manages an actor's inventory of commodities."""
 
-    # Class-level default so the attribute is part of the class contract
-    # (visible to Mock(spec=Inventory) in tests); instances shadow it.
+    # Class-level default so Mock(spec=Inventory) sees the attribute;
+    # instances shadow it.
     version: int = 0
 
     def __init__(self) -> None:
-        # Only store CommodityDefinition objects
         self.commodities: Dict[CommodityDefinition, int] = {}
         self.reserved_commodities: Dict[
             CommodityDefinition, int
         ] = {}  # For market orders
-        # Monotonic change counter, bumped on every mutation (add/remove/
-        # reserve/unreserve). Lets caches (see actor_brain.BrainCache) detect
-        # "inventory changed since I was computed" with one int comparison.
+        # Bumped on every mutation (add, remove, reserve, unreserve) so
+        # caches can detect a changed inventory with one int comparison.
+        # See actor_brain.BrainCache.
         self.version: int = 0
 
     def add_commodity(self, commodity: CommodityDefinition, quantity: int) -> None:
@@ -106,22 +101,18 @@ class Inventory:
         if quantity <= 0:
             return
 
-        # Only handle CommodityDefinition objects
         current_quantity = self.commodities.get(commodity, 0)
         self.commodities[commodity] = current_quantity + quantity
         self.version += 1
 
     def remove_commodity(self, commodity: CommodityDefinition, quantity: int) -> bool:
-        """
-        Remove a quantity of a commodity from the inventory.
+        """Remove a quantity of a commodity.
 
-        Returns:
-            bool: True if commodity was successfully removed, False if not enough available.
+        Returns False, removing nothing, if not enough is available.
         """
         if quantity <= 0:
             return True
 
-        # Only handle CommodityDefinition objects
         current_quantity = self.commodities.get(commodity, 0)
         if current_quantity < quantity:
             return False
@@ -129,31 +120,25 @@ class Inventory:
         self.commodities[commodity] = current_quantity - quantity
         self.version += 1
 
-        # Remove the entry if quantity is zero
         if self.commodities[commodity] == 0:
             del self.commodities[commodity]
 
         return True
 
     def reserve_commodity(self, commodity: CommodityDefinition, quantity: int) -> bool:
-        """Reserve a quantity of a commodity for a market order.
+        """Move a quantity from available to reserved for a market order.
 
-        Returns:
-            bool: True if reservation was successful, False if not enough available.
+        Returns False, reserving nothing, if not enough is available.
         """
-        # Only handle CommodityDefinition objects
         available = self.get_available_quantity(commodity)
         if available < quantity:
             return False
 
-        # Update actual inventory
         self.commodities[commodity] -= quantity
 
-        # Update reservation
         current_reserved = self.reserved_commodities.get(commodity, 0)
         self.reserved_commodities[commodity] = current_reserved + quantity
 
-        # Clean up if inventory is zero
         if self.commodities[commodity] == 0:
             del self.commodities[commodity]
 
@@ -163,59 +148,53 @@ class Inventory:
     def unreserve_commodity(
         self, commodity: CommodityDefinition, quantity: int
     ) -> None:
-        """Return a reserved commodity to available inventory."""
+        """Move a quantity from reserved back to available.
+
+        Unreserves at most what is currently reserved.
+        """
         if quantity <= 0:
             return
 
-        # Only handle CommodityDefinition objects
         current_reserved = self.reserved_commodities.get(commodity, 0)
         quantity_to_unreserve = min(quantity, current_reserved)
 
         if quantity_to_unreserve > 0:
-            # Update reservation
             self.reserved_commodities[commodity] = (
                 current_reserved - quantity_to_unreserve
             )
 
-            # Add back to available inventory
             current_quantity = self.commodities.get(commodity, 0)
             self.commodities[commodity] = current_quantity + quantity_to_unreserve
 
-            # Clean up if reserved is zero
             if self.reserved_commodities[commodity] == 0:
                 del self.reserved_commodities[commodity]
             self.version += 1
 
     def get_quantity(self, commodity: CommodityDefinition) -> int:
-        """Get the total quantity of a commodity in the inventory (available + reserved)."""
-        # Only handle CommodityDefinition objects
+        """Total quantity of a commodity, available plus reserved."""
         available = self.commodities.get(commodity, 0)
         reserved = self.reserved_commodities.get(commodity, 0)
         return available + reserved
 
     def get_available_quantity(self, commodity: CommodityDefinition) -> int:
-        """Get the available (unreserved) quantity of a commodity in the inventory."""
-        # Only handle CommodityDefinition objects
+        """Available (unreserved) quantity of a commodity."""
         return self.commodities.get(commodity, 0)
 
     def get_reserved_quantity(self, commodity: CommodityDefinition) -> int:
-        """Get the quantity of a commodity that is reserved for market orders."""
-        # Only handle CommodityDefinition objects
+        """Quantity of a commodity reserved for market orders."""
         return self.reserved_commodities.get(commodity, 0)
 
     def has_quantity(self, commodity: CommodityDefinition, quantity: int) -> bool:
-        """Check if the inventory has at least the specified quantity of a commodity (available only)."""
+        """Whether at least this much of a commodity is available (unreserved)."""
         return self.get_available_quantity(commodity) >= quantity
 
     def get_total_quantity(self) -> int:
-        """Get the total quantity of all commodities in the inventory (available + reserved)."""
+        """Total units across all commodities, available plus reserved."""
         total = 0
 
-        # Sum available quantities
         for quantity in self.commodities.values():
             total += quantity
 
-        # Sum reserved quantities
         for quantity in self.reserved_commodities.values():
             total += quantity
 

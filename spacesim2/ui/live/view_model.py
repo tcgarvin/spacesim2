@@ -1,11 +1,10 @@
 """Read-only adapters over :class:`Simulation` for the live view.
 
-This layer builds the small, immutable snapshots (plain dataclasses) that make
-up a :class:`~spacesim2.ui.live.frame.TurnFrame`, so rendering code never
-touches core objects directly and core stays free of any UI concerns. Every
-builder here reads live core objects and therefore runs only on the simulation
-worker thread (see ``worker.py``), never on the render thread. Nothing here
-mutates the simulation.
+Builds the small immutable snapshots that make up a
+:class:`~spacesim2.ui.live.frame.TurnFrame`, so rendering code never touches
+core objects and core stays free of UI concerns. Every builder reads live core
+objects, so it runs only on the simulation worker thread (see ``worker.py``),
+never on the render thread. Nothing here mutates the simulation.
 """
 
 from __future__ import annotations
@@ -44,11 +43,11 @@ class ShipSnapshot:
     """Immutable per-frame view of a ship.
 
     For a docked ship ``origin == dest == its planet`` and ``waypoints`` is the
-    single dock position. For a traveling ship the core keeps ``ship.planet`` as
-    the origin and ``ship.destination`` as the target while ``progress``
-    advances 0->1 (see ``core/ship.py``); ``waypoints`` is the lane route being
-    flown (origin first, destination last) and the renderer interpolates
-    position along that polyline by arc length.
+    single dock position. For a traveling ship the core keeps ``ship.planet``
+    as the origin and ``ship.destination`` as the target while ``progress``
+    advances 0 to 1 (see ``core/ship.py``). ``waypoints`` is the lane route,
+    origin first and destination last; the renderer interpolates position
+    along it by arc length.
     """
 
     name: str
@@ -130,10 +129,9 @@ class ShipDetail:
 def planet_wellbeing(planet: Planet) -> float:
     """Mean welfare of resident regular actors, in [0, 1].
 
-    Averages each actor's drive scores (``drive.metrics.get_score()``), then
-    averages across actors. Market makers are excluded — they are economic
-    plumbing, not colonists whose wellbeing we care about. Returns 0.0 when the
-    planet has no regular actors.
+    Averages each actor's ``drive.metrics.get_score()`` values, then averages
+    across actors. Market makers are excluded. Returns 0.0 when the planet has
+    no regular actors.
     """
     scores: List[float] = []
     for actor in planet.actors:
@@ -153,9 +151,8 @@ def planet_wellbeing(planet: Planet) -> float:
 def planet_wellbeing_by_name(sim: Simulation) -> Dict[str, float]:
     """One sweep over every actor's drives, keyed by planet name.
 
-    This is the expensive part of snapshotting a large galaxy (5k actors x 4
-    drives at the 100-planet default), so it is done once per turn and shared
-    by the frame builder and the history recorder.
+    This is the expensive part of snapshotting a large galaxy, so it runs once
+    per turn and the frame builder and history recorder share the result.
     """
     return {p.name: planet_wellbeing(p) for p in sim.planets}
 
@@ -167,8 +164,8 @@ def _regular_population(planet: Planet) -> int:
 def _drive_stats(planet: Planet) -> Tuple[DriveStat, ...]:
     """Per-drive mean and worst score across the planet's regular actors.
 
-    Grouped by drive name so the panel shows one row per need (Food, Clothing,
-    ...) regardless of how many actors carry it.
+    Grouped by drive name so the panel shows one row per need regardless of
+    how many actors carry it.
     """
     scores_by_name: dict[str, List[float]] = {}
     for actor in planet.actors:
@@ -249,8 +246,8 @@ def ship_detail(ship: Ship, sim: Simulation) -> ShipDetail:
 
     if ship.status == ShipStatus.TRAVELING and ship.destination is not None:
         status = "traveling"
-        # Full lane route when the core recorded one, else the bare endpoints
-        # (tests force travel states without going through start_journey).
+        # Full lane route when the core recorded one, else the bare endpoints.
+        # Tests force travel states without going through start_journey.
         if ship.route:
             names = [p.name for p in ship.route]
         else:
@@ -279,8 +276,8 @@ def ship_detail(ship: Ship, sim: Simulation) -> ShipDetail:
 def _ship_snapshot(ship: Ship, fallback_pos: Tuple[float, float]) -> ShipSnapshot:
     traveling = ship.status == ShipStatus.TRAVELING and ship.destination is not None
     origin_planet = ship.planet
-    # A ship with no planet at all (never docked) is parked at ``fallback_pos``,
-    # the galaxy center, rather than a fixed map coordinate.
+    # A ship that has never docked is parked at ``fallback_pos``, the galaxy
+    # center.
     origin = origin_planet.get_position() if origin_planet is not None else fallback_pos
     if traveling and ship.destination is not None:
         dest = ship.destination.get_position()
@@ -308,8 +305,8 @@ class GalaxyViewModel:
 
     def __init__(self, simulation: Simulation) -> None:
         self._sim = simulation
-        # Lanes are fixed for the life of a galaxy; cache keyed on lane count
-        # so a rebuilt network (tests, future dynamic lanes) is picked up.
+        # Lanes are fixed for the life of a galaxy. The cache is keyed on lane
+        # count so a rebuilt network is picked up.
         self._lanes_cache: List[LaneSnapshot] = []
         self._lanes_cache_count = -1
 
@@ -337,8 +334,8 @@ class GalaxyViewModel:
         """Per-planet snapshots using a precomputed wellbeing sweep.
 
         Callers pass the result of :func:`planet_wellbeing_by_name` so the
-        actor sweep happens exactly once per turn; a planet missing from the
-        map (added after the sweep) reads as 0.0.
+        actor sweep happens once per turn. A planet missing from the map reads
+        as 0.0.
         """
         return [
             PlanetSnapshot(

@@ -1,7 +1,7 @@
-"""Tests for the threaded per-planet actor phase (core/parallel.py).
+"""Tests for the threaded per-planet actor phase in core/parallel.py.
 
-These run correctly (if without speedup) on GIL-enabled interpreters, so the
-suite exercises the threaded path everywhere.
+The threaded path also runs correctly, without speedup, on GIL-enabled
+interpreters, so these tests run everywhere.
 """
 
 import pytest
@@ -50,11 +50,10 @@ def test_order_ids_unique_across_markets() -> None:
 
 
 def test_threaded_matches_serial_macro_shape() -> None:
-    """Threaded and serial runs land in the same coarse macro state.
+    """A threaded run reaches the same coarse macro state as a serial one.
 
-    The sim is stochastic, so only order-of-magnitude properties are
-    asserted: everyone acted, money is conserved as a positive quantity,
-    and markets saw orders.
+    The sim is stochastic, so only coarse properties are asserted: everyone
+    acted, total money is positive, and markets saw orders.
     """
     sim = _setup(workers=2)
     for _ in range(10):

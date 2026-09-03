@@ -9,13 +9,13 @@ from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
 
 @dataclass
 class ResourceAttribute:
-    """Configuration for how planet resource availability affects a process.
+    """How a planet attribute affects a gathering process.
 
-    Used by gathering processes to specify which planet attribute affects
-    the process and how (success probability vs output quantity).
+    Names the attribute to read and whether it scales success probability
+    or output quantity.
     """
 
-    commodity: str  # The commodity ID whose availability affects this process
+    commodity: str  # Planet attribute to read, by commodity id
     effect: str  # "success" or "output"
 
     def __post_init__(self) -> None:
@@ -33,22 +33,20 @@ class ProcessDefinition:
 
     id: str
     name: str
-    inputs: Dict[CommodityDefinition, int]  # CommodityDefinition -> quantity
-    outputs: Dict[CommodityDefinition, int]  # CommodityDefinition -> quantity
-    tools_required: List[CommodityDefinition]  # List of CommodityDefinition for tools
+    inputs: Dict[CommodityDefinition, int]
+    outputs: Dict[CommodityDefinition, int]
+    tools_required: List[CommodityDefinition]
     facilities_required: List[
         CommodityDefinition
     ]  # List of CommodityDefinition for facilities
     labor: int
     description: str
-    # Skills that are relevant to this process
     relevant_skills: List[str] = field(default_factory=list)
-    # Optional resource attribute configuration for gathering processes
+    # Only gathering processes set this.
     resource_attribute: Optional[ResourceAttribute] = None
-    # Precomputed, read-only flattenings of the fields above, built once at
-    # construction for hot scan loops (definitions are immutable after
-    # registry load, so these can never go stale):
-    # inputs/outputs as (commodity, quantity) tuples — avoids a fresh
+    # Read-only flattenings of the fields above, built once for hot scan
+    # loops. Definitions are immutable after registry load, so they never go
+    # stale. inputs/outputs as (commodity, quantity) tuples save a fresh
     # dict.items() view per process per scan.
     inputs_items: Tuple[Tuple[CommodityDefinition, int], ...] = field(
         init=False, repr=False
@@ -56,8 +54,8 @@ class ProcessDefinition:
     outputs_items: Tuple[Tuple[CommodityDefinition, int], ...] = field(
         init=False, repr=False
     )
-    # Everything Actor.can_execute checks, in its exact order: inputs at
-    # their quantities, then tools and facilities at quantity 1.
+    # Everything Actor.can_execute checks, in check order: inputs at their
+    # quantities, then tools and facilities at quantity 1.
     requirements: Tuple[Tuple[CommodityDefinition, int], ...] = field(
         init=False, repr=False
     )
@@ -81,9 +79,8 @@ class ProcessRegistry:
     def __init__(self, commodity_registry: CommodityRegistry):
         self._processes: Dict[str, ProcessDefinition] = {}
         self._commodity_registry = commodity_registry
-        # Lazily built caches. The registry is populated during setup and
-        # immutable afterward; both caches are dropped whenever a load adds
-        # processes, and rebuilt on next access. Returned lists are shared —
+        # Lazily built caches, dropped whenever a load adds processes. The
+        # registry is immutable after setup. Returned lists are shared, so
         # callers must treat them as read-only.
         self._all_cache: Optional[List[ProcessDefinition]] = None
         self._producers_index: Optional[Dict[str, List[ProcessDefinition]]] = None
@@ -95,14 +92,13 @@ class ProcessRegistry:
                 processes_data = yaml.safe_load(f)
 
             for process_data in processes_data:
-                # Convert string commodity IDs to CommodityDefinition objects
+                # Resolve commodity ids to definitions; unknown ids are skipped.
                 inputs = {}
                 for commodity_id, quantity in process_data["inputs"].items():
                     commodity = self._commodity_registry.get_commodity(commodity_id)
                     if commodity:
                         inputs[commodity] = quantity
                     else:
-                        # Skip inputs with unknown commodities
                         print(
                             f"Warning: Skipping unknown commodity ID '{commodity_id}' in process inputs"
                         )
@@ -113,7 +109,6 @@ class ProcessRegistry:
                     if commodity:
                         outputs[commodity] = quantity
                     else:
-                        # Skip outputs with unknown commodities
                         print(
                             f"Warning: Skipping unknown commodity ID '{commodity_id}' in process outputs"
                         )
@@ -124,7 +119,6 @@ class ProcessRegistry:
                     if commodity:
                         tools_required.append(commodity)
                     else:
-                        # Skip unknown tools
                         print(
                             f"Warning: Skipping unknown commodity ID '{commodity_id}' in process tools required"
                         )
@@ -135,15 +129,12 @@ class ProcessRegistry:
                     if commodity:
                         facilities_required.append(commodity)
                     else:
-                        # Skip unknown facilities
                         print(
                             f"Warning: Skipping unknown commodity ID '{commodity_id}' in process facilities required"
                         )
 
-                # Get relevant skills with default empty list if not present
                 relevant_skills = process_data.get("relevant_skills", [])
 
-                # Parse resource_attribute if present
                 resource_attribute = None
                 if "resource_attribute" in process_data:
                     ra_data = process_data["resource_attribute"]
@@ -175,10 +166,9 @@ class ProcessRegistry:
         return self._processes.get(process_id)
 
     def all_processes(self) -> List[ProcessDefinition]:
-        """Get all process definitions.
+        """All process definitions, as a cached shared list.
 
-        Returns a cached list (this is called on hot decision paths every
-        turn). Callers must treat the returned list as read-only.
+        Called on hot decision paths every turn. Callers must not mutate it.
         """
         if self._all_cache is None:
             self._all_cache = list(self._processes.values())
@@ -187,15 +177,11 @@ class ProcessRegistry:
     def get_processes_producing(
         self, commodity: CommodityDefinition
     ) -> List[ProcessDefinition]:
-        """Get all processes that produce a specific commodity.
+        """Processes that output the given commodity.
 
-        Backed by a commodity-id -> producers index built once per registry
-        load, so lookups are O(1) instead of a full registry scan. The
-        returned list is shared with the index; callers must treat it as
-        read-only.
-
-        Args:
-            commodity: A CommodityDefinition object
+        Backed by a commodity-id to producers index built once per registry
+        load, so lookups are O(1). The returned list is shared with the
+        index; callers must not mutate it.
         """
         if self._producers_index is None:
             index: Dict[str, List[ProcessDefinition]] = {}

@@ -17,7 +17,7 @@ def value_noise(width: int, height: int, cells: int, seed: int) -> np.ndarray:
     """Value noise in [0, 1] on a ``height x width`` grid.
 
     ``cells`` controls feature size: the lattice is ``cells x cells`` random
-    values bilinearly interpolated (with smoothstep) across the image.
+    values interpolated with smoothstep across the image.
     """
     rng = np.random.default_rng(seed)
     lattice = rng.random((cells + 1, cells + 1))
@@ -47,7 +47,7 @@ def value_noise(width: int, height: int, cells: int, seed: int) -> np.ndarray:
 def fbm(
     width: int, height: int, octaves: int = 5, seed: int = 0, base_cells: int = 3
 ) -> np.ndarray:
-    """Fractal Brownian motion: summed octaves of value noise, normalized [0, 1]."""
+    """Fractal Brownian motion: summed value-noise octaves, normalized to [0, 1]."""
     total = np.zeros((height, width), dtype=np.float64)
     amplitude = 1.0
     cells = base_cells

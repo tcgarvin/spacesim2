@@ -5,7 +5,7 @@ from spacesim2.core.drives.actor_drive import ActorDrive, DriveMetrics, log_norm
 DAILY_CONSUMPTION = 1
 DEBT_DECAY_FACTOR = 0.8
 QUALITY_DEBT_DECAY_FACTOR = 0.5
-DEBT_MISS_PENALTY = 0.2  # decay vs penalty should keep us lte 1.0 always.
+DEBT_MISS_PENALTY = 0.2  # with 0.8 decay, steady-state debt is <= 1.0
 PANTRY_TARGET = 7.0
 PANTRY_MAX = 30.0
 URGENCY = 1
@@ -17,7 +17,7 @@ class FoodDriveMetrics(DriveMetrics):
         return DRIVE_NAME
 
     def get_score(self) -> float:
-        # Score is based wholy on hunger as measured by the debt metric.
+        # Score is hunger, measured by debt.
         return 1 - self.debt
 
 
@@ -46,7 +46,7 @@ class FoodDrive(ActorDrive):
         return self.TARGET_UNITS
 
     def tick(self, actor: Actor) -> DriveMetrics:
-        # Try quality food first, fall back to basic
+        # Quality food first.
         did_eat = False
         ate_quality = False
         if self.quality_commodity and actor.inventory.remove_commodity(
@@ -58,7 +58,7 @@ class FoodDrive(ActorDrive):
             did_eat = True
         actor.food_consumed_this_turn = did_eat
 
-        # Count both food types for buffer calculation
+        # Buffer counts both food types.
         remaining = actor.inventory.get_available_quantity(self.food_commodity)
         if self.quality_commodity:
             remaining += actor.inventory.get_available_quantity(self.quality_commodity)

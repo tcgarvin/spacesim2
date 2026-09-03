@@ -17,14 +17,6 @@ from spacesim2.core.commodity import CommodityDefinition
 if TYPE_CHECKING:
     from spacesim2.core.market import Market, Transaction
 
-# Assumed available from your codebase:
-# - ActorBrain, Actor
-# - PlaceBuyOrderCommand, PlaceSellOrderCommand, CancelOrderCommand
-# - GovernmentWorkCommand
-# - CommodityDefinition
-# - EconomicCommand, MarketCommand
-
-
 # ---- Maker internal state ----------------------------------------------------
 
 Phase = Literal["DISCOVERY", "MAKER"]
@@ -32,15 +24,13 @@ Phase = Literal["DISCOVERY", "MAKER"]
 
 @dataclass
 class MarketMakerState:
-    """
-    Per-commodity state for the market maker.
+    """Per-commodity state for the market maker.
 
     Discovery tracks a conservative price bracket [lower_bound, upper_bound].
-    - If we BUY (our bid fills), sellers exist at ≤ price  -> tighten upper_bound.
-    - If we SELL (our ask fills), buyers exist at ≥ price -> raise lower_bound.
-
-    Once the bracket is tight enough (or enough trades observed), we compute a
-    discovered midpoint and switch to MAKER mode.
+    A filled bid means sellers exist at or below its price, which tightens
+    upper_bound. A filled ask means buyers exist at or above its price, which
+    raises lower_bound. Once the bracket is tight enough or enough trades are
+    seen, the midpoint is recorded and the phase switches to MAKER.
     """
 
     phase: Phase = "DISCOVERY"
@@ -49,20 +39,19 @@ class MarketMakerState:
     lower_bound: int = 1  # buyers exist at ≥ lower_bound
     upper_bound: Optional[int] = None  # sellers exist at ≤ upper_bound
 
-    # Last discovery quotes we placed (1-unit probes)
+    # Last discovery probes placed, 1 unit each
     last_bid_quote: Optional[int] = None
     last_ask_quote: Optional[int] = None
 
-    # Last observed fill prices on each side (for transition checks)
+    # Last fill price on each side; used for phase transitions
     last_bid_filled_price: Optional[int] = None
     last_ask_filled_price: Optional[int] = None
 
-    # Counters and regime info
     trades_seen: int = 0
     quiet_ticks: int = 0
     last_sigma: Optional[float] = None
 
-    # Seed for maker mode (midpoint discovered during discovery phase)
+    # Midpoint found in discovery; seeds maker mode
     discovered_midpoint: Optional[int] = None
 
 
@@ -70,34 +59,31 @@ class MarketMakerState:
 
 
 class MarketMakerBrain(ActorBrain):
-    """
-    Liquidity-first market maker with:
-      • No-defaults discovery (1-unit geometric probes) to establish a bracket.
-      • Maker mode (mid ± spread ladder with light inventory skew).
-      • Real fills via market.get_actor_transaction_history(actor) + cursor.
+    """Liquidity-first market maker.
 
-    Design goals: simplicity, readability, solvency, and stable liquidity.
+    Discovery mode posts 1-unit geometric probes, with no price defaults, to
+    establish a bracket. Maker mode quotes a ladder around mid plus or minus
+    spread with light inventory skew. Fills are read from
+    market.get_actor_transaction_history(actor) through a cursor. Goals:
+    simplicity, solvency, and stable liquidity.
     """
 
-    # ----------------------------
-    # Tunables (kept simple)
-    # ----------------------------
+    # Tunables
     LADDER_LEVELS: int = 5  # depth per side in MAKER
-    # Fraction of the wallet the maker is willing to commit to the BUY side in
-    # aggregate. This pool is split *evenly across every market served* (see
-    # decide_market_actions), so the long tail of illiquid commodities each gets
-    # a real, bounded allocation instead of being starved by whichever markets
-    # happen to be iterated first.
+    # Fraction of the wallet committed to the buy side in aggregate. The pool
+    # is split evenly across every market served (see decide_market_actions),
+    # so illiquid commodities get a real, bounded allocation instead of being
+    # starved by whichever markets are iterated first.
     BUY_CAPITAL_FRACTION: float = 0.70
     VOLATILITY_WIDENER: float = 0.5  # widen spread by (1 + VOL * sigma/mid)
-    INVENTORY_SKEW_CAP: float = 0.50  # cap skew at ±10% of mid
+    INVENTORY_SKEW_CAP: float = 0.50  # cap skew at ±50% of mid
     MAX_NOTIONAL_FRACTION: float = 0.60  # cap exposure vs. cash-only net worth
     MIN_ORDER_QUANTITY: int = 1
 
     # Discovery behavior
-    # Ceiling on the price we are willing to probe up to while seeding a market
-    # with no trade history. Keeps the maker from bidding illiquid goods to
-    # arbitrary highs; the first organic fill then tightens the bracket.
+    # Highest price probed while seeding a market with no trade history. Keeps
+    # the maker from bidding illiquid goods to arbitrary highs; the first fill
+    # then tightens the bracket.
     DISCOVERY_PRICE_CEILING: int = 15
     DISCOVERY_TIGHTNESS_EPSILON: int = 2  # switch to maker when U-L <= epsilon
     DISCOVERY_MIN_TRADES: int = 6  # or after N total fills (any side)
@@ -110,19 +96,19 @@ class MarketMakerBrain(ActorBrain):
 
     def __init__(self) -> None:
         super().__init__()
-        # Randomized base spread percentage (now actually used)
+        # Base spread percentage, randomized per maker.
         self.spread_percentage: float = random.uniform(0.10, 0.30)
 
-        # Per-commodity state (by commodity name)
+        # Per-commodity state, keyed by commodity name.
         self._state: Dict[str, MarketMakerState] = {}
 
-        # Cursor into the actor's transaction history (acts like get_and_clear)
+        # Cursor into the actor's transaction history.
         self._last_transaction_index: int = 0
 
     # -------- Required interface ---------------------------------------------
 
     def decide_economic_action(self, actor: Actor) -> Optional["EconomicCommand"]:
-        """Market makers only do government work in your sim."""
+        """Market makers only do government work."""
         return GovernmentWorkCommand()
 
     def decide_market_actions(self, actor: Actor) -> List["MarketCommand"]:
@@ -133,30 +119,27 @@ class MarketMakerBrain(ActorBrain):
         market = actor.planet.market
         commands: List["MarketCommand"] = []
 
-        # Simple cancel/replace (no fees + one maker → acceptable)
+        # Cancel and replace every turn. There are no fees and one maker.
         existing_orders = market.get_actor_orders(actor)
         for order in existing_orders["buy"] + existing_orders["sell"]:
             commands.append(CancelOrderCommand(order.order_id))
 
-        # Ingest NEW transactions and group by commodity + side
         new_fills_by_commodity = self._consume_new_transactions(actor, market)
 
-        # Market maker trades all transportable commodities
         all_commodities = [
             c for c in actor.sim.commodity_registry.all_commodities() if c.transportable
         ]
 
-        # Split the buy-side capital pool evenly across every market so each one
-        # — liquid or not — gets a bounded share. Because the total requested
-        # never exceeds BUY_CAPITAL_FRACTION of the wallet, sequential order
-        # execution (which reserves cash per order) can't starve later markets.
+        # Split the buy-side pool evenly across every market so each gets a
+        # bounded share. The total requested never exceeds BUY_CAPITAL_FRACTION
+        # of the wallet, so sequential order execution, which reserves cash per
+        # order, cannot starve later markets.
         num_markets = max(1, len(all_commodities))
         per_market_budget = (actor.money * self.BUY_CAPITAL_FRACTION) / num_markets
 
         for commodity in all_commodities:
             state = self._ensure_state_for(commodity)
 
-            # Update state from real fills (tighten bracket, decide phase transitions)
             self._apply_fills_to_state(actor, commodity, state, new_fills_by_commodity)
 
             if state.phase == "DISCOVERY":
@@ -177,22 +160,14 @@ class MarketMakerBrain(ActorBrain):
     def _consume_new_transactions(
         self, actor: Actor, market: "Market"
     ) -> Dict[str, Dict[str, List[int]]]:
-        """
-        Read the actor's full transaction history, slice out only the NEW items since
-        the last tick, and group prices by commodity and our side of the trade.
+        """Group the actor's new fills since the last tick by commodity and side.
 
-        Returns:
-            {
-              "<commodity_name>": {
-                "buy_prices":  [prices where WE bought],
-                "sell_prices": [prices where WE sold]
-              },
-              ...
-            }
+        Returns ``{commodity_name: {"buy_prices": [...], "sell_prices": [...]}}``
+        with the prices at which we bought and sold.
         """
         history: List[Transaction] = market.get_actor_transaction_history(actor) or []
 
-        # Handle any history resets conservatively
+        # History was reset.
         if self._last_transaction_index > len(history):
             self._last_transaction_index = 0
 
@@ -206,7 +181,7 @@ class MarketMakerBrain(ActorBrain):
             elif txn.seller is actor:
                 side = "sell"
             else:
-                continue  # not our fill (shouldn't happen)
+                continue  # not our fill
 
             commodity_name = getattr(
                 txn.commodity_type, "name", str(txn.commodity_type)
@@ -239,7 +214,7 @@ class MarketMakerBrain(ActorBrain):
 
         if state.phase == "DISCOVERY":
             if price_lists:
-                # If we BOUGHT, sellers exist at ≤ max(buy_fills)  → tighten upper_bound
+                # We bought: sellers exist at or below max(buy_fills).
                 if price_lists["buy_prices"]:
                     max_bid_fill = max(price_lists["buy_prices"])
                     state.upper_bound = (
@@ -250,14 +225,14 @@ class MarketMakerBrain(ActorBrain):
                     state.last_bid_filled_price = max_bid_fill
                     state.trades_seen += 1
 
-                # If we SOLD, buyers exist at ≥ min(sell_fills) → raise lower_bound
+                # We sold: buyers exist at or above min(sell_fills).
                 if price_lists["sell_prices"]:
                     min_ask_fill = min(price_lists["sell_prices"])
                     state.lower_bound = max(state.lower_bound, min_ask_fill)
                     state.last_ask_filled_price = min_ask_fill
                     state.trades_seen += 1
 
-                # Transition to MAKER when bracket is tight or enough trades observed
+                # Switch to MAKER when the bracket is tight or enough trades seen.
                 if (
                     state.last_bid_filled_price is not None
                     and state.last_ask_filled_price is not None
@@ -271,7 +246,8 @@ class MarketMakerBrain(ActorBrain):
                         ) // 2
                         state.phase = "MAKER"
                     elif state.trades_seen >= self.DISCOVERY_MIN_TRADES:
-                        # If we never observed an upper bound, synthesize from the last bid quote
+                        # No upper bound observed: synthesize one from the last
+                        # bid quote.
                         synthetic_upper = (
                             state.upper_bound
                             if state.upper_bound is not None
@@ -285,7 +261,7 @@ class MarketMakerBrain(ActorBrain):
                         ) // 2
                         state.phase = "MAKER"
 
-            state.last_sigma = sigma  # track regime for later spike detection
+            state.last_sigma = sigma  # for spike detection
 
         else:  # MAKER
             any_fill = bool(
@@ -294,7 +270,7 @@ class MarketMakerBrain(ActorBrain):
             )
             state.quiet_ticks = 0 if any_fill else (state.quiet_ticks + 1)
 
-            # Revert to discovery if quiet too long or volatility spikes sharply
+            # Revert to discovery if quiet too long or volatility spikes.
             revert_to_discovery = False
             if state.quiet_ticks >= self.REVERT_IF_QUIET_TICKS:
                 revert_to_discovery = True
@@ -309,7 +285,7 @@ class MarketMakerBrain(ActorBrain):
 
             if revert_to_discovery:
                 state.phase = "DISCOVERY"
-                # Preserve the bracket we discovered; clear quotes so we probe anew
+                # Keep the bracket; clear quotes so probing restarts.
                 state.last_bid_quote = None
                 state.last_ask_quote = None
                 state.trades_seen = 0
@@ -317,7 +293,7 @@ class MarketMakerBrain(ActorBrain):
     # -------- State helpers ---------------------------------------------------
 
     def _ensure_state_for(self, commodity: "CommodityDefinition") -> MarketMakerState:
-        """Return (and create if needed) the state object for this commodity."""
+        """Return the state for this commodity, creating it if needed."""
         commodity_name = getattr(commodity, "name", str(commodity))
         if commodity_name not in self._state:
             self._state[commodity_name] = MarketMakerState(
@@ -344,20 +320,20 @@ class MarketMakerBrain(ActorBrain):
         state: MarketMakerState,
         per_market_budget: float,
     ) -> List["MarketCommand"]:
-        """
-        Post 1-unit geometric probes to establish a conservative price bracket.
-        - Bid starts at lower_bound and doubles if unfilled (capped by upper_bound).
-        - Ask starts at upper_bound (or lower_bound+1) and halves if unfilled (floored at lower_bound+1).
+        """Post 1-unit geometric probes to establish a conservative bracket.
+
+        The bid starts at lower_bound and doubles while unfilled, capped by
+        upper_bound. The ask starts at upper_bound, or lower_bound+1, and
+        halves while unfilled, floored at lower_bound+1.
         """
         commands: List["MarketCommand"] = []
-        # The probe budget is this market's share of the buy-capital pool. It must
-        # be able to afford a single unit up to DISCOVERY_PRICE_CEILING, otherwise
-        # the maker can never bid high enough to attract the first seller and the
-        # market stays permanently dead.
+        # The probe budget is this market's share of the buy pool. It must
+        # afford one unit up to DISCOVERY_PRICE_CEILING, or the maker can never
+        # bid high enough to attract the first seller and the market stays dead.
         per_tick_probe_budget = max(self.MIN_PRICE, int(per_market_budget))
 
-        # Cap how high we will probe so seeding an illiquid market can't bid it to
-        # arbitrary highs; the first real fill then tightens the bracket downward.
+        # Cap how high to probe so seeding an illiquid market cannot bid it to
+        # arbitrary highs. The first real fill tightens the bracket.
         probe_ceiling = max(self.MIN_ASK_PRICE, self.DISCOVERY_PRICE_CEILING)
 
         # Initialize the upper bound to the affordable share of our ceiling.
@@ -370,7 +346,7 @@ class MarketMakerBrain(ActorBrain):
         upper_bound = state.upper_bound
         has_inventory = actor.inventory.get_quantity(commodity) > 0
 
-        # --- Probe bid (1 unit) ---
+        # Probe bid, 1 unit.
         if per_tick_probe_budget >= max(self.MIN_PRICE, lower_bound):
             next_bid = (
                 state.last_bid_quote
@@ -378,14 +354,14 @@ class MarketMakerBrain(ActorBrain):
                 else lower_bound
             )
             if state.last_bid_quote is not None:
-                # Geometric raise if previous bid didn't fill
+                # Previous bid did not fill: double.
                 next_bid = min(upper_bound, max(lower_bound, state.last_bid_quote * 2))
             state.last_bid_quote = next_bid
 
             if per_tick_probe_budget >= next_bid:
                 commands.append(PlaceBuyOrderCommand(commodity, 1, next_bid))
 
-        # --- Probe ask (1 unit) if we have inventory ---
+        # Probe ask, 1 unit, only with inventory.
         if has_inventory:
             next_ask = (
                 state.last_ask_quote
@@ -393,7 +369,7 @@ class MarketMakerBrain(ActorBrain):
                 else max(lower_bound + 1, upper_bound)
             )
             if state.last_ask_quote is not None:
-                # Geometric lower if previous ask didn't fill
+                # Previous ask did not fill: halve.
                 next_ask = max(
                     lower_bound + 1, min(upper_bound, state.last_ask_quote // 2)
                 )
@@ -412,12 +388,10 @@ class MarketMakerBrain(ActorBrain):
         state: MarketMakerState,
         per_market_budget: float,
     ) -> List["MarketCommand"]:
-        """
-        Quote a small ladder around a volatility‑adjusted, inventory‑skewed midpoint.
-        """
+        """Quote a ladder around a volatility-adjusted, inventory-skewed midpoint."""
         commands: List["MarketCommand"] = []
 
-        # --- Midpoint: blend discovered midpoint with rolling average if available ---
+        # Midpoint blends the discovered midpoint with the rolling average.
         midpoint = (
             state.discovered_midpoint
             if state.discovered_midpoint is not None
@@ -435,7 +409,7 @@ class MarketMakerBrain(ActorBrain):
                 )
         midpoint = max(self.MIN_PRICE, midpoint)
 
-        # --- Spread with volatility widener ---
+        # Spread, widened by volatility.
         half_spread = max(
             1,
             int(
@@ -445,14 +419,13 @@ class MarketMakerBrain(ActorBrain):
             ),
         )
 
-        # --- Inventory-aware skew of the quoted midpoint ---
         current_inventory = actor.inventory.get_quantity(commodity)
         target_inventory = self._target_inventory(market, commodity)
         quoted_midpoint = self._apply_inventory_skew(
             midpoint, current_inventory, target_inventory
         )
 
-        # --- Build evenly spaced ladders ---
+        # Evenly spaced ladders.
         levels = self.LADDER_LEVELS
         step = max(1, half_spread // levels)
 
@@ -465,14 +438,14 @@ class MarketMakerBrain(ActorBrain):
             for i in range(levels)
         ]
 
-        # --- Exposure cap versus cash-only net worth (kept simple) ---
+        # Exposure cap versus cash-only net worth.
         cash_net_worth = max(1, actor.money)
         max_notional_per_commodity = self.MAX_NOTIONAL_FRACTION * cash_net_worth
 
-        # --- SELL: distribute current inventory across asks (front‑load near touch) ---
+        # Sell: spread inventory across asks, front-loaded near the touch.
         if current_inventory > 0:
             remaining_inventory = current_inventory
-            weights = [levels - i for i in range(levels)]  # front-load near the touch
+            weights = [levels - i for i in range(levels)]
             weight_sum = sum(weights)
 
             for level_index, price in enumerate(ask_prices):
@@ -489,7 +462,7 @@ class MarketMakerBrain(ActorBrain):
                     )
                     remaining_inventory -= allocated_quantity
 
-        # --- BUY: allocate this market's share of the buy pool (front‑load) ---
+        # Buy: allocate this market's share of the pool, front-loaded.
         cash_budget = int(per_market_budget)
         if cash_budget > 0 and max_notional_per_commodity > 0:
             remaining_funds = min(cash_budget, int(max_notional_per_commodity))
@@ -499,7 +472,7 @@ class MarketMakerBrain(ActorBrain):
             for level_index, price in enumerate(bid_prices):
                 if remaining_funds < price:
                     break
-                # Size roughly proportional to quoted_midpoint/price and the weight
+                # Size scales with weight and quoted_midpoint/price.
                 base_units = max(
                     self.MIN_ORDER_QUANTITY,
                     (weights[level_index] * quoted_midpoint)
@@ -517,20 +490,18 @@ class MarketMakerBrain(ActorBrain):
     def _target_inventory(
         self, market: "Market", commodity: "CommodityDefinition"
     ) -> int:
-        """Desired inventory ≈ 30 days of average flow (or small neutral target if thin history)."""
+        """Desired inventory: 30 days of average flow, or a neutral target when
+        history is thin."""
         if market.has_history(commodity):
             average_volume = market.get_30_day_average_volume(commodity) or 0
             average_volume = max(1, int(average_volume))
             return average_volume * 30 + 1
-        return 25  # neutral target when history is thin; not a price default
+        return 25  # neutral target; not a price default
 
     def _apply_inventory_skew(
         self, midpoint: int, current_qty: int, target_qty: int
     ) -> int:
-        """
-        Lightly skew the quoted midpoint based on inventory imbalance:
-        - Over-inventoried → skew down; Under-inventoried → skew up.
-        """
+        """Skew the quoted midpoint down when over-inventoried, up when under."""
         if target_qty <= 0:
             return midpoint
         ratio = current_qty / target_qty  # 1.0 == on-target

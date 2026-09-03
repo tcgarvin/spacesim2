@@ -1,10 +1,10 @@
-# SpaceSim2 Analysis Notebooks
+# Analysis Notebooks
 
-This directory holds two kinds of files: **Tier-1 analysis scripts** (plain
-Python, run via `dev analyze`) and one **marimo dashboard** for interactive
-human exploration. See the `sim-evaluation` skill for the full tier model.
+This directory holds Tier-1 analysis scripts (plain Python, run with
+`dev analyze`) and one marimo dashboard. The `sim-evaluation` skill explains
+the tiers.
 
-## Tier-1 Analysis Scripts
+## Tier-1 analysis scripts
 
 Plain scripts that print small aggregates and save figures to `tmp/`. Start
 from the template:
@@ -15,17 +15,16 @@ cp notebooks/scratch_template.py notebooks/my_question.py
 uv run spacesim2 dev analyze notebooks/my_question.py
 ```
 
-Kept reference probes (each documents its own question in its docstring):
+Kept probes, each with its question in its docstring:
 
-- `healthcheck_probe.py` - broad economy health readout over a run
-- `chem_score_probe.py` - self-contained probe that builds its own sim
-- `ship_fuel_wtp_probe.py` - fuel willingness-to-pay vs delivered cost
-- `ship_dead_fleet_probe.py` - fleet mobility / stranded-ship check
+- `healthcheck_probe.py`: economy health trends over a run
+- `chem_score_probe.py`: builds and runs its own sim; run it directly with
+  `uv run python notebooks/chem_score_probe.py`
 
-## Marimo Dashboard
+## Marimo dashboard
 
-`analysis_template.py` is the maintained interactive dashboard (money, prices,
-volumes, drive metrics). Open it with:
+`analysis_template.py` is the maintained dashboard (money, prices, volumes,
+drive metrics). Open it with:
 
 ```bash
 uv run spacesim2 run --notebook              # run + auto-open
@@ -33,20 +32,20 @@ uv run spacesim2 run --notebook              # run + auto-open
 uv run marimo edit --no-token notebooks/analysis_template.py
 ```
 
-Requires `uv sync --extra analysis` (always use `uv run marimo` for the
-correct environment).
+Requires `uv sync --extra analysis`. Always use `uv run marimo` so the right
+environment is used.
 
-### Run path resolution (all notebooks/scripts)
+### Run path resolution
 
-1. `SPACESIM_RUN_PATH` env var, if set (explicit override).
-2. Auto-detect: most recent `data/runs/run_YYYYMMDD_HHMMSS` directory by
-   parsed timestamp; clear error if none found.
-3. Manual override via the "Run Path" text field in the dashboard UI.
+1. `SPACESIM_RUN_PATH` env var, if set.
+2. Otherwise the most recent `data/runs/run_YYYYMMDD_HHMMSS` directory by
+   parsed timestamp. Missing runs raise a clear error.
+3. The dashboard's "Run Path" text field overrides both.
 
 ### Debugging a notebook
 
-Use `marimo export html` instead of `marimo run` — it executes the notebook
-headlessly and surfaces errors immediately in the terminal:
+`marimo export html` runs the notebook headlessly and prints errors to the
+terminal, which `marimo run` does not:
 
 ```bash
 SPACESIM_RUN_PATH=data/runs/test_run uv run marimo export html \
@@ -55,11 +54,11 @@ SPACESIM_RUN_PATH=data/runs/test_run uv run marimo export html \
 
 Lint with `uv run marimo check notebooks/file.py`.
 
-### Marimo cell gotchas
+### Marimo cell rules
 
-Cell output must be a **top-level expression**, never nested inside a
-conditional. Do conditional logic first, assign to a variable, then put the
-bare variable on the last line. For possibly-missing data, assign a fallback:
+Cell output must be a top-level expression, never nested inside a
+conditional. Branch first, assign to a variable, and put the bare variable on
+the last line:
 
 ```python
 @app.cell
@@ -72,13 +71,14 @@ def _(data, mo, px):
     return (output,)
 ```
 
-## Data Structure
+## Exported data
 
-Exported runs (`data/runs/run_TIMESTAMP/`) contain Parquet files:
+Each run under `data/runs/run_TIMESTAMP/` contains Parquet files:
 
-- `actor_turns.parquet` - actor state per turn (money, inventory, location)
-- `actor_drives.parquet` - drive metrics (health, debt, urgency)
-- `market_transactions.parquet` - individual trades
-- `market_snapshots.parquet` - market state per turn (prices, volumes, orders)
+- `actor_turns.parquet`: actor state per turn (money, inventory, location)
+- `actor_drives.parquet`: drive metrics (health, debt, buffer, urgency)
+- `market_transactions.parquet`: individual trades
+- `market_snapshots.parquet`: market state per turn (prices, volumes, orders)
 
-Load them with `from spacesim2.analysis.loading import load_run`.
+plus `metadata.json`, `planet_attributes.json` and `galaxy.json`. Load the
+Parquet files with `from spacesim2.analysis.loading import load_run`.

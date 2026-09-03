@@ -1,5 +1,6 @@
-"""
-Actors have "needs" or "drives", which govern consumption, and are then exposed for scoring purposes.  The drives have some memory, so are attached to agents.
+"""Actor drives govern consumption and expose metrics for scoring.
+
+Drives keep memory, so each instance is attached to one actor.
 """
 
 from dataclasses import dataclass
@@ -16,11 +17,10 @@ def clamp01(x: float) -> float:
 
 
 def log_norm_ratio(x: float, target: float, cap: float) -> float:
-    """
-    Buffer→[0,1] with diminishing returns: ln(1 + min(x,cap)/target) / ln(1 + cap/target).
-    This is used to calculate a buffer metric that reflects how close a value is to a target
-    while capping it at a maximum value. The logarithmic scaling provides diminishing returns,
-    meaning that as the value approaches the target, the increase in the buffer metric becomes smaller.
+    """Map a buffer to [0, 1] with diminishing returns.
+
+    ln(1 + min(x, cap)/target) / ln(1 + cap/target). Each step toward the
+    target raises the metric by less, and the metric saturates at cap.
     """
     ratio = min(max(x, 0.0), cap) / target
     denom = log1p(cap / target)
@@ -29,9 +29,7 @@ def log_norm_ratio(x: float, target: float, cap: float) -> float:
 
 @dataclass
 class DriveMetrics:
-    """
-    All metrics [0,1]
-    """
+    """Drive metrics, each in [0, 1]."""
 
     health: float
     debt: float
@@ -55,10 +53,10 @@ def get_zero_metrics() -> DriveMetrics:
 
 
 class ActorDrive:
-    # Welfare lost when a single maintenance event is missed. One consumed unit
-    # of a satisfying material avoids exactly one such miss, so this doubles as
-    # the per-unit "deprivation stake" used to price buy orders. Subclasses set
-    # this to their own DEBT_MISS_PENALTY.
+    # Welfare lost when one maintenance event is missed. One consumed unit of
+    # a satisfying material avoids one miss, so this is also the per-unit
+    # deprivation stake used to price buy orders. Subclasses set it to their
+    # DEBT_MISS_PENALTY.
     MISS_PENALTY: float = 0.0
 
     def __init__(self, commodity_registry: CommodityRegistry):
@@ -67,18 +65,18 @@ class ActorDrive:
     def deprivation_stake(self) -> float:
         """Welfare value of one consumed unit of this drive's material.
 
-        Each consumption event uses one unit and avoids one miss penalty, so the
-        stake is the miss penalty regardless of how often events fire. This is
-        the numerator of willingness-to-pay, comparable across drives because all
-        drives measure welfare in the same avoided-debt currency.
+        Each consumption event uses one unit and avoids one miss penalty, so
+        the stake is the miss penalty regardless of event frequency. It is
+        the numerator of willingness-to-pay and comparable across drives,
+        since all drives measure welfare in avoided debt.
         """
         return self.MISS_PENALTY
 
     def materials(self) -> List[CommodityDefinition]:
-        """Commodities that satisfy this drive, basic (market) good first.
+        """Commodities that satisfy this drive, basic market good first.
 
-        The basic good is the workhorse that actually trades; quality upgrades
-        (if any) follow. Subclasses override.
+        The basic good is what trades; quality upgrades follow. Subclasses
+        override.
         """
         return []
 
@@ -87,10 +85,10 @@ class ActorDrive:
         return 0
 
     def marginal_welfare(self) -> float:
-        """Welfare benefit of acquiring one more unit, given current coverage.
+        """Welfare benefit of one more unit at current coverage.
 
-        Discounted by the drive's buffer: a well-stocked drive values an extra
-        unit less (it just sits in inventory longer before being consumed).
+        Discounted by the buffer: a well-stocked drive values an extra unit
+        less because it sits in inventory longer before use.
         """
         return self.deprivation_stake() * (1.0 - self.metrics.buffer)
 
@@ -107,7 +105,5 @@ class ActorDrive:
         self.metrics.urgency = urgency
 
     def tick(self, actor: Actor) -> DriveMetrics:
-        """
-        Checks needs and calculates satisfaction.  Consumes goods if required.
-        """
+        """Check needs, consume goods if required, and update metrics."""
         raise NotImplementedError()

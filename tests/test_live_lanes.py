@@ -1,5 +1,8 @@
-"""Tests for the live view's star-lane support: polyline interpolation,
-galaxy-sized camera fit, lane/waypoint snapshots."""
+"""Tests for the live view's star-lane support.
+
+Covers polyline interpolation, galaxy-sized camera fit, and lane and waypoint
+snapshots.
+"""
 
 import math
 
@@ -39,8 +42,8 @@ def _depart(ship: Ship, dest: Planet) -> None:
 
 
 def test_polyline_midpoint_is_arc_length_midpoint_not_vertex() -> None:
-    # Total length 30 + 40 = 70; the half-way point (35) lies 5 units into
-    # the second segment, not at the corner vertex.
+    # Total length is 70, so the midpoint at 35 lies 5 units into the second
+    # segment, not at the corner vertex.
     waypoints = ((0.0, 0.0), (30.0, 0.0), (30.0, 40.0))
     pos, heading = polyline_point(waypoints, 0.5)
     assert pos == pytest.approx((30.0, 5.0))
@@ -227,8 +230,8 @@ def test_director_positions_ship_along_route_with_segment_heading() -> None:
     expected_pos, expected_heading = polyline_point(waypoints, 0.5)
     assert rendered.pos == pytest.approx(expected_pos)
     assert rendered.heading == pytest.approx(expected_heading)
-    # Heading is the current lane segment's direction, not the straight
-    # origin->dest bearing (they only coincide for a collinear route).
+    # Heading follows the current lane segment, not the straight origin to
+    # destination bearing. The two coincide only for a collinear route.
     first, last = waypoints[0], waypoints[-1]
     chord_heading = math.atan2(last[1] - first[1], last[0] - first[0])
     collinear = all(

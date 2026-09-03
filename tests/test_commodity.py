@@ -7,8 +7,7 @@ from spacesim2.core.process import ProcessRegistry
 
 
 def test_commodity_registry_loading() -> None:
-    """Test that the commodity registry can load commodities from a YAML file."""
-    # Create a test YAML file
+    """CommodityRegistry loads definitions from a YAML file."""
     test_yaml_path = "temp_test_commodities.yaml"
     test_commodities = [
         {
@@ -28,14 +27,11 @@ def test_commodity_registry_loading() -> None:
     with open(test_yaml_path, "w") as f:
         yaml.dump(test_commodities, f)
 
-    # Load the commodities
     registry = CommodityRegistry()
     registry.load_from_file(test_yaml_path)
 
-    # Clean up the test file
     os.remove(test_yaml_path)
 
-    # Check that the commodities were loaded correctly
     test_commodity = registry.get_commodity("test_commodity")
     test_facility = registry.get_commodity("test_facility")
 
@@ -50,7 +46,6 @@ def test_commodity_registry_loading() -> None:
     assert test_facility.name == "Test Facility"
     assert not test_facility.transportable
 
-    # Test all_commodities method
     all_commodities = registry.all_commodities()
     assert len(all_commodities) == 2
     assert test_commodity in all_commodities
@@ -58,8 +53,7 @@ def test_commodity_registry_loading() -> None:
 
 
 def test_inventory_operations() -> None:
-    """Test that inventory operations work correctly with CommodityDefinition objects."""
-    # Create some test commodities
+    """Inventory add, remove, and has_quantity keyed by CommodityDefinition."""
     food = CommodityDefinition(
         id="food",
         name="Food",
@@ -74,45 +68,35 @@ def test_inventory_operations() -> None:
         description="Basic hand tools used in simple production processes.",
     )
 
-    # Create an inventory with clean state
     inventory = Inventory()
 
-    # Initially empty
     assert inventory.get_quantity(food) == 0
     assert not inventory.has_quantity(food, 1)
 
-    # Add commodity
     inventory.add_commodity(food, 5)
     assert inventory.get_quantity(food) == 5
     assert inventory.has_quantity(food, 3)
     assert not inventory.has_quantity(food, 6)
 
-    # Add another commodity
     inventory.add_commodity(tools, 2)
     assert inventory.get_quantity(tools) == 2
 
-    # Test get_total_quantity
     assert inventory.get_total_quantity() == 7
 
-    # Remove commodity
     assert inventory.remove_commodity(food, 2)
     assert inventory.get_quantity(food) == 3
 
-    # Try to remove more than available
+    # Removing more than available fails and leaves the quantity unchanged.
     assert not inventory.remove_commodity(food, 4)
     assert inventory.get_quantity(food) == 3
 
-    # Remove all remaining
     assert inventory.remove_commodity(food, 3)
     assert inventory.get_quantity(food) == 0
     assert not inventory.has_quantity(food, 1)
 
-    # No more testing with string IDs as we've removed that functionality
-
 
 def test_inventory_reservation() -> None:
-    """Test that inventory reservation works correctly."""
-    # Create a test commodity
+    """Reserving splits quantity into available and reserved parts."""
     food = CommodityDefinition(
         id="food",
         name="Food",
@@ -120,34 +104,29 @@ def test_inventory_reservation() -> None:
         description="Basic nourishment required by actors.",
     )
 
-    # Create an inventory
     inventory = Inventory()
 
-    # Add some food
     inventory.add_commodity(food, 10)
     assert inventory.get_quantity(food) == 10
     assert inventory.get_available_quantity(food) == 10
     assert inventory.get_reserved_quantity(food) == 0
 
-    # Reserve some food
     assert inventory.reserve_commodity(food, 3)
     assert inventory.get_quantity(food) == 10
     assert inventory.get_available_quantity(food) == 7
     assert inventory.get_reserved_quantity(food) == 3
 
-    # Try to reserve more than available
+    # Reserving more than available fails and changes nothing.
     assert not inventory.reserve_commodity(food, 8)
     assert inventory.get_quantity(food) == 10
     assert inventory.get_available_quantity(food) == 7
     assert inventory.get_reserved_quantity(food) == 3
 
-    # Unreserve some food
     inventory.unreserve_commodity(food, 2)
     assert inventory.get_quantity(food) == 10
     assert inventory.get_available_quantity(food) == 9
     assert inventory.get_reserved_quantity(food) == 1
 
-    # Unreserve all remaining reserved food
     inventory.unreserve_commodity(food, 1)
     assert inventory.get_quantity(food) == 10
     assert inventory.get_available_quantity(food) == 10
@@ -155,11 +134,9 @@ def test_inventory_reservation() -> None:
 
 
 def test_process_registry_loading() -> None:
-    """Test that the process registry can load processes from a YAML file."""
-    # Create a commodity registry
+    """ProcessRegistry loads a process and resolves its commodity references."""
     commodity_registry = CommodityRegistry()
 
-    # Add test commodities
     test_commodities = [
         {
             "id": "test_input",
@@ -194,7 +171,6 @@ def test_process_registry_loading() -> None:
     commodity_registry.load_from_file(test_commodity_path)
     os.remove(test_commodity_path)
 
-    # Create a test process YAML file
     test_yaml_path = "temp_test_processes.yaml"
     test_processes = [
         {
@@ -212,27 +188,23 @@ def test_process_registry_loading() -> None:
     with open(test_yaml_path, "w") as f:
         yaml.dump(test_processes, f)
 
-    # Load the processes
     process_registry = ProcessRegistry(commodity_registry)
     process_registry.load_from_file(test_yaml_path)
 
-    # Clean up the test file
     os.remove(test_yaml_path)
 
-    # Check that the process was loaded correctly
     test_process = process_registry.get_process("test_process")
 
     assert test_process is not None
     assert test_process.id == "test_process"
     assert test_process.name == "Test Process"
 
-    # Get the commodities
     test_input = commodity_registry.get_commodity("test_input")
     test_output = commodity_registry.get_commodity("test_output")
     test_tool = commodity_registry.get_commodity("test_tool")
     test_facility = commodity_registry.get_commodity("test_facility")
 
-    # Check that the inputs and outputs are using CommodityDefinition objects
+    # Inputs and outputs are keyed by CommodityDefinition objects.
     assert test_input in test_process.inputs
     assert test_process.inputs[test_input] == 2
 
@@ -242,7 +214,6 @@ def test_process_registry_loading() -> None:
     assert test_tool in test_process.tools_required
     assert test_facility in test_process.facilities_required
 
-    # Test the process search methods
     producing_processes = process_registry.get_processes_producing(test_output)
 
     assert len(producing_processes) == 1

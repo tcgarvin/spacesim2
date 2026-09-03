@@ -1,14 +1,10 @@
 """Macro behavioral smoke test for the simulation.
 
-Unlike the unit tests (which check individual drives/brains/markets), this
-asserts on *emergent* population-wide outcomes via the KPI summary. It is the
-safety net for economy changes: a tweak can pass every unit test yet wreck
-aggregate behavior, and this catches that.
+Asserts on population-wide outcomes via the KPI summary, so an economy change
+that passes every unit test but wrecks aggregate behavior still fails here.
 
-Assertions use tolerances, not exact values: the simulation is stochastic and
-aggregate means over the population are stable but not bit-reproducible (there
-is no run-level seed — most randomness flows through `uuid4`/set iteration).
-Keep the run short so the suite stays fast.
+The simulation is stochastic and has no run-level seed, so assertions use
+tolerances, not exact values. Keep the run short so the suite stays fast.
 """
 
 import pytest
@@ -27,7 +23,7 @@ def smoke_summary() -> dict:
 
 
 def test_summary_has_expected_shape(smoke_summary: dict) -> None:
-    """The summary exposes the KPI blocks agents/notebooks depend on."""
+    """The summary has the KPI blocks agents and notebooks read."""
     for key in ("turns", "money", "drives", "inventory_totals", "prices", "verdict"):
         assert key in smoke_summary, f"missing summary key: {key}"
     assert smoke_summary["turns"] == 120
@@ -35,18 +31,14 @@ def test_summary_has_expected_shape(smoke_summary: dict) -> None:
 
 
 def test_food_economy_is_alive(smoke_summary: dict) -> None:
-    """Survival floor: people are fed and the food market trades.
-
-    This is the catastrophe guard. Food mean health stays comfortably above
-    the FAIL floor (0.50) run-to-run, and food must have market activity.
-    """
+    """Food mean health stays above the FAIL floor of 0.50 and food trades."""
     food = smoke_summary["drives"]["food"]
     assert food["mean_health"] > 0.55, f"food collapsed: {food}"
     assert "food" in smoke_summary["prices"], "no food market activity"
 
 
 def test_verdict_not_failing(smoke_summary: dict) -> None:
-    """A healthy short run should not trip the catastrophe verdict."""
+    """A healthy short run does not trip the FAIL verdict."""
     verdict = smoke_summary["verdict"]
     assert verdict["status"] != "FAIL", f"unexpected FAIL: {verdict['flags']}"
 

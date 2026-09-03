@@ -11,7 +11,7 @@ from .helpers import get_actor
 
 @pytest.fixture
 def commodity_registry():
-    """Create a commodity registry with test commodities."""
+    """Registry loaded from data/commodities.yaml."""
     registry = CommodityRegistry()
     registry.load_from_file("data/commodities.yaml")
     return registry
@@ -19,7 +19,7 @@ def commodity_registry():
 
 @pytest.fixture
 def nova_fuel(commodity_registry):
-    """Get the nova_fuel commodity definition."""
+    """The nova_fuel commodity."""
     return commodity_registry.get_commodity("nova_fuel")
 
 
@@ -27,14 +27,13 @@ def nova_fuel(commodity_registry):
 def market_with_actors(
     commodity_registry, nova_fuel, mock_sim
 ) -> Tuple[Market, Actor, Actor]:
-    """Set up a market with buyer and seller actors."""
+    """Market plus a buyer and a seller holding 20 nova_fuel."""
     market = Market()
     market.commodity_registry = commodity_registry
 
     buyer = get_actor("Buyer", mock_sim, initial_money=1000)
     seller = get_actor("Seller", mock_sim, initial_money=500)
 
-    # Give the seller some nova_fuel
     seller.inventory.add_commodity(nova_fuel, 20)
 
     return market, buyer, seller
@@ -43,7 +42,7 @@ def market_with_actors(
 def count_total_commodities(
     market: Market, commodity: CommodityDefinition, *actors: Actor
 ) -> int:
-    """Count the total amount of a commodity across all actors."""
+    """Total of a commodity across the given actors."""
     total = 0
     for actor in actors:
         total += actor.inventory.get_quantity(commodity)
@@ -51,7 +50,7 @@ def count_total_commodities(
 
 
 def count_total_money(market: Market, *actors: Actor) -> int:
-    """Count the total money across all actors (available + reserved)."""
+    """Total available plus reserved money across the given actors."""
     total = 0
     for actor in actors:
         total += actor.money + actor.reserved_money
@@ -59,28 +58,23 @@ def count_total_money(market: Market, *actors: Actor) -> int:
 
 
 def test_conservation_in_normal_trade(market_with_actors, nova_fuel):
-    """Test that commodity and money are conserved during normal trading."""
+    """Commodity and money totals are unchanged by placing and matching orders."""
     market, buyer, seller = market_with_actors
 
-    # Record initial state
     initial_commodity_count = count_total_commodities(market, nova_fuel, buyer, seller)
     initial_money = count_total_money(market, buyer, seller)
 
-    # Place orders
     market.place_buy_order(buyer, nova_fuel, 5, 10)
     market.place_sell_order(seller, nova_fuel, 5, 10)
 
-    # Before matching, check that totals are unchanged
     assert (
         count_total_commodities(market, nova_fuel, buyer, seller)
         == initial_commodity_count
     )
     assert count_total_money(market, buyer, seller) == initial_money
 
-    # Match orders
     market.match_orders()
 
-    # After matching, check that totals are still unchanged
     assert (
         count_total_commodities(market, nova_fuel, buyer, seller)
         == initial_commodity_count
@@ -89,21 +83,17 @@ def test_conservation_in_normal_trade(market_with_actors, nova_fuel):
 
 
 def test_conservation_with_partial_matches(market_with_actors, nova_fuel):
-    """Test that commodity and money are conserved with partial order matches."""
+    """Commodity and money totals are unchanged by a partial match."""
     market, buyer, seller = market_with_actors
 
-    # Record initial state
     initial_commodity_count = count_total_commodities(market, nova_fuel, buyer, seller)
     initial_money = count_total_money(market, buyer, seller)
 
-    # Place orders with different quantities
     market.place_buy_order(buyer, nova_fuel, 8, 10)
     market.place_sell_order(seller, nova_fuel, 5, 10)
 
-    # Match orders
     market.match_orders()
 
-    # Check that totals are still unchanged after partial match
     assert (
         count_total_commodities(market, nova_fuel, buyer, seller)
         == initial_commodity_count
@@ -112,22 +102,18 @@ def test_conservation_with_partial_matches(market_with_actors, nova_fuel):
 
 
 def test_conservation_after_order_cancellation(market_with_actors, nova_fuel):
-    """Test that commodity and money are conserved when orders are cancelled."""
+    """Commodity and money totals are unchanged by cancelling orders."""
     market, buyer, seller = market_with_actors
 
-    # Record initial state
     initial_commodity_count = count_total_commodities(market, nova_fuel, buyer, seller)
     initial_money = count_total_money(market, buyer, seller)
 
-    # Place orders
     buy_order_id = market.place_buy_order(buyer, nova_fuel, 5, 10)
     sell_order_id = market.place_sell_order(seller, nova_fuel, 5, 10)
 
-    # Cancel the orders
     market.cancel_order(buy_order_id)
     market.cancel_order(sell_order_id)
 
-    # Check that totals are unchanged after cancellation
     assert (
         count_total_commodities(market, nova_fuel, buyer, seller)
         == initial_commodity_count
@@ -136,9 +122,11 @@ def test_conservation_after_order_cancellation(market_with_actors, nova_fuel):
 
 
 def test_conservation_when_buy_order_quantity_is_clamped(market_with_actors, nova_fuel):
-    """A buy order larger than the actor can afford reserves only the clamped
-    cost — reserving the original cost drove money negative and orphaned the
-    difference in reserved_money forever."""
+    """An unaffordable buy order reserves only the clamped cost.
+
+    Reserving the original cost drove money negative and orphaned the
+    difference in reserved_money.
+    """
     market, buyer, seller = market_with_actors
 
     buyer.money = 100

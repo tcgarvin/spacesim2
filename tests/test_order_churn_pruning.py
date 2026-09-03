@@ -1,5 +1,8 @@
-"""Tests for prune_unchanged_order_commands: cancel+identical-repost pairs are
-dropped so unchanged quotes stay resting in the book."""
+"""Tests for prune_unchanged_order_commands.
+
+A cancel paired with an identical repost is dropped so the unchanged quote
+stays resting in the book.
+"""
 
 import pytest
 
@@ -44,7 +47,7 @@ def test_identical_repost_pair_is_dropped(market, food, mock_sim) -> None:
     pruned = prune_unchanged_order_commands(market, buyer, commands)
 
     assert pruned == []
-    # The standing order (and its reservation) is untouched.
+    # The standing order and its reservation are untouched.
     assert order_id in market.orders_by_id
     assert buyer.reserved_money == 50
 
@@ -54,8 +57,8 @@ def test_kept_order_timestamp_is_refreshed(market, food, mock_sim) -> None:
     order_id = market.place_buy_order(buyer, food, 5, 10)
     assert market.orders_by_id[order_id].timestamp == 0
 
-    # A later turn: the kept order must be stamped as if reposted now, so it
-    # does not gain price-time priority over genuinely fresh orders.
+    # On a later turn the kept order is stamped as if reposted now, so it
+    # does not gain price-time priority over fresh orders.
     market.current_turn = 7
     commands = [
         CancelOrderCommand(order_id),
@@ -87,8 +90,8 @@ def test_side_is_part_of_the_key(market, food, mock_sim) -> None:
     seller.inventory.add_commodity(food, 10)
     sell_id = market.place_sell_order(seller, food, 5, 10)
 
-    # A buy repost at the same commodity/price/quantity must not pair with a
-    # cancelled sell order.
+    # A buy repost at the same commodity, price, and quantity must not pair
+    # with a cancelled sell order.
     commands = [
         CancelOrderCommand(sell_id),
         PlaceBuyOrderCommand(food, 5, 10),
@@ -150,8 +153,8 @@ def test_duplicate_keys_pair_one_to_one(market, food, mock_sim) -> None:
     id_a = market.place_buy_order(buyer, food, 5, 10)
     id_b = market.place_buy_order(buyer, food, 5, 10)
 
-    # Two identical cancels but only one identical repost: exactly one pair is
-    # dropped, the other cancel passes through.
+    # Two identical cancels and one identical repost: one pair is dropped
+    # and the other cancel passes through.
     commands = [
         CancelOrderCommand(id_a),
         CancelOrderCommand(id_b),

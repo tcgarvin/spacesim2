@@ -18,15 +18,8 @@ def transactions_for_turn(market: "Market", turn: int) -> list["Transaction"]:
     """Return the market's transactions for one turn, in execution order.
 
     ``transaction_history`` is appended in turn order, so this turn's
-    transactions form a suffix; scanning backwards from the end makes this
+    transactions form a suffix. Scanning backwards from the end costs
     O(this turn's transactions) instead of O(full history).
-
-    Args:
-        market: The market whose history to slice.
-        turn: The turn to select.
-
-    Returns:
-        This turn's transactions, oldest first.
     """
     result: list[Transaction] = []
     for tx in reversed(market.transaction_history):
@@ -48,32 +41,19 @@ def volume_by_commodity(
 
 
 class SimulationExporter:
-    """Handles exporting simulation data to Parquet files during execution."""
+    """Exports simulation data to Parquet files during a run."""
 
     def __init__(self, output_dir: Path, simulation_id: str):
-        """
-        Initialize simulation exporter.
-
-        Args:
-            output_dir: Directory to write Parquet files
-            simulation_id: Unique identifier for this simulation run
-        """
+        """Create an exporter writing into ``output_dir``."""
         self.output_dir = output_dir
         self.simulation_id = simulation_id
         self.writers: dict[str, StreamingParquetWriter] = {}
         self.start_time = datetime.now()
 
     def setup(self, simulation: "Simulation") -> None:
-        """
-        Initialize export schema and writers.
-
-        Args:
-            simulation: Simulation instance to export
-        """
-        # Create output directory
+        """Create the output directory, table writers, and static exports."""
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Initialize writers for each table
         self.writers["actor_turns"] = StreamingParquetWriter(
             self.output_dir / "actor_turns.parquet",
             schema.ACTOR_TURNS_SCHEMA,
@@ -102,16 +82,8 @@ class SimulationExporter:
         self._export_galaxy(simulation)
 
     def export_turn(self, simulation: "Simulation", turn: int) -> None:
-        """
-        Export data for a single turn.
-
-        Args:
-            simulation: Simulation instance
-            turn: Current turn number
-        """
-        # Export actor state for logged actors
+        """Export one turn: logged actors' state and every planet's market."""
         for actor in simulation.data_logger.get_all_logged_actors():
-            # Actor state
             inventory_dict = {
                 commodity.id: actor.inventory.get_quantity(commodity)
                 for commodity in simulation.commodity_registry.all_commodities()
@@ -131,7 +103,6 @@ class SimulationExporter:
                 }
             )
 
-            # Actor drives
             for drive in actor.drives:
                 self.writers["actor_drives"].write_row(
                     {
@@ -146,12 +117,11 @@ class SimulationExporter:
                     }
                 )
 
-        # Export market data for all planets
         for planet in simulation.planets:
             market = planet.market
 
-            # Market transactions: single pass over this turn's suffix of the
-            # history, which also yields per-commodity volume for snapshots.
+            # One pass over this turn's suffix of the history also yields
+            # per-commodity volume for the snapshots.
             turn_transactions = transactions_for_turn(market, turn)
             for tx in turn_transactions:
                 self.writers["market_transactions"].write_row(
@@ -172,17 +142,15 @@ class SimulationExporter:
 
             turn_volumes = volume_by_commodity(turn_transactions)
 
-            # Market snapshots (aggregated state)
             for commodity in simulation.commodity_registry.all_commodities():
                 turn_volume = turn_volumes.get(commodity, 0)
 
-                # Get bid/ask spread
                 best_bid, best_ask = market.get_bid_ask_spread(commodity)
                 best_bid = best_bid or 0
                 best_ask = best_ask or 0
 
-                # Count orders (skipping lazily-cancelled ones still resting
-                # in the books between compactions)
+                # Skip lazily cancelled orders still resting in the books
+                # between compactions.
                 buy_orders = [
                     o for o in market.buy_orders.get(commodity, []) if not o.cancelled
                 ]
@@ -209,12 +177,10 @@ class SimulationExporter:
                 )
 
     def finalize(self) -> None:
-        """Close all writers and write final metadata."""
-        # Flush and close all writers
+        """Close all writers and write metadata.json."""
         for writer in self.writers.values():
             writer.close()
 
-        # Write metadata file (simple JSON)
         metadata = {
             "simulation_id": self.simulation_id,
             "start_time": self.start_time.isoformat(),
@@ -226,11 +192,7 @@ class SimulationExporter:
             json.dump(metadata, f, indent=2)
 
     def _export_planet_attributes(self, simulation: "Simulation") -> None:
-        """Export planet attributes to a JSON file.
-
-        Args:
-            simulation: Simulation instance with planet attributes
-        """
+        """Export planet attributes to ``planet_attributes.json``."""
         planet_data = {}
         for planet in simulation.planets:
             planet_data[planet.name] = planet.attributes.to_dict()
@@ -240,11 +202,7 @@ class SimulationExporter:
             json.dump(planet_data, f, indent=2)
 
     def _export_galaxy(self, simulation: "Simulation") -> None:
-        """Export planet positions and star lanes to ``galaxy.json``.
-
-        Args:
-            simulation: Simulation instance with planets and star lanes
-        """
+        """Export planet positions and star lanes to ``galaxy.json``."""
         width, height = simulation.galaxy_size
         galaxy = {
             "width": width,

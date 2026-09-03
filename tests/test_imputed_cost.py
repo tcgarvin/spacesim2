@@ -1,10 +1,9 @@
 """Imputed make-cost respects local planet resource availability.
 
-The make-branch of ``_imputed_unit_cost`` must price extraction at its
-*expected* yield on this planet, not the recipe's nominal yield. Without
-this, agents on resource-poor planets believe extraction inputs are cheap,
-which mis-sites downstream industry (e.g. fuel refiners clustering on
-ore-poor planets).
+The make branch of ``_imputed_unit_cost`` must price extraction at its
+expected yield on this planet, not the recipe's nominal yield. Otherwise
+agents on resource-poor planets believe extraction inputs are cheap and
+downstream industry such as fuel refining is sited on ore-poor planets.
 """
 
 import math
@@ -20,10 +19,10 @@ from spacesim2.core.process import ProcessDefinition, ResourceAttribute
 
 
 def _wire_producer_index(sim_mock):
-    """Make the mocked registry's get_processes_producing consistent with the
-    list configured on all_processes.return_value (evaluated lazily, so tests
-    may set the list after the fixture runs). Mirrors the id-keyed producer
-    index in ProcessRegistry.
+    """Derive the mock's get_processes_producing from all_processes.return_value.
+
+    Evaluated lazily, so tests may set the list after the fixture runs.
+    Mirrors the id-keyed producer index in ProcessRegistry.
     """
     registry = sim_mock.process_registry
     registry.get_processes_producing.side_effect = lambda commodity: [
@@ -41,7 +40,7 @@ def _commodity(cid: str) -> Mock:
 
 
 def _actor(attributes: PlanetAttributes | None) -> Mock:
-    """Actor on a planet; ``attributes=None`` models the feature being off."""
+    """Actor on a planet. ``attributes=None`` models the feature being off."""
     actor = Mock(spec=Actor)
     actor.sim = Mock()
     _wire_producer_index(actor.sim)
@@ -53,7 +52,7 @@ def _actor(attributes: PlanetAttributes | None) -> Mock:
 
 
 def _mining_process(ore: Mock, effect: str, out_qty: int = 1) -> Mock:
-    """Zero-input extraction: imputed recipe cost is exactly one turn of labor."""
+    """Zero-input extraction, so the imputed recipe cost is one turn of labor."""
     process = Mock(spec=ProcessDefinition)
     process.id = "mine_nova_fuel_ore"
     process.inputs = {}
@@ -67,7 +66,7 @@ def _mining_process(ore: Mock, effect: str, out_qty: int = 1) -> Mock:
 
 
 def _dead_market() -> Mock:
-    """No asks, no trade history: forces the make-branch."""
+    """No asks and no trade history, which forces the make branch."""
     market = Mock()
     market.get_bid_ask_spread.return_value = (None, None)
     market.has_price_signal.return_value = False
@@ -86,9 +85,7 @@ def brain() -> ActorBrain:
 
 class TestAttributeScaledImputation:
     def test_success_effect_scales_cost_by_inverse_availability(self, brain):
-        """attr 0.1 means 90% of mining turns fail, so a unit of ore is
-        expected to cost 10x what it costs at full availability.
-        """
+        """At availability 0.1, 90% of mining turns fail, so ore costs 10x."""
         ore = _commodity("nova_fuel_ore")
         actor = _actor(PlanetAttributes(nova_fuel_ore=1.0))
         actor.sim.process_registry.all_processes.return_value = [
@@ -106,8 +103,7 @@ class TestAttributeScaledImputation:
         assert poor_cost / rich_cost == pytest.approx(10.0)
 
     def test_output_effect_scales_cost_the_same_way(self, brain):
-        """Reduced yield and reduced success probability both divide the
-        expected unit cost by the availability."""
+        """Reduced yield divides expected unit cost by availability, like success."""
         ore = _commodity("nova_fuel_ore")
         actor = _actor(PlanetAttributes(nova_fuel_ore=0.25))
         actor.sim.process_registry.all_processes.return_value = [
@@ -120,7 +116,7 @@ class TestAttributeScaledImputation:
         assert cost == pytest.approx(GOVERNMENT_WAGE / (2 * 0.25))
 
     def test_zero_availability_makes_recipe_nonviable(self, brain):
-        """attr 0.0 must skip the recipe (inf), never divide by zero."""
+        """Availability 0.0 makes the recipe cost inf rather than dividing by zero."""
         ore = _commodity("nova_fuel_ore")
         actor = _actor(PlanetAttributes(nova_fuel_ore=0.0))
         actor.sim.process_registry.all_processes.return_value = [
@@ -130,7 +126,7 @@ class TestAttributeScaledImputation:
         assert math.isinf(_impute(brain, actor, ore))
 
     def test_zero_availability_still_buys_from_a_live_ask(self, brain):
-        """Absent local resources leave the buy-branch untouched."""
+        """Absent local resources leave the buy branch untouched."""
         ore = _commodity("nova_fuel_ore")
         actor = _actor(PlanetAttributes(nova_fuel_ore=0.0))
         actor.sim.process_registry.all_processes.return_value = [
@@ -144,7 +140,7 @@ class TestAttributeScaledImputation:
         assert cost == pytest.approx(7.0)
 
     def test_default_attributes_leave_cost_unscaled(self, brain):
-        """Default (all-1.0) attributes apply no scaling."""
+        """Default all-1.0 attributes apply no scaling."""
         ore = _commodity("nova_fuel_ore")
         actor = _actor(PlanetAttributes())
         actor.sim.process_registry.all_processes.return_value = [

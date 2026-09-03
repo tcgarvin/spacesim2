@@ -1,22 +1,21 @@
 # Performance
 
-Current posture after the 2026 perf campaign (history and rejected
-alternatives: `docs/decision-log.md`). Target scale is 500 planets × 100
-actors/planet × 1000 ships; that runs at **~2.7 s/turn** on a free-threaded
-interpreter with `--workers 12` (~7.1 s/turn serial), down from 45+
-(2026-09-01 measurement on the dev laptop; the threaded-phase table below
-predates the two exact-caching passes).
+Target scale is 500 planets x 100 actors/planet x 1000 ships. On the dev
+laptop it runs at about 2.7 s/turn on a free-threaded interpreter with
+`--workers 12` and about 7.1 s/turn serial. History and rejected
+alternatives are in `docs/decision-log.md`.
 
 ## Threaded actor phase (`--workers N`)
 
-`spacesim2 run --workers N` runs each turn's actor phase across a
-shared-memory thread pool, sharding planets round-robin (`core/parallel.py`).
-Ships, market matching, and export stay serial.
+`spacesim2 run --workers N` runs each turn's actor phase on a shared-memory
+thread pool, sharding planets round-robin (`core/parallel.py`). Ships,
+market matching, and export stay serial.
 
-**It needs a free-threaded interpreter.** The actor phase is pure-Python
-bytecode; under stock (GIL-enabled) CPython the threads serialize and
-`--workers` gives no speedup (the CLI warns). Measured at target scale
-(16-core host, CPython 3.14.7t):
+It needs a free-threaded interpreter. The actor phase is pure-Python
+bytecode, so under stock CPython the threads serialize and `--workers`
+gives no speedup. The CLI warns when the GIL is enabled. Measured at target
+scale on a 16-core host with CPython 3.14.7t, before the exact-caching
+passes below:
 
 | Config | Actor phase s | Total s/turn |
 |---|---|---|
@@ -25,21 +24,21 @@ bytecode; under stock (GIL-enabled) CPython the threads serialize and
 | 3.14t, `--workers 6` | 3.4 | 4.1 |
 | 3.14t, `--workers 12` | 2.65 | 3.2 |
 
-Single-thread penalty of the free-threaded build: ~none on this workload.
+The free-threaded build has no measurable single-thread penalty on this
+workload.
 
-**Why threads are safe here:** an actor turn touches only its own state, its
-own planet's market (place/cancel only — matching runs serially after the
-ship phase), read-only registries, the data logger (per-actor keys, one
-writer each), and the lock-wrapped global order-id counter. Planets are
-disjoint across shards. Each planet's actors shuffle independently per turn;
-cross-planet ordering cannot matter inside the actor phase, so this changes
-only the random stream (the sim is already non-reproducible).
+Threads are safe because an actor turn touches only its own state, its own
+planet's market (place and cancel only; matching runs serially after the
+ship phase), read-only registries, the data logger (one writer per actor
+key), and the lock-wrapped global order-id counter. Planets are disjoint
+across shards and each planet's actors shuffle independently, so threading
+changes only the random stream. The sim is already non-reproducible.
 
 ## Running under 3.14t
 
-`uv sync` can't build the full project on a free-threaded interpreter yet —
-pygame has no free-threaded build — so use a side venv for headless runs
-(the UI stays on the stock interpreter):
+`uv sync` cannot build the full project on a free-threaded interpreter
+because pygame has no free-threaded build. Use a side venv for headless
+runs; the UI stays on the stock interpreter:
 
 ```bash
 uv python install 3.14t
@@ -48,133 +47,60 @@ uv pip install --python .venv-ft/bin/python pyyaml tqdm numpy typing-extensions
 .venv-ft/bin/python -m spacesim2.cli.main run --turns 200 --no-export --workers 12
 ```
 
-(`.venv-ft` is gitignored. Add pandas/pyarrow to the install list if you
-need export; verify free-threaded wheels resolve.) Guard rail: importing any
-C extension without free-threaded support silently **re-enables the GIL**;
-the CLI checks `sys._is_gil_enabled()` and warns.
+`.venv-ft` is gitignored. Add pandas and pyarrow to the install list if you
+need export, and verify free-threaded wheels resolve. Importing any C
+extension without free-threaded support silently re-enables the GIL; the
+CLI checks `sys._is_gil_enabled()` and warns.
 
-## Open levers
+## What is cached and why it is exact
 
-- **Thread scaling (~3x at 12 workers) is largely a hardware ceiling on the
-  dev host**, not a software-contention bug. Two hypotheses tested and ruled
-  out at target scale: the global `random` lock (per-actor-RNG refactor
-  69ca496, reverted in 286c739 — no change), and refcount traffic on shared
-  commodity/process definition objects (per-planet registry copies + id-based
-  hash/eq, parked on branch `per-planet-registries` — 12-worker 3.36→3.26
-  s/turn i.e. noise, while costing ~8-17% serial from the Python-level
-  `__hash__`). The dev host is an i5-1340P laptop: 4 P-cores + 8 E-cores,
-  HT, and heavy thermal downclock under all-core load — that alone explains
-  most of the ~3.4x CPU-seconds inflation observed at 12 workers. Re-test
-  scaling on server hardware before chasing further contention theories.
-- **Serial work reduction (2026-09-01 pass, ~1.2x at P=40): landed as
-  behavior-exact caching**, verified by an equivalence test against the old
-  scan (`tests/test_registry_and_brain_cache.py`). What landed: BrainCache
-  split into finer invalidation groups (skill factors keyed on
-  `skills_version` — they survive turns and inventory bumps; a successful
-  ProcessCommand bumps skills *every* time, so the quote-derived per-process
-  input-cost/output-value table got its own inventory- and skill-independent
-  group, making the mid-turn re-rank a cheap multiply+sort instead of a
-  second full registry scan); ranked-walk `_best_process_and_raw_profit`
-  (sorted valuation vector + lazy `can_execute` walk); `Actor.can_execute`
-  taking the definition (the id re-resolution was ~1M lookups/50 turns);
-  per-market per-turn memos for the trade-history reads (`get_avg_price`,
-  `has_price_signal`, `get_30_day_*` — written only inside `match_orders`,
-  so exact); float stdev in `get_30_day_standard_deviation` (was
-  exact-Fraction `statistics.stdev`, 6.7% of wall). NOT pursued: sharing
-  quote-derived valuations across actors per (planet, turn) — order books
-  mutate actor-by-actor (posting is immediate, only matching is deferred),
-  so that is a behavior change, and the exact alternative (keying on live
-  quote values) re-fetches the quotes that make up the cost.
-- **Second exact-caching pass (2026-09-01, follow-up): the diffuse
-  `_drive_buy_commands` headroom, landed behavior-exact** (equivalence tests
-  in `tests/test_registry_and_brain_cache.py`). What landed:
-  `_replacement_cost` got the same quote-part split as the colonist re-rank —
-  per-process base input cost and per-tool amortized quoted price now live in
-  a turn-scoped market-group cache (`BrainCache.replacement_quote_parts`,
-  tool prices cached for ALL required tools so ownership never bakes in), so
-  the post-ProcessCommand recompute redoes only facility gating, unowned-tool
-  sums, and the cached skill/yield factors; `_cheapest_material_ask` answers
-  from the cached quote in O(1) when the actor owns no live ask in that
-  commodity (own-order check via `actor_orders` re-validated against
-  `orders_by_id`; full non-own scan only otherwise); `_sell_at_or_above_cost`
-  replaced its full bid sort with a single max pass (only the top price was
-  read). Serial bench P=40: 122.1 → 119.2 ms/turn combined with the cancel
-  lazy-delete below — modest at this scale; the split's win is bounded
-  because the old recompute already hit turn-cached quotes.
-- **Order cancel/repost churn** — was ~14% of wall as a cluster
-  (`prune_unchanged_order_commands` top self-time + `cancel_order` +
-  `_record_order_event` + command construction). Landed 2026-09-01:
-  order-event recording is now gated on the data logger's logged-actor set
-  (`Market.order_event_filter`; events were only ever read back for
-  `--log-actors` actors, default 1), and the per-command `isinstance`
-  checks in the prune/take_turn loops became exact-class checks (ABC
-  `__instancecheck__` was ~1% of wall). The last piece landed 2026-09-01:
-  `cancel_order` is now a lazy delete — orders carry a `cancelled` flag,
-  every book reader skips dead orders, and books compact when dead orders
-  outnumber live ones plus once per commodity at the top of `match_orders`
-  (staleness never crosses a turn). Behavior-exact (live-order content and
-  relative order identical to the eager delete; tests in
-  `tests/test_market_lazy_cancel.py`). Bench-neutral at P=40 where
-  `cancel_order` was only ~2% cum with ~1.7k cancels/turn. Measured at
-  target scale (500×100×1000, 3.14t, interleaved A/B vs a65bac8): serial
-  **7.49 → 7.10 s/turn (−5.2%, above rep noise)**; `--workers 12` a wash
-  within ~7% rep noise (2.7 s/turn both arms — the serial-phase share it
-  trims matters less when the actor phase is spread across threads).
-  (Stale-claim
-  correction: matching does **not** re-sort uncrossed books — the sort is
-  guarded — and `list.pop(0)` was already replaced by index cursors. The
-  remaining unconditional matching costs are the dead-book union via
-  `volume_history` keys, which is self-perpetuating, and an O(book)
-  quantity sum per commodity for scarcity pressure.)
-- **Third exact pass (2026-09-01): colonist scan micro-flattening, landed
-  behavior-exact.** `_best_process_and_raw_profit` was ~17% of serial turn
-  time at target scale, mostly call overhead on memo *hits* (18M
-  `_expected_skill_factor` calls at ~1.5µs each). What landed: memo-hit
-  inlining in the ranked-list build (probe `cache.skill_factor` /
-  `yield_modifier` / `bid_ask` / `avg_price` via local dict `.get`s,
-  falling back to the existing helpers only on miss, so fill and
-  invalidation logic stay in one place); precomputed
-  `ProcessDefinition.inputs_items` / `outputs_items` / `requirements`
-  tuples built in `__post_init__` (definitions are immutable after load),
-  so the quote scan no longer materializes `dict.items()` views and
-  `Actor.can_execute` is one loop over the flattened requirements with a
-  bound `has_quantity` (same check order, identical boolean);
-  `ranked_profits` now drops entries at or below the 10.0 government-work
-  bar *before* sorting (`itemgetter(0)`, `reverse=True` — stable, so the
-  registry-order tie-break is preserved; the walk could never select the
-  dropped entries). Measured at target scale (500×100+2mm, 2 ships/planet,
-  stock 3.13 serial, interleaved A/B, 3 reps of 5 measured turns): serial
-  **8.29 → 7.73 s/turn (−6.8%)**, consistent across reps (before
-  8.33/8.30/8.23, after 7.80/7.68/7.71).
-- **Shared process quote table per market (2026-09-01, follow-up to the
-  third pass): landed behavior-exact.** The colonist quote scan's
-  actor-independent `(input_cost, output_value, process)` table is now
-  shared across actors on a market (`Market.shared_quote_table`), keyed on
-  `(sim turn, quote_version)` — a new monotonic counter bumped at exactly
-  the sites where a best bid/ask COULD change, mirroring the incremental
-  `_quote_cache` maintenance (best-improving/first-populating placement,
-  cancel at the cached best or with no cached quote, matching; conservative
-  tie bumps lose only sharing, never exactness). Exactness argument: two
-  actors reading at the same key provably see identical bid/ask (the
-  version covers every best-quote mutation) and identical avg prices
-  (trade history moves only in end-of-turn matching, so it is
-  phase-constant), hence identical tables; skill/yield discounting stays
-  fully per-actor — deliberately distinct from the rejected turn-scoped
-  quote-snapshot sharing, which would have frozen mid-phase book moves.
-  No lock: threading shards whole planets, one thread per market.
-  Instrumentation at target scale measured a ~67% hit rate on the ~25k
-  full quote builds/turn (mean 25.3 best-quote-moving events per market
-  per turn vs ~50 colonist scans). Equivalence tests in
-  `tests/test_registry_and_brain_cache.py` (shared-object identity,
-  rebuild-on-quote-move, bump-site coverage). Measured (same interleaved
-  method, baseline = third pass): serial **7.75 → 7.66 s/turn (−1.1%,
-  after faster in all 3 reps)**; one threaded rep (3.14t,
-  `--workers 12`): **2.41 → 2.20 s/turn** — no regression under threads.
-- Per-turn cost grows ~28-33% over the first ~150 turns then plateaus
-  (economy warm-up, not a leak).
-- Profiling on this box: `perf` is blocked (`perf_event_paranoid=4`) and
-  py-spy cannot read 3.14t — use CPU-accounting (`/proc/<pid>/stat` deltas,
-  pidstat) and stock-interpreter py-spy for serial attribution.
+Every cache below is behavior-exact: it returns what a fresh computation
+would. Equivalence tests live in `tests/test_registry_and_brain_cache.py`
+and `tests/test_market_lazy_cancel.py`.
+
+| Cache | Where | Why it is exact |
+|---|---|---|
+| Best bid/ask per commodity | `Market._quote_cache` | Maintained incrementally at placement, cancel, and matching. |
+| `Market.quote_version` | `core/market.py` | Bumps at every site where a best quote could change. A spurious bump loses sharing, never exactness. |
+| Shared process quote table | `Market.shared_quote_table`, keyed on `(turn, quote_version)` | The actor-independent `(input_cost, output_value, process)` table is shared across actors on one market. Two readers at the same key see identical quotes, and trade history moves only in end-of-turn matching. Skill and yield discounting stay per actor. No lock: one thread per market. |
+| `BrainCache` groups | `core/actor_brain.py` | Skill factors key on `Actor.skills_version`, which every successful process bumps. The quote-derived per-process cost/value table is independent of inventory and skills, so the mid-turn re-rank is a multiply and sort, not a second scan. |
+| `replacement_quote_parts` | `BrainCache`, turn-scoped per market | Per-process base input cost and per-tool amortized price. Prices are cached for all required tools, owned or not, so ownership never bakes in; the post-process recompute redoes only facility gating, unowned-tool sums, and the cached factors. |
+| Trade-history memos | `Market.get_avg_price`, `has_price_signal`, `get_30_day_*` | Trade history is written only inside `match_orders`, so per-turn memos cannot go stale within a turn. |
+| Lazy order cancel | `Order.cancelled`, `Market.cancel_order` | Every book reader skips dead orders. Books compact when dead orders outnumber live ones and once per commodity at the top of `match_orders`, so staleness never crosses a turn. Live content and relative order match an eager delete. |
+| Order-event recording | `Market.order_event_filter` | Events are recorded only for actors the data logger reads back (`--log-actors`). |
+| Process definition tuples | `ProcessDefinition.inputs_items`, `outputs_items`, `requirements` | Built in `__post_init__`; definitions are immutable after load. `Actor.can_execute` loops over the flattened requirements in the same check order. |
+| Ranked colonist scan | `_best_process_and_raw_profit` | Entries at or below the government-work bar are dropped before the stable sort, so the registry-order tie-break survives and the walk could never have selected them. |
+
+Sharing quote-derived valuations across actors within a turn is not exact
+and is not done: order posting is immediate and only matching is deferred,
+so the book each actor sees differs.
+
+## Open levers and ruled-out hypotheses
+
+Open:
+
+- Thread scaling at 12 workers is about 3x. The dev host is an i5-1340P
+  laptop (4 P-cores, 8 E-cores, HT, heavy thermal downclock under all-core
+  load), which explains most of the CPU-seconds inflation. Re-test on
+  server hardware before chasing contention theories.
+- Matching still does an O(book) quantity sum per commodity for scarcity
+  pressure, and iterates dead books through the `volume_history` key union.
+  Matching does not re-sort uncrossed books; the sort is guarded.
+- Per-turn cost grows 28-33% over the first 150 turns and then plateaus.
+  This is economy warm-up, not a leak.
+
+Ruled out at target scale:
+
+- The global `random` lock. Per-actor RNG streams changed nothing.
+- Refcount traffic on shared commodity and process definitions. Per-planet
+  registry copies with id-based hashing (branch `per-planet-registries`)
+  were noise under threads and 8-17% slower serial.
+- Fork-per-turn worker pool. See the decision log.
+
+Profiling on the dev box: `perf` is blocked (`perf_event_paranoid=4`) and
+py-spy cannot read 3.14t. Use CPU accounting (`/proc/<pid>/stat` deltas,
+pidstat) for threaded runs and stock-interpreter py-spy for serial
+attribution.
 
 ## Reference bench numbers (single-thread, 50-turn driver)
 

@@ -1,7 +1,7 @@
 # CLAUDE.md - Agent Instructions
 
 ## Project: SpaceSim2
-A turn-based economic simulation modeling interplanetary trade with actors, markets, and ships.
+A turn-based economic simulation of interplanetary trade with actors, markets, and ships.
 
 ## Commands
 
@@ -33,10 +33,9 @@ uv run spacesim2 dev check             # Umbrella: format+lint+types+pytest+shor
 uv run spacesim2 dev check --fast      # Skip the slower types and sim stages
 ```
 
-## The Dev Loop (for agents)
+## The Dev Loop
 
-Canonical change→verify loop. Use these verbatim; see the **`sim-evaluation`**
-skill for tiers and the analysis-output contract.
+Change, then verify:
 
 ```bash
 uv run pytest -q                                                  # 1. unit tests (~2s)
@@ -44,40 +43,36 @@ uv run spacesim2 run --turns 200 --no-export --quiet --summary    # 2. macro beh
 # 3. read JSON between ===SUMMARY_BEGIN=== / ===SUMMARY_END=== (verdict + KPIs)
 ```
 
-For a single pass/fail gate before committing, `uv run spacesim2 dev check` runs
-the whole sequence (format → lint → types → pytest → short `--summary` sim) and
-prints one block; it is non-mutating (format checks only). Use the step-by-step
-loop above when you need the actual KPI JSON to reason about behavior.
+`uv run spacesim2 dev check` runs format, lint, types, pytest, and a short
+`--summary` sim as one pass/fail gate. It only checks formatting, it does not
+rewrite files. Use the three steps above when you need the KPI JSON itself.
 
-- `--summary` prints a compact KPI JSON + `PASS/WARN/FAIL` verdict (also written
-  to `summary.json` when exporting). This is the token-efficient "is it broken?"
-  readout — prefer it over opening a notebook.
-- The sim is **stochastic, not bit-reproducible**; population means are stable to
-  ~±0.05. Assert with tolerances, never exact values. (There is no run-level seed
-  knob — most randomness flows through `uuid4`/set iteration, so seeding the
-  module RNG gave false determinism and was removed.)
-- For open-ended questions, write a **Tier-1** script (`dev analyze`); for human
-  dashboards, a **Tier-2** marimo notebook. Keep durable checks as assertions in
-  `tests/test_simulation_smoke.py`.
+- `--summary` prints compact KPI JSON and a `PASS/WARN/FAIL` verdict. When
+  exporting it is also written to `summary.json`. Prefer it over a notebook.
+- The sim is stochastic and not bit-reproducible. Population means are stable
+  to about ±0.05. Assert with tolerances, never exact values. There is no seed
+  knob; most randomness comes from `uuid4` and set iteration.
+- For open-ended questions write a Tier-1 script and run it with
+  `dev analyze`. For human dashboards write a Tier-2 marimo notebook. Durable
+  checks go in `tests/test_simulation_smoke.py`. See the `sim-evaluation`
+  skill for the tiers and output contract.
 
-**Note**: The graph command uses `npx @mermaid-js/mermaid-cli` to render diagrams. Requires Node.js with `npx` on PATH. Output defaults to `tmp/commodity-graph.svg` (gitignored).
+The graph command renders with `npx @mermaid-js/mermaid-cli`, so Node.js with
+`npx` must be on PATH. Output defaults to `tmp/commodity-graph.svg` (gitignored).
 
 ## Code Style
-- **Python**: 3.11+ with type annotations
-- **Formatting**: `ruff format` (88 char lines)
-- **Naming**: `snake_case` functions/vars, `PascalCase` classes, `UPPER_CASE` constants
-- **Architecture**: Domain-driven design; prefer pure functions over stateful classes when suitable
+- Python 3.11+ with type annotations
+- `ruff format`, 88 char lines
+- `snake_case` functions and variables, `PascalCase` classes, `UPPER_CASE` constants
+- Domain-driven design; prefer pure functions over stateful classes where it fits
 
 ### Tooling
-Two tools, two jobs: **`ruff`** for style (lint + format) and **`mypy`** for
-correctness (types). Black was removed — `ruff format` is its drop-in
-replacement. Don't reintroduce a separate formatter.
+`ruff` handles style (lint and format). `mypy` handles correctness (types).
+Do not add a separate formatter.
 
-### Pre-commit hook
-A checked-in hook in `hooks/pre-commit` enforces `ruff format` **and**
-`ruff check` on staged Python files, plus `mypy` (`uv run mypy .`) over the
-whole project. It's wired via `core.hooksPath`, so a **fresh clone must run it
-once**:
+`hooks/pre-commit` runs `ruff format` and `ruff check` on staged Python files
+and `uv run mypy .` over the whole project. mypy is blocking and the project is
+clean; keep it that way. A fresh clone must wire the hook once:
 
 ```bash
 git config core.hooksPath hooks
@@ -85,54 +80,45 @@ git config core.hooksPath hooks
 
 Bypass a single commit with `git commit --no-verify`.
 
-Types (`mypy`) are now blocking: the package is clean (`uv run mypy .` →
-*Success*). mypy runs over the whole project rather than only staged files
-because it needs cross-module context to resolve types. Keep it green.
-
-**Ruff lint config** (`[tool.ruff.lint]`): `E501` is ignored (the formatter
-owns line length); `notebooks/**` is exempt from lint via `per-file-ignores`
-(still formatted) because marimo's cross-cell variables cause false
-`F401`/`F821`/`I001`.
+Ruff config: `E501` is ignored because the formatter owns line length.
+`notebooks/**` is exempt from lint (still formatted) because marimo's
+cross-cell variables trigger false `F401`/`F821`/`I001`.
 
 ## Branching
 
-Work on **`main` only.** Commit directly to `main`; do **not** create feature
-branches unless the user explicitly asks for one. This overrides the default
-"branch before committing on the default branch" behavior.
+Work on `main` only. Commit directly to `main`. Do not create feature branches
+unless the user asks for one. This overrides the default "branch before
+committing on the default branch" behavior.
 
 ## Documentation Index
 
-Read the relevant guide when working on specific areas:
-
 | Topic | Document | When to Read |
 |-------|----------|--------------|
-| Simulation design | `docs/sim-design.md` | Understanding game mechanics, rules |
+| Simulation design | `docs/sim-design.md` | Game mechanics and rules |
 | Turn flow & testing | `docs/dev-guide-simulation.md` | Debugging AI, market mechanics, testing |
-| Ship trading AI | `docs/dev-guide-ships.md` | Developing ship brains, fuel/trade logic |
-| Notebook analysis | `notebooks/README.md` | Working with marimo notebooks |
-| Needs/drives system | `docs/needs.md` | Actor consumption, hunger, clothing |
+| Ship trading AI | `docs/dev-guide-ships.md` | Ship brains, fuel and trade logic |
+| Notebook analysis | `notebooks/README.md` | Marimo notebooks |
+| Needs/drives system | `docs/needs.md` | Actor consumption |
 | Skills system | `docs/skills.md` | Actor skill levels, production |
-| Commodities | `docs/commodities.md` | Adding/modifying tradeable goods |
-| Planet attributes | See "Planet Attributes System" below | Per-planet resource availability |
+| Commodities | `docs/commodities.md` | Adding or modifying goods |
+| Planet attributes | "Planet Attributes" below | Per-planet resource availability |
 | Live galaxy UI | `docs/live-view.md` | Pygame UI development |
-| Performance | `docs/performance.md` | Perf posture, threaded actor phase, open levers |
-| Decision log | `docs/decision-log.md` | Why past changes were made; closed postmortems |
-| **Commodity/process editing** | `.claude/skills/commodity-process-design/` | Modifying commodities, recipes, production chains |
-| **Evaluating sim behavior** | `.claude/skills/sim-evaluation/` | Checking macro behavior after a change; KPI summary, analysis scripts, notebooks |
+| Performance | `docs/performance.md` | Threaded actor phase, caches, open levers |
+| Decision log | `docs/decision-log.md` | Why past changes were made |
+| Commodity/process editing | `.claude/skills/commodity-process-design/` | Commodities, recipes, production chains |
+| Evaluating sim behavior | `.claude/skills/sim-evaluation/` | KPI summary, analysis scripts, notebooks |
 
 ## Key Architecture Facts
 
-These apply to most tasks:
-
-- **Deferred market matching**: Orders execute at END of turn, not immediately
-- **Brain pattern**: Actors/ships delegate decisions to pluggable `Brain` classes
-- **Core files**: `core/simulation.py` (main loop), `core/actor.py`, `core/ship.py`, `core/market.py`
-- **Star-lane galaxy**: `core/galaxy.py` generates a spiral layout plus a connected, planar lane graph; `core/navigation.py` routes along lanes (distance = shortest lane route, never straight-line). Ships fly whole routes without docking at intermediate planets. Default galaxy is 100 planets (`--planets`, `--arms`, `--lane-density`).
+- **Deferred market matching**: orders are matched at the end of the turn, not when placed.
+- **Brain pattern**: actors and ships delegate decisions to pluggable `Brain` classes.
+- **Core files**: `core/simulation.py` (main loop), `core/actor.py`, `core/ship.py`, `core/market.py`.
+- **Star-lane galaxy**: `core/galaxy.py` builds a spiral layout and a connected planar lane graph. `core/navigation.py` routes along lanes, so distance is always the shortest lane route. Ships fly whole routes without docking at intermediate planets. Default is 100 planets (`--planets`, `--arms`, `--lane-density`).
 
 ## Common Implementation Patterns
 
-### Commodity System
-Commodities are defined in `data/commodities.yaml` with a simple structure:
+### Commodities
+Defined in `data/commodities.yaml`:
 ```yaml
 - id: commodity_name
   name: Display Name
@@ -140,160 +126,137 @@ Commodities are defined in `data/commodities.yaml` with a simple structure:
   description: Text description
 ```
 
-Commodities themselves have no planet-specific attributes. Planet-specific resource availability is controlled separately via the **Planet Attributes** system (see below).
+Commodities have no planet-specific attributes. Per-planet availability comes
+from Planet Attributes below. Use the `commodity-process-design` skill to
+modify commodities or processes.
 
-> **To modify commodities or processes**, use the `commodity-process-design` skill which covers schemas, validation, and the graph generation workflow.
+### Planet Attributes
 
-### Planet Attributes System
+Every planet gets random attributes at setup. A directly constructed `Planet`
+defaults to all availabilities 1.0.
 
-Planet attributes control resource availability per-planet. Always on: every
-planet gets random attributes at setup; a directly-constructed `Planet` defaults
-to no penalties (all availabilities 1.0).
+Core file: `core/planet_attributes.py`, `PlanetAttributes` dataclass.
 
-**Core file**: `core/planet_attributes.py` - `PlanetAttributes` dataclass
+How it works:
+1. Each planet gets a random attribute (0.0-1.0) per extractable resource.
+2. Gathering processes in `data/processes.yaml` set a `resource_attribute` field.
+3. `ProcessCommand.execute()` applies the effect when the process runs.
 
-**How it works**:
-1. Each planet gets randomly generated attributes (0.0-1.0) for extractable resources
-2. Gathering processes in `data/processes.yaml` specify a `resource_attribute` field
-3. `ProcessCommand.execute()` applies the effect when the process runs
+Attributes: `biomass`, `fiber`, `wood` (organic), `common_metal_ore`,
+`nova_fuel_ore` (mineral).
 
-**Resource attributes** (defined on `PlanetAttributes`):
-- `biomass`, `fiber`, `wood` - organic resources (always ≥0.2 or ≥0.0)
-- `common_metal_ore`, `nova_fuel_ore` - mineral resources
-
-**Effect types** (per-process in `processes.yaml`):
+Effect types:
 ```yaml
 resource_attribute:
-  commodity: biomass      # Which planet attribute to check
-  effect: output          # "output" = reduced yield, "success" = may fail entirely
+  commodity: biomass      # which planet attribute to check
+  effect: output          # "output" or "success"
 ```
-- `output`: Low availability reduces output quantity (e.g., 0.25 availability → 25% of base output)
-- `success`: Low availability causes random failure (e.g., 0.25 availability → 75% chance to fail)
+- `output`: output quantity scales with availability (0.25 gives 25% of base output).
+- `success`: the process fails with probability 1 - availability.
 
-**Current assignments**:
-- Gathering processes (biomass, fiber, wood): `effect: output`
-- Mining processes (nova_fuel_ore, common_metal_ore): `effect: success`
+Gathering processes (biomass, fiber, wood) use `output`. Mining processes
+(nova_fuel_ore, common_metal_ore) use `success`.
 
-**Generation distributions** (in `PlanetAttributes.generate_random()`):
-- `biomass`: uniform(0.2, 1.0) - always some organic life
-- `nova_fuel_ore`: bimodal - either rare (0.0-0.3) or abundant (0.7-1.0)
-- Others: uniform(0.0, 1.0)
+Distributions in `PlanetAttributes.generate_random()`: `biomass` is
+uniform(0.2, 1.0), `nova_fuel_ore` is bimodal (0.0-0.3 or 0.7-1.0), the rest
+are uniform(0.0, 1.0).
 
-**Adding a new extractable resource**:
-1. Add attribute to `PlanetAttributes` dataclass with appropriate default (1.0)
-2. Update `__post_init__` validation list
-3. Update `generate_random()` with desired distribution
-4. Update `to_dict()` for export
-5. Add `resource_attribute` to the gathering process in `processes.yaml`
+Adding a new extractable resource:
+1. Add the attribute to `PlanetAttributes` with default 1.0.
+2. Add it to the `__post_init__` validation list.
+3. Add its distribution to `generate_random()`.
+4. Add it to `to_dict()` for export.
+5. Add `resource_attribute` to the gathering process in `processes.yaml`.
 
-**Export**: `planet_attributes.json` is written alongside other export files.
-
-> **To add new extractable resources**, use the `commodity-process-design` skill for the process schema and validation workflow.
+`planet_attributes.json` is written with the other export files.
 
 ### Tool and Facility Requirements
 
-Processes in `data/processes.yaml` specify `tools_required` and `facilities_required`. The economy is designed with a **wood-first bootstrap path** - actors can start with nothing and build up through wood before transitioning to metal.
+Processes in `data/processes.yaml` specify `tools_required` and
+`facilities_required`. The economy has a wood-first bootstrap path, so actors
+can start with nothing:
 
-Per-process requirements live in `data/processes.yaml` (render them with
-`uv run spacesim2 dev graph`).
-
-**Bootstrap path** (wood-first economy):
-1. Harvest wood (no tools needed)
-2. Make simple tools from wood (no facility needed)
+1. Harvest wood (no tools)
+2. Make simple tools from wood (no facility)
 3. Make building materials from wood (needs tools)
-4. Build smelting facility (needs building materials + tools)
+4. Build smelting facility (needs building materials and tools)
 5. Mine common metal ore (needs tools)
 6. Refine metal (needs smelting facility)
-7. Build metalworking facility (needs building materials + tools)
+7. Build metalworking facility (needs building materials and tools)
 8. Make simple tools from metal (more efficient, needs metalworking facility)
 
-**Tool degradation**: Tools have a ~1% chance of breaking each time they're used. This creates ongoing demand for tool production.
+Tools break with 1% probability per use, which keeps tool demand alive.
+`ColonistBrain` acquires tools before profitable work. `IndustrialistBrain`
+builds the facilities and acquires the tools its chosen recipe needs.
 
-**Brain behavior**:
-- ColonistBrain: Prioritizes acquiring tools before profitable work
-- IndustrialistBrain: Builds required facilities, acquires tools for chosen recipe
+When changing requirements, use the `commodity-process-design` skill and keep
+the bootstrap path viable.
 
-> **To modify process requirements**, use the `commodity-process-design` skill which covers validation and ensuring the bootstrap path remains viable.
+### Drives (Needs)
 
-### Drive (Needs) System
-Drives live in `core/drives/` and inherit from `ActorDrive`. Two consumption patterns:
+Drives live in `core/drives/` and inherit from `ActorDrive`.
 
-**Deterministic (FoodDrive)**:
-- Consume fixed amount every turn (1 food/turn)
-- Predictable, constant demand
+- `FoodDrive` consumes 1 food every turn.
+- `ClothingDrive`, `ShelterDrive`, and `HealthDrive` consume on random events
+  with probability `BASE_EVENT_PROB` per turn (1/60, 1/120, and 1/90).
 
-**Stochastic (ClothingDrive, ShelterDrive)**:
-- Random consumption events with probability `p` per turn
-- Example: `BASE_EVENT_PROB = 1.0 / 120.0` = ~3 events/year
-- Creates variable demand, more realistic for durable goods
+Every drive tracks four 0-1 metrics: `health` (immediate status), `debt`
+(accumulated neglect), `buffer` (log-normalized days of supply), and `urgency`
+(priority multiplier).
 
-**Drive metrics** (all drives track these):
-- `health`: 0-1, immediate status (e.g., has materials available)
-- `debt`: 0-1, accumulated neglect from missed consumption
-- `buffer`: 0-1, log-normalized inventory coverage (days of supply)
-- `urgency`: 0-1, context-dependent priority multiplier
+Materials: food uses `food`; clothing uses `clothing`; shelter uses
+`simple_building_materials` or `prefab_housing`; health uses `medicine` or
+`advanced_medicine`.
 
-**Material requirements**:
-- FoodDrive: `food`
-- ClothingDrive: `clothing`
-- ShelterDrive: `simple_building_materials`
+Adding a drive needs the whole supply chain:
+1. Raw material and finished good in `data/commodities.yaml`.
+2. Gathering and production processes in `data/processes.yaml`.
+3. A drive class in `core/drives/`.
+4. `colonist.py` and `industrialist.py` considering the need in `decide_economic_action()`.
+5. Brains trading the new commodities (they iterate the registry, so no hardcoded list).
 
-**Adding a new drive requires a complete supply chain:**
-1. **Commodities**: Add both raw material (e.g., `fiber`) and finished good (e.g., `clothing`) to `data/commodities.yaml`
-2. **Processes**: Add gathering process (e.g., `gather_fiber`) and production process (e.g., `make_clothing`) to `data/processes.yaml`
-3. **Drive class**: Create drive in `core/drives/` inheriting from `ActorDrive`
-4. **Actor brains**: Update `colonist.py` and `industrialist.py` to consider the new need in `decide_economic_action()`
-5. **Market trading**: Ensure actor brains trade the new commodities (use dynamic commodity iteration, not hardcoded lists)
-
-**Critical**: Drives silently fail if their expected commodity doesn't exist in the registry (`get_commodity()` returns `None`). Always verify commodities exist before implementing drives that depend on them.
+Drives fail silently if their commodity is missing from the registry
+(`get_commodity()` returns `None`). Check the commodity exists first.
 
 ### Dynamic Commodity Handling
 
-**Market makers and actor brains should use dynamic commodity lists**, not hardcoded ones:
+Market makers and actor brains iterate the registry rather than a hardcoded list:
 
 ```python
-# GOOD - handles all commodities automatically
+# GOOD
 all_commodities = [c for c in actor.sim.commodity_registry.all_commodities() if c.transportable]
 for commodity in all_commodities:
-    # ... trade logic
+    ...
 
-# BAD - requires manual updates when adding commodities
-for commodity in (food, fuel, wood):  # hardcoded list
-    # ... trade logic
+# BAD
+for commodity in (food, fuel, wood):
+    ...
 ```
 
-## Running Simulations for Analysis
+## Analysis
 
-The primary analysis loop is the one in "The Dev Loop" above: Tier-0
-`--summary` for the KPI verdict, Tier-1 `dev analyze` probe scripts for
-open-ended questions (see the `sim-evaluation` skill). Marimo notebooks are an
-**optional human-facing dashboard**, not the default workflow.
-
-### Optional: Marimo Dashboard (human-facing)
+The default loop is the Dev Loop above: `--summary` for the verdict, a
+`dev analyze` script for open-ended questions. Marimo notebooks are an optional
+human-facing dashboard.
 
 ```bash
-# Run simulation with data export and auto-open the dashboard
-uv run spacesim2 run --notebook          # opens notebooks/analysis_template.py
-
-# Or run first, then open manually (auto-detects latest run via SPACESIM_RUN_PATH)
+uv run spacesim2 run --notebook          # export and open notebooks/analysis_template.py
+# or
 uv run spacesim2 run
-uv run marimo edit --no-token notebooks/analysis_template.py
+uv run marimo edit --no-token notebooks/analysis_template.py   # finds the latest run via SPACESIM_RUN_PATH
 ```
 
-If you deliver a notebook to the user, validate it first with
-`uv run marimo check notebooks/my_notebook.py` and start the server for them.
-Common marimo pitfalls: use `_` prefix for cell-local variables (`_fig`),
-assign conditional outputs to a named variable before displaying, don't return
-unused variables.
+Before handing a notebook to the user, run `uv run marimo check` on it and
+start the server. Marimo pitfalls: prefix cell-local variables with `_`,
+assign conditional outputs to a named variable before displaying, and do not
+return unused variables.
 
-### When to Use What
-
-- **Tier-0 `--summary`**: "did my change break the economy?" — cheap, token-efficient
-- **Tier-1 `dev analyze` script**: open-ended behavioral questions, debugging
-- **Marimo notebook**: interactive charts a human wants to explore
-- **pytest**: automated assertions on expected behavior:
+When to use what:
+- `--summary`: did my change break the economy?
+- `dev analyze` script: open-ended behavioral questions, debugging
+- Marimo notebook: interactive charts for a human
+- pytest: durable assertions, for example:
 ```python
-# tests/test_component.py
 def test_specific_behavior():
     sim = Simulation()
     sim.setup_simple(num_planets=2, num_regular_actors=10, num_market_makers=1, num_ships=1)

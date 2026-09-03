@@ -30,7 +30,6 @@ def _(mo, os, Path):
         run_path_str = str(auto_run_path)
         status_msg = f"✓ Using run: **{auto_run_path.name}**"
 
-        # Check if from env var or auto-detected
         if os.getenv("SPACESIM_RUN_PATH"):
             status_msg += " (from SPACESIM_RUN_PATH)"
         else:
@@ -59,7 +58,6 @@ def _(mo, os, Path):
 
 @app.cell
 def _(Path, SimulationData, mo, run_selector):
-    # Only load if path is valid
     if not run_selector.value:
         mo.md("⚠️ No run path specified. Run `spacesim2 run` first.")
         data = None
@@ -79,7 +77,6 @@ def _(data, mo):
     if data is None:
         mo.md("## Simulation Overview\n\nNo data loaded")
     else:
-        # Show basic stats
         mo.md(f"""
         ## Simulation Overview
         - **Turns:** {data.actor_turns["turn"].max() if len(data.actor_turns) > 0 else "N/A"}
@@ -103,7 +100,6 @@ def _(data, px):
     if data is None:
         "No data loaded"
     elif len(data.actor_turns) > 0:
-        # Example: Money over time for actors
         actor_money = data.actor_turns.select(
             ["turn", "actor_id", "actor_name", "money"]
         )
@@ -134,7 +130,6 @@ def _(data, px):
     if data is None:
         "No data loaded"
     elif len(data.market_snapshots) > 0:
-        # Example: Average price per commodity over time
         price_trends = data.market_snapshots.select(
             ["turn", "commodity_id", "avg_price"]
         )
@@ -157,7 +152,6 @@ def _(data, pl, px):
     if data is None:
         "No data loaded"
     elif len(data.market_transactions) > 0:
-        # Example: Transaction volume per commodity
         volume_by_commodity = (
             data.market_transactions.group_by("commodity_id")
             .agg(pl.col("quantity").sum().alias("total_volume"))
@@ -190,7 +184,6 @@ def _(data, pl, px):
     if data is None:
         "No data loaded"
     elif len(data.actor_drives) > 0:
-        # Example: Drive health over time
         drive_health = data.actor_drives.select(["turn", "drive_name", "health"])
         avg_health = drive_health.group_by(["turn", "drive_name"]).agg(
             pl.col("health").mean().alias("avg_health")
@@ -218,7 +211,6 @@ def _(data, pl, px):
     if data is None:
         "No data loaded"
     elif len(data.actor_drives) > 0:
-        # Example: Drive debt over time
         drive_debt = data.actor_drives.select(["turn", "drive_name", "debt"])
         avg_debt = drive_debt.group_by(["turn", "drive_name"]).agg(
             pl.col("debt").mean().alias("avg_debt")

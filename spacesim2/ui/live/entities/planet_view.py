@@ -1,15 +1,14 @@
-"""Draws a planet: baked/placeholder sphere + wellbeing-reactive glow + label.
+"""Draws a planet: baked or placeholder sphere, wellbeing glow, and label.
 
-Wellbeing is the one signal every world must broadcast at a glance, and the
-baked painterly sprites replaced the old body tint — so the cues here scale
-with *distress* (1 - wellbeing) instead of sitting at a fixed strength:
+Wellbeing is the one signal every world must show at a glance, so the cues
+scale with distress, defined as 1 - wellbeing:
 
-- The halo is faint and calm on a thriving world, and grows larger, hotter,
-  and brighter as wellbeing drops.
-- Below ``PULSE_WELLBEING`` the halo slowly "breathes" so a famine catches the
-  eye even in a busy frame.
+- The halo is faint on a thriving world and grows larger, hotter, and
+  brighter as wellbeing drops.
+- Below ``PULSE_WELLBEING`` the halo slowly pulses so a famine catches the
+  eye in a busy frame.
 - A wellbeing-coloured tint, masked to the sprite's silhouette, fades in over
-  the baked art on sick worlds; healthy worlds show the untouched painting.
+  the baked art on sick worlds. Healthy worlds show the untouched painting.
 """
 
 from __future__ import annotations
@@ -24,18 +23,18 @@ from spacesim2.ui.live.camera import Camera
 from spacesim2.ui.live.procgen.placeholders import planet_sprite
 from spacesim2.ui.live.view_model import PlanetSnapshot
 
-# Planet visual radius in map units (independent of population for now).
-# Public: the scene uses it for click hit-testing and selection rings.
+# Planet visual radius in map units, independent of population. The scene
+# uses it for click hit-testing and selection rings.
 PLANET_MAP_RADIUS = 2.2
-# Floor so a world stays a visible, clickable disc when a 100+ planet galaxy is
+# Floor so a world stays a visible, clickable disc when a large galaxy is
 # zoomed out to fit the screen.
 MIN_PLANET_PX = 5
-# Labels are drawn only once worlds are at least this big on screen (else a
-# dense galaxy becomes a wall of overlapping text); hovered/selected planets
-# are always labelled.
+# Labels are drawn only once worlds are at least this big on screen;
+# otherwise a dense galaxy becomes a wall of overlapping text. Hovered and
+# selected planets are always labelled.
 LABEL_MIN_RADIUS_PX = 8
 
-# Wellbeing below this makes the halo pulse (a world in real trouble).
+# Wellbeing below this makes the halo pulse.
 PULSE_WELLBEING = 0.35
 _PULSE_HZ = 0.9
 
@@ -53,10 +52,10 @@ def _distress(wellbeing: float) -> float:
 
 
 def glow_strength(wellbeing: float, time_s: float) -> float:
-    """Halo intensity in [0, 1]; distressed worlds breathe over ``time_s``.
+    """Halo intensity in [0, 1]; distressed worlds pulse over ``time_s``.
 
-    The distress exponent keeps mid-range worlds modest so a truly failing
-    world still stands apart from a merely mediocre one.
+    The distress exponent keeps mid-range worlds modest so a failing world
+    stands apart from a mediocre one.
     """
     strength = 0.15 + 0.85 * math.pow(_distress(wellbeing), 1.5)
     if wellbeing < PULSE_WELLBEING:
@@ -104,7 +103,7 @@ def draw_planet(
     glow_color = assets.wellbeing_color(planet.wellbeing)
     distress = _distress(planet.wellbeing)
 
-    # Wellbeing glow ring: reach and brightness both scale with distress.
+    # Glow ring reach and brightness both scale with distress.
     glow_r = int(radius * (1.5 + 0.9 * distress))
     peak_alpha = int(_GLOW_MAX_ALPHA * glow_strength(planet.wellbeing, time_s))
     glow = pygame.Surface((glow_r * 2, glow_r * 2), pygame.SRCALPHA)
@@ -119,13 +118,13 @@ def draw_planet(
     surface.blit(glow, (screen_pos[0] - glow_r, screen_pos[1] - glow_r))
 
     if sprites:
-        # Baked painterly sprite (committed from the asset pipeline), scaled to
-        # the current zoom. Stable per world so a planet keeps its look.
+        # Baked sprite scaled to the current zoom. Stable per world so a
+        # planet keeps its look.
         baked = sprites.for_name(planet.name)
         body_sprite = pygame.transform.smoothscale(baked, (radius * 2, radius * 2))
         overlay_alpha = tint_alpha(planet.wellbeing)
         if overlay_alpha > 0:
-            # Multiply-tint a copy (keeps the sprite's own alpha silhouette),
+            # Multiply-tint a copy, which keeps the sprite's alpha silhouette,
             # then fade it over the art by distress. smoothscale returned a
             # fresh surface, so mutating body_sprite never touches the cache.
             overlay = body_sprite.copy()
@@ -144,7 +143,6 @@ def draw_planet(
 
     if not show_label:
         return
-    # Label below the world.
     label = fonts.render(planet.name, "small", assets.HUD_TEXT)
     surface.blit(
         label,

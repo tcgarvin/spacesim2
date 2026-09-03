@@ -19,7 +19,7 @@ from spacesim2.core.simulation import Simulation
 
 
 def _min_pairwise_distance(positions: list[tuple[float, float]]) -> float:
-    """Return the smallest pairwise distance among positions."""
+    """Smallest pairwise distance among positions."""
     best = math.inf
     for i, (x1, y1) in enumerate(positions):
         for x2, y2 in positions[i + 1 :]:
@@ -68,7 +68,7 @@ def test_layout_rejects_bad_arguments() -> None:
 
 
 def test_500_planet_setup_produces_exactly_500_planets() -> None:
-    """A 500-planet galaxy must have 500 planets, unique names, valid spacing."""
+    """A 500-planet galaxy has 500 planets, unique names, and valid spacing."""
     sim = Simulation()
     sim.setup_simple(
         num_planets=500,
@@ -86,8 +86,8 @@ def test_500_planet_setup_produces_exactly_500_planets() -> None:
     positions = [(p.x, p.y) for p in sim.planets]
     assert _min_pairwise_distance(positions) >= MIN_PLANET_DISTANCE - 1e-9
     assert len(sim.star_lanes) >= 499
-    # Every planet is on at least one lane and the navigator can route
-    # between arbitrary pairs (it raises if the network is disconnected).
+    # Every planet is on a lane and the navigator can route between arbitrary
+    # pairs. It raises if the network is disconnected.
     assert all(sim.star_lanes.lanes_from(p) for p in sim.planets)
     nav = get_navigator(sim)
     assert nav.distance(sim.planets[0], sim.planets[-1]) < math.inf
@@ -136,7 +136,7 @@ def test_procedural_names_are_unique_and_readable() -> None:
 
 
 def test_map_scales_with_planet_count() -> None:
-    """Bigger galaxies get bigger maps (constant arm density), spacing preserved."""
+    """Bigger galaxies get bigger maps at constant arm density."""
     small = generate_spiral_layout(5, rng=random.Random(2))
     large = generate_spiral_layout(200, rng=random.Random(2))
     assert large.width * large.height > 4 * small.width * small.height
@@ -160,7 +160,7 @@ def _lane_world(specs, lanes):
 
 
 def test_navigator_distance_follows_lanes_not_straight_line() -> None:
-    # A - B - C in a line; A and C are NOT directly linked.
+    # A - B - C in a line; A and C are not directly linked.
     sim, p = _lane_world(
         [("A", 0, 0), ("B", 30, 0), ("C", 60, 0), ("D", 30, 40)],
         [("A", "B"), ("B", "C"), ("B", "D")],

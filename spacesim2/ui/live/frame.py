@@ -1,17 +1,16 @@
 """The immutable per-turn frame the renderer reads from.
 
-The simulation mutates freely inside ``run_turn`` (deferred market matching,
-inventory transfers, ship movement), so the render thread must never look at
-live ``Planet`` / ``Actor`` / ``Ship`` / ``Market`` objects. Instead the
+The simulation mutates freely inside ``run_turn``, so the render thread must
+never read live ``Planet``, ``Actor``, ``Ship``, or ``Market`` objects. The
 simulation worker builds one :class:`TurnFrame` at each turn boundary and
-publishes it by reference swap; readers hold a frozen object and need no lock.
+publishes it by reference swap. Readers hold a frozen object and need no lock.
 
 A frame carries only what the screen shows: one small snapshot per planet and
-ship, the galaxy vitals for the HUD, and drill-down details for the entities the
-UI has *subscribed* to (the current selection) — never a copy of the whole sim.
-The per-planet wellbeing sweep (every actor's drives) is the one expensive part
-of building a frame, so it is computed once here and shared with the history
-recorder.
+ship, the galaxy vitals for the HUD, and drill-down details for the entities
+the UI has subscribed to, meaning the current selection. It is never a copy of
+the whole sim. The per-planet wellbeing sweep over every actor's drives is the
+one expensive part of building a frame, so it is computed once and shared with
+the history recorder.
 """
 
 from __future__ import annotations
@@ -75,8 +74,8 @@ def build_details(
 ) -> Tuple[Dict[str, PlanetDetail], Dict[str, ShipDetail]]:
     """Drill-down snapshots for the subscribed entities only.
 
-    A subscription naming an entity that no longer exists is simply skipped;
-    the scene notices the name is missing from the frame and drops it.
+    A subscription naming an entity that no longer exists is skipped; the
+    scene notices the name is missing from the frame and drops it.
     """
     planet_details: Dict[str, PlanetDetail] = {}
     ship_details: Dict[str, ShipDetail] = {}
@@ -102,10 +101,9 @@ def build_frame(
 ) -> TurnFrame:
     """Snapshot the simulation into a frame. Runs on the simulation thread.
 
-    ``wellbeing_by_planet`` is the result of the per-planet actor sweep
-    (``view_model.planet_wellbeing_by_name``), passed in so the caller can share
-    the same sweep with the history recorder instead of walking every actor
-    twice per turn.
+    ``wellbeing_by_planet`` is the result of ``planet_wellbeing_by_name``,
+    passed in so the caller can share one actor sweep with the history
+    recorder.
     """
     planets = tuple(view_model.planets(wellbeing_by_planet))
     ships = tuple(view_model.ships())
@@ -127,8 +125,8 @@ def with_details(
 ) -> TurnFrame:
     """The same turn's frame with its detail set rebuilt for ``subscriptions``.
 
-    Used to service a subscription change between turns without re-sweeping
-    every planet; only the (few) subscribed entities are inspected.
+    Services a subscription change between turns without re-sweeping every
+    planet; only the subscribed entities are inspected.
     """
     planet_details, ship_details = build_details(view_model, subscriptions)
     return replace(frame, planet_details=planet_details, ship_details=ship_details)

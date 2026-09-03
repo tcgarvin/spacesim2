@@ -1,14 +1,13 @@
-"""Diagnostic harness: interrogate industrialist recipe scoring on the live
-market after a long run, focused on why the chemistry_lab tier is stillborn.
+"""Probe industrialist recipe scoring on the live market after a long run.
 
-Run standalone (it builds and runs its own sim; it does NOT use load_run):
+Runs its own sim rather than using load_run:
 
     uv run python notebooks/chem_score_probe.py
 
-It runs a real simulation, then for representative industrialists computes the
-ACTUAL score/expected-profit the deflation-fix code assigns to chemistry-lab
-recipes vs. the recipes that actually get picked (textiles), with a full cost
-breakdown so we can see which term kills the chemistry chain.
+For one representative industrialist per planet it prints the score and
+expected profit the brain assigns to chemistry-lab recipes against the recipes
+it picks, with a term-by-term cost breakdown showing which term kills the
+chemistry chain.
 """
 
 import contextlib
@@ -64,8 +63,8 @@ def run() -> None:
         ships=1,
         enable_planet_attributes=True,
     )
-    # run_turn() prints an unconditional per-turn summary; swallow it so the
-    # only thing on stdout is our diagnostic dump.
+    # run_turn() prints a per-turn summary; swallow it so only the diagnostic
+    # dump reaches stdout.
     with contextlib.redirect_stdout(io.StringIO()):
         for _ in range(TURNS):
             sim.run_turn()
@@ -82,13 +81,11 @@ def run() -> None:
     print(f"turns={TURNS} planets={PLANETS} actors/planet={ACTORS}")
     print(f"total industrialists: {len(industrialists)}")
 
-    # Distribution of chosen recipes across the industrialist population.
     chosen = Counter(a.brain.chosen_recipe_id for a in industrialists)
     print("\n=== chosen_recipe_id distribution (all industrialists) ===")
     for rid, n in chosen.most_common():
         print(f"  {rid!s:32} {n}")
 
-    # Facility ownership across the whole population.
     print("\n=== facility ownership (any actor) ===")
     for fac in [
         "textile_mill",
@@ -102,8 +99,7 @@ def run() -> None:
         owners = sum(1 for a in sim.actors if a.inventory.get_quantity(c) > 0)
         print(f"  {fac:24} owners={owners}")
 
-    # Pick one industrialist per planet as a representative and dump live prices
-    # + full recipe-score breakdowns using that actor's own market.
+    # One representative industrialist per planet, scored on its own market.
     seen_planets = set()
     reps = []
     for a in industrialists:
@@ -143,9 +139,9 @@ def run() -> None:
 
 
 def _breakdown(actor, market, brain, process) -> None:
-    """Reproduce _impute_recipe_cost / output-value term by term."""
+    """Reproduce _impute_recipe_cost and the output value term by term."""
     reg_out = process.outputs
-    # cost side
+    # Cost side.
     labor = 10.0  # GOVERNMENT_WAGE
     parts = [f"labor={labor:.1f}"]
     total = labor
@@ -180,7 +176,7 @@ def _breakdown(actor, market, brain, process) -> None:
             f"={_f(amort)}"
         )
 
-    # output side (as in _calculate_recipe_score)
+    # Output side, as in _calculate_recipe_score.
     attr_mod = 1.0
     if process.resource_attribute and actor.planet and actor.planet.attributes:
         attr_mod = actor.planet.attributes.get_availability(

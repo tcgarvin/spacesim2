@@ -13,7 +13,7 @@ from spacesim2.analysis.loading.utils import (
 
 
 class TestParseRunTimestamp:
-    """Tests for parse_run_timestamp function."""
+    """Tests for parse_run_timestamp."""
 
     def test_valid_timestamp(self, tmp_path):
         """Parse valid run directory name."""
@@ -38,7 +38,7 @@ class TestParseRunTimestamp:
 
 
 class TestFindMostRecentRun:
-    """Tests for find_most_recent_run function."""
+    """Tests for find_most_recent_run."""
 
     def test_single_run(self, tmp_path):
         """Find single run."""
@@ -65,7 +65,6 @@ class TestFindMostRecentRun:
         valid = tmp_path / "run_20251130_120000"
         valid.mkdir()
 
-        # Create invalid directories
         (tmp_path / "not_a_run").mkdir()
         (tmp_path / "run_invalid").mkdir()
         (tmp_path / "data").mkdir()
@@ -78,7 +77,6 @@ class TestFindMostRecentRun:
         run1 = tmp_path / "run_20251130_120000"
         run1.mkdir()
 
-        # Create a file that matches pattern
         (tmp_path / "run_20251130_130000").touch()
 
         result = find_most_recent_run(tmp_path)
@@ -103,7 +101,7 @@ class TestFindMostRecentRun:
 
 
 class TestGetRunPathWithFallback:
-    """Tests for get_run_path_with_fallback function."""
+    """Tests for get_run_path_with_fallback."""
 
     def test_uses_env_var_when_set(self, tmp_path, monkeypatch):
         """Use environment variable when set."""
@@ -125,13 +123,11 @@ class TestGetRunPathWithFallback:
 
     def test_env_var_takes_precedence(self, tmp_path, monkeypatch):
         """Environment variable takes precedence over auto-detection."""
-        # Create auto-detectable run
         auto_run = tmp_path / "run_20251130_120000"
         auto_run.mkdir()
 
-        # Set env var to different path
         env_run = tmp_path / "custom_run"
         monkeypatch.setenv("SPACESIM_RUN_PATH", str(env_run))
 
         result = get_run_path_with_fallback(base_path=tmp_path)
-        assert result == env_run  # Uses env var, not auto-detected
+        assert result == env_run

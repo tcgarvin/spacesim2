@@ -1,9 +1,9 @@
 """Behavioral tests for lazy-delete order cancellation in Market.
 
 cancel_order marks orders dead instead of rebuilding the per-commodity book
-list; these tests pin down that every reader sees exactly the live orders an
-eager delete would have left (content and relative order), that matching
-ignores dead orders, and that compaction keeps book length bounded.
+list. Every reader must see the live orders an eager delete would have left,
+in the same relative order; matching must ignore dead orders; compaction must
+keep book length bounded.
 """
 
 import pytest
@@ -57,7 +57,7 @@ def test_cancel_updates_spread_and_levels(commodity_registry, food, mock_sim) ->
     assert market.get_bid_ask_spread(food) == (8, 20)
     assert market.get_bid_levels(food) == [(8, 3)]
 
-    # Reserved resources released exactly as with an eager delete.
+    # Reserved resources are released as with an eager delete.
     assert buyer.reserved_money == 3 * 8
     assert seller.inventory.get_reserved_quantity(food) == 5
 
@@ -83,7 +83,7 @@ def test_cancel_all_orders_reads_as_empty(commodity_registry, food, mock_sim) ->
 
 
 def test_matching_ignores_cancelled_orders(commodity_registry, food, mock_sim) -> None:
-    """A cancelled crossing order must not trade; the live book still matches."""
+    """A cancelled crossing order does not trade; the live book still matches."""
     market = _make_market(commodity_registry)
     buyer = get_actor("Buyer", mock_sim, initial_money=1000)
     seller = get_actor("Seller", mock_sim)
@@ -100,9 +100,9 @@ def test_matching_ignores_cancelled_orders(commodity_registry, food, mock_sim) -
     tx = market.transaction_history[0]
     assert tx.price == 10
     assert tx.quantity == 5
-    # The cancelled 30-credit bid never traded: buyer paid the 10-credit level.
+    # The cancelled 30-credit bid never traded, so the buyer paid 10.
     assert buyer.money == 1000 - 5 * 10
-    # Post-match books contain no dead orders at all.
+    # Post-match books contain no dead orders.
     assert all(not o.cancelled for o in market.buy_orders[food])
     assert all(not o.cancelled for o in market.sell_orders[food])
 
@@ -121,7 +121,7 @@ def test_compaction_preserves_live_order_sequence(
         assert market.cancel_order(order_id)
 
     # The fifth cancel crosses the dead > len(book)//2 threshold, so the book
-    # has compacted down to exactly the live orders, in placement order.
+    # compacts down to the live orders in placement order.
     book = market.buy_orders[food]
     assert [o.order_id for o in book] == live_expected
     assert all(not o.cancelled for o in book)
@@ -130,7 +130,7 @@ def test_compaction_preserves_live_order_sequence(
 def test_cancel_repost_churn_keeps_book_bounded(
     commodity_registry, food, mock_sim
 ) -> None:
-    """Repeated cancel/repost cycles must not grow the book unboundedly."""
+    """Repeated cancel and repost cycles keep the book bounded."""
     market = _make_market(commodity_registry)
     buyer = get_actor("Buyer", mock_sim, initial_money=100000)
 
@@ -141,7 +141,7 @@ def test_cancel_repost_churn_keeps_book_bounded(
         resting.append(market.place_buy_order(buyer, food, 1, 5))
 
     book = market.buy_orders[food]
-    # 10 live orders; threshold compaction bounds the dead tail to ~len(book)//2.
+    # 10 live orders; threshold compaction bounds the dead tail to len(book)//2.
     assert len(_live(book)) == 10
     assert len(book) <= 2 * 10 + 2
 
@@ -179,7 +179,7 @@ def test_match_orders_compacts_every_book(commodity_registry, food, mock_sim) ->
 
 
 def test_export_order_counts_skip_cancelled(commodity_registry, food, mock_sim) -> None:
-    """Exported book counts must not include phantom (cancelled) orders."""
+    """Exported book counts exclude cancelled orders."""
     market = _make_market(commodity_registry)
     buyer = get_actor("Buyer", mock_sim, initial_money=1000)
 
@@ -188,7 +188,7 @@ def test_export_order_counts_skip_cancelled(commodity_registry, food, mock_sim) 
     cancelled = market.place_buy_order(buyer, food, 1, 7)
     assert market.cancel_order(cancelled)
 
-    # The exporter counts live orders with exactly this filter.
+    # The exporter counts live orders with this filter.
     num_buy_orders = len(
         [o for o in market.buy_orders.get(food, []) if not o.cancelled]
     )

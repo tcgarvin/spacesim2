@@ -1,5 +1,7 @@
-"""Registry caches (all_commodities/all_processes, producer index) and the
-per-actor-turn BrainCache invalidation rules."""
+"""Registry caches and the per-actor-turn BrainCache invalidation rules.
+
+Registry caches cover all_commodities, all_processes, and the producer index.
+"""
 
 import math
 from pathlib import Path
@@ -35,7 +37,7 @@ def _load_real_registries() -> tuple[CommodityRegistry, ProcessRegistry]:
 
 class TestProcessRegistryProducerIndex:
     def test_index_matches_brute_force_scan_for_every_commodity(self) -> None:
-        """The producer index must agree with a full-registry scan."""
+        """The producer index agrees with a full-registry scan."""
         commodity_registry, process_registry = _load_real_registries()
         all_processes = process_registry.all_processes()
         assert all_processes, "real process data should not be empty"
@@ -104,8 +106,8 @@ class TestRegistryListCaches:
 class TestBrainCacheInvalidation:
     """One BrainCache per brain, refreshed each decide_* entry.
 
-    Market-derived entries live for a whole sim turn; actor-state entries are
-    additionally dropped when inventory or skills change.
+    Market-derived entries live for a whole sim turn. Actor-state entries are
+    also dropped when inventory or skills change.
     """
 
     def _actor_and_brain(self) -> tuple[Actor, ColonistBrain, Mock]:
@@ -136,7 +138,7 @@ class TestBrainCacheInvalidation:
         market.get_bid_ask_spread.return_value = (4, 6)
         assert _get_bid_ask(market, food, brain._turn_cache(actor)) == (3, 5)
 
-        # New turn: the quote must be re-fetched from the (changed) market.
+        # New turn: the quote is re-fetched from the changed market.
         sim.current_turn = 1
         assert _get_bid_ask(market, food, brain._turn_cache(actor)) == (4, 6)
 
@@ -157,8 +159,8 @@ class TestBrainCacheInvalidation:
         assert cache.bid_ask == {"food": (3, 5)}
         assert cache.replacement_cost == {"food": 7.0}
 
-        # Inventory mutation (as after a ProcessCommand executes): the
-        # actor-state group is dropped, market quotes are kept.
+        # An inventory change, as after a ProcessCommand, drops the actor-state
+        # group and keeps market quotes.
         actor.inventory.add_commodity(thing, 1)
         cache = brain._turn_cache(actor)
         assert cache.bid_ask == {"food": (3, 5)}
@@ -193,8 +195,7 @@ class TestBrainCacheInvalidation:
         assert cache.ranked_profits is None
 
     def test_skill_factor_survives_turn_and_inventory_changes(self) -> None:
-        """Skill factors depend only on skills, so they must outlive both a
-        turn boundary and a mid-turn inventory bump."""
+        """Skill factors depend only on skills, so they outlive turns and inventory."""
         actor, brain, sim = self._actor_and_brain()
         thing = CommodityDefinition(
             id="thing", name="Thing", transportable=True, description=""
@@ -212,10 +213,12 @@ class TestBrainCacheInvalidation:
         assert cache.skill_factor == {"make_food": 1.5}
 
     def test_ranked_profits_survives_inventory_change(self) -> None:
-        """The valuation ranking is quote/skill-derived, so the mid-turn
-        inventory bump from the economic command must not drop it (that is
-        the whole point: no second registry scan in decide_market_actions).
-        best_result, which reads inventory via can_execute, must drop."""
+        """The mid-turn inventory bump keeps ranked_profits and drops best_result.
+
+        The ranking is quote and skill derived, and keeping it avoids a second
+        registry scan in decide_market_actions. best_result reads inventory
+        via can_execute, so it must drop.
+        """
         actor, brain, _sim = self._actor_and_brain()
         thing = CommodityDefinition(
             id="thing", name="Thing", transportable=True, description=""
@@ -248,9 +251,11 @@ class TestBrainCacheInvalidation:
 
 
 class TestBestProcessRankedWalkEquivalence:
-    """The ranked-vector walk in _best_process_and_raw_profit must pick
-    exactly what the original first-strictly-better registry scan picked,
-    including tie-breaking by registry order and the >10.0 profit bar."""
+    """The ranked walk in _best_process_and_raw_profit matches a full scan.
+
+    The reference is a first-strictly-better registry scan, including
+    tie-breaking by registry order and the > 10.0 profit bar.
+    """
 
     @staticmethod
     def _brute_force_reference(
@@ -294,11 +299,10 @@ class TestBestProcessRankedWalkEquivalence:
         )
         for _ in range(5):
             sim.run_turn()
-        # run_turn leaves current_turn at the just-played turn, so brains
-        # would (legitimately) serve quotes cached mid-phase, before end-of-
-        # turn matching moved the books. Step to the next turn so both the
-        # cache-backed path and the brute-force reference read the same
-        # post-matching market state, as any real decide_* call would.
+        # run_turn leaves current_turn at the just-played turn, so brains would
+        # serve quotes cached mid-phase, before end-of-turn matching moved the
+        # books. Step to the next turn so the cached path and the reference
+        # both read the post-matching state, as a real decide_* call would.
         sim.current_turn += 1
 
         checked = 0
@@ -312,8 +316,8 @@ class TestBestProcessRankedWalkEquivalence:
                 cache = brain._turn_cache(actor)
                 got = brain._best_process_and_raw_profit(actor, market, cache)
                 assert got == expected
-                # And again from the memoized ranking after an inventory-only
-                # change (the mid-turn path that skips the second scan).
+                # Again from the memoized ranking after an inventory-only
+                # change, the mid-turn path that skips the second scan.
                 wood = sim.commodity_registry.get_commodity("wood")
                 assert wood is not None
                 actor.inventory.add_commodity(wood, 1)
@@ -327,10 +331,12 @@ class TestBestProcessRankedWalkEquivalence:
 
 
 class TestSharedQuoteTable:
-    """The actor-independent process quote table is shared across actors on
-    one market, keyed on (sim turn, quote_version): identical key implies
-    identical quotes and avg prices, so the tables are identical. Any
-    best-quote mutation bumps the version and forces a rebuild."""
+    """The actor-independent process quote table is shared per market.
+
+    It is keyed on (sim turn, quote_version). An identical key implies
+    identical quotes and average prices, so the tables are identical. Any
+    best-quote mutation bumps the version and forces a rebuild.
+    """
 
     def test_two_colonists_share_the_table_and_a_quote_move_rebuilds(self) -> None:
         from spacesim2.core.simulation import Simulation
@@ -368,9 +374,9 @@ class TestSharedQuoteTable:
         assert shared is not None
         assert shared[1] is table_a
 
-        # Second actor, unchanged book: identical object, no rebuild — and
-        # the shared table still yields the brute-force answer for B's own
-        # skills/inventory (only the quote-derived part is shared).
+        # Second actor, unchanged book: same object, no rebuild. The shared
+        # table still yields the brute-force answer for B's own skills and
+        # inventory, since only the quote-derived part is shared.
         cache_b = brain_b._turn_cache(second)
         expected_b = TestBestProcessRankedWalkEquivalence._brute_force_reference(
             brain_b, second, market
@@ -391,7 +397,7 @@ class TestSharedQuoteTable:
             seller.inventory.add_commodity(food, 5)
             assert market.place_sell_order(seller, food, 1, ask - 1)
         else:
-            # Can't undercut a 1-credit (or absent) ask; improve the bid side.
+            # Cannot undercut a 1-credit or absent ask; improve the bid side.
             assert market.place_buy_order(
                 seller, food, 1, 1 if bid is None else bid + 1
             )
@@ -451,10 +457,12 @@ class TestSharedQuoteTable:
 
 
 class TestReplacementCostSplitEquivalence:
-    """The quote-part split of _replacement_cost must return bit-identical
-    values to the original single-pass computation in every actor state,
-    including immediately after mid-turn inventory and skill bumps (which
-    must NOT invalidate the per-turn replacement_quote_parts table)."""
+    """The quote-part split of _replacement_cost matches the single-pass version.
+
+    Values must be bit-identical in every actor state, including right after
+    mid-turn inventory and skill bumps, which must not invalidate the
+    per-turn replacement_quote_parts table.
+    """
 
     @staticmethod
     def _reference(
@@ -463,7 +471,7 @@ class TestReplacementCostSplitEquivalence:
         market: object,
         commodity: CommodityDefinition,
     ) -> float | None:
-        """Naive copy of the pre-split _replacement_cost, cache-less."""
+        """Cache-less copy of the pre-split _replacement_cost."""
         best: float | None = None
         for process in actor.sim.process_registry.get_processes_producing(commodity):
             out_qty = process.outputs.get(commodity, 0)
@@ -509,8 +517,8 @@ class TestReplacementCostSplitEquivalence:
         )
         for _ in range(5):
             sim.run_turn()
-        # Step past the just-played turn so cache-backed and reference reads
-        # both see the post-matching books (see the ranked-walk test above).
+        # Step past the just-played turn so cached and reference reads both
+        # see the post-matching books. See the ranked-walk test above.
         sim.current_turn += 1
 
         commodities = sim.commodity_registry.all_commodities()
@@ -529,8 +537,8 @@ class TestReplacementCostSplitEquivalence:
                     got = brain._replacement_cost(actor, market, commodity, cache)
                     assert got == expected
 
-                # Mid-turn inventory bump (as after a ProcessCommand): give
-                # the actor a tool, flipping tool-amortization branches. The
+                # A mid-turn inventory bump, as after a ProcessCommand, gives
+                # the actor a tool and flips tool-amortization branches. The
                 # actor-group memo must drop; the quote-parts table must not.
                 actor.inventory.add_commodity(tool, 1)
                 cache = brain._turn_cache(actor)
@@ -541,8 +549,8 @@ class TestReplacementCostSplitEquivalence:
                     got = brain._replacement_cost(actor, market, commodity, cache)
                     assert got == expected
 
-                # Mid-turn skill bump (a successful ProcessCommand bumps
-                # skills every time): quote parts still survive.
+                # A mid-turn skill bump, as after every successful
+                # ProcessCommand, still keeps the quote parts.
                 actor.improve_skill("farming", 0.2)
                 cache = brain._turn_cache(actor)
                 assert cache.replacement_quote_parts
@@ -556,8 +564,10 @@ class TestReplacementCostSplitEquivalence:
 
 
 class TestCheapestMaterialAskEquivalence:
-    """The quote fast path of _cheapest_material_ask must agree exactly with
-    the original full non-own, non-cancelled book scan."""
+    """The quote fast path of _cheapest_material_ask matches a full book scan.
+
+    The reference scan skips own and cancelled orders.
+    """
 
     @staticmethod
     def _reference(actor: Actor, market: object, materials: list) -> tuple:
@@ -606,8 +616,8 @@ class TestCheapestMaterialAskEquivalence:
                 if not isinstance(brain, ActorBrain):
                     continue
                 cache = brain._turn_cache(actor)
-                # Whole-registry material list exercises the cross-material
-                # min; per-commodity calls exercise every single-material path.
+                # The whole-registry list exercises the cross-material min;
+                # per-commodity calls exercise every single-material path.
                 expected = self._reference(actor, market, commodities)
                 got = brain._cheapest_material_ask(actor, market, commodities, cache)
                 assert got == expected
@@ -681,8 +691,7 @@ class TestCheapestMaterialAskEquivalence:
 
 
 class TestSellAtOrAboveCostMaxPass:
-    """The single max pass must price exactly like the old full sort that
-    only ever read bids[0].price."""
+    """The single max pass prices like a full sort that reads bids[0].price."""
 
     def test_prices_at_best_non_own_live_bid(self) -> None:
         registry = CommodityRegistry()
@@ -710,11 +719,11 @@ class TestSellAtOrAboveCostMaxPass:
         assert len(commands) == 1
         command = commands[0]
         assert isinstance(command, PlaceSellOrderCommand)
-        # Best live non-own bid covers the floor -> hit it.
+        # The best live non-own bid covers the floor, so hit it.
         assert command.price == high_bid
         assert command.quantity == 3
 
-        # With no live non-own bids at all, the ask rests at the floor.
+        # With no live non-own bids, the ask rests at the floor.
         market.cancel_order(market.actor_orders[other]["buy"][0])
         commands = brain._sell_at_or_above_cost(me, market, food, 3)
         command = commands[0]

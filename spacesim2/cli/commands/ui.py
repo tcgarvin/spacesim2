@@ -8,14 +8,7 @@ from spacesim2.core.galaxy import DEFAULT_ARMS, DEFAULT_LANE_DENSITY
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser:  # type: ignore
-    """Add the 'ui' subcommand parser.
-
-    Args:
-        subparsers: Subparsers to add this command to
-
-    Returns:
-        The created parser
-    """
+    """Add the 'ui' subcommand parser."""
     parser: argparse.ArgumentParser = subparsers.add_parser(
         "ui",
         help="Launch interactive Pygame UI",
@@ -70,23 +63,15 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
 
 
 def execute(args: argparse.Namespace) -> int:
-    """Execute the UI command.
-
-    Args:
-        args: Parsed command-line arguments
-
-    Returns:
-        Exit code (0 for success, non-zero for error)
-    """
-    # Imported lazily so the pygame dependency (and its startup banner) only
-    # loads when the UI is actually launched, not on every CLI invocation.
+    """Execute the UI command and return the exit code."""
+    # Imported lazily so pygame and its startup banner load only when the UI
+    # is launched, not on every CLI invocation.
     from spacesim2.ui.live.app import PYGAME_AVAILABLE, LiveGalaxyApp
 
     if not PYGAME_AVAILABLE:
         print_error("pygame not available. Install with: uv pip install pygame")
         return 1
 
-    # Create and setup simulation
     simulation = create_and_setup_simulation(
         planets=args.planets,
         actors=args.actors,
@@ -96,7 +81,6 @@ def execute(args: argparse.Namespace) -> int:
         lane_density=args.lane_density,
     )
 
-    # Launch the live galaxy view.
     app = LiveGalaxyApp(simulation, speed=args.speed, paused=args.paused)
     app.run()
 

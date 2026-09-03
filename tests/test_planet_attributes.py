@@ -1,4 +1,4 @@
-"""Tests for planet attributes functionality."""
+"""Tests for planet attributes."""
 
 import pytest
 
@@ -7,10 +7,10 @@ from spacesim2.core.process import ResourceAttribute
 
 
 class TestPlanetAttributes:
-    """Tests for the PlanetAttributes dataclass."""
+    """PlanetAttributes dataclass."""
 
     def test_default_attributes_are_all_one(self):
-        """Default attributes should all be 1.0 (no penalty)."""
+        """Default attributes are all 1.0, meaning no penalty."""
         attrs = PlanetAttributes()
         assert attrs.biomass == 1.0
         assert attrs.fiber == 1.0
@@ -20,7 +20,7 @@ class TestPlanetAttributes:
         assert attrs.simple_building_materials == 1.0
 
     def test_custom_attributes(self):
-        """Can create attributes with custom values."""
+        """Constructor stores custom values."""
         attrs = PlanetAttributes(
             biomass=0.5,
             fiber=0.3,
@@ -37,17 +37,17 @@ class TestPlanetAttributes:
         assert attrs.simple_building_materials == 0.6
 
     def test_validation_rejects_values_above_one(self):
-        """Attributes above 1.0 should raise ValueError."""
+        """Attributes above 1.0 raise ValueError."""
         with pytest.raises(ValueError, match="biomass must be between"):
             PlanetAttributes(biomass=1.5)
 
     def test_validation_rejects_negative_values(self):
-        """Negative attributes should raise ValueError."""
+        """Negative attributes raise ValueError."""
         with pytest.raises(ValueError, match="wood must be between"):
             PlanetAttributes(wood=-0.1)
 
     def test_generate_random_produces_valid_attributes(self):
-        """Random generation should produce valid attributes."""
+        """generate_random keeps every attribute in [0, 1]."""
         for _ in range(100):
             attrs = PlanetAttributes.generate_random()
             assert 0.0 <= attrs.biomass <= 1.0
@@ -58,29 +58,26 @@ class TestPlanetAttributes:
             assert 0.0 <= attrs.simple_building_materials <= 1.0
 
     def test_generate_random_respects_minimum_values(self):
-        """Some resources should always be above zero."""
+        """generate_random keeps biomass >= 0.2 and building materials >= 0.3."""
         for _ in range(100):
             attrs = PlanetAttributes.generate_random()
-            # biomass always >= 0.2
             assert attrs.biomass >= 0.2
-            # simple_building_materials always >= 0.3
             assert attrs.simple_building_materials >= 0.3
 
     def test_get_availability_for_tracked_commodity(self):
-        """get_availability returns the correct attribute value."""
+        """get_availability returns the named attribute."""
         attrs = PlanetAttributes(biomass=0.5, nova_fuel_ore=0.8)
         assert attrs.get_availability("biomass") == 0.5
         assert attrs.get_availability("nova_fuel_ore") == 0.8
 
     def test_get_availability_for_untracked_commodity_returns_one(self):
-        """Untracked commodities return 1.0 (no penalty)."""
+        """Untracked commodities such as processed food return 1.0."""
         attrs = PlanetAttributes()
-        # 'food' is a processed commodity, not a planetary resource
         assert attrs.get_availability("food") == 1.0
         assert attrs.get_availability("nonexistent") == 1.0
 
     def test_default_returns_all_ones(self):
-        """PlanetAttributes.default() returns all 1.0 values."""
+        """PlanetAttributes.default() returns all 1.0."""
         attrs = PlanetAttributes.default()
         assert attrs.biomass == 1.0
         assert attrs.fiber == 1.0
@@ -90,51 +87,51 @@ class TestPlanetAttributes:
         assert attrs.simple_building_materials == 1.0
 
     def test_to_dict(self):
-        """to_dict() returns correct dictionary representation."""
+        """to_dict() includes every attribute, with defaults filled in."""
         attrs = PlanetAttributes(biomass=0.5, wood=0.7)
         d = attrs.to_dict()
         assert d["biomass"] == 0.5
         assert d["wood"] == 0.7
-        assert d["fiber"] == 1.0  # default value
+        assert d["fiber"] == 1.0
         assert len(d) == 8  # all 8 resource attributes
 
 
 class TestBimodalSample:
-    """Tests for the _bimodal_sample helper function."""
+    """_bimodal_sample helper."""
 
     def test_bimodal_sample_in_range(self):
-        """Bimodal samples should be in one of the two ranges."""
+        """Samples fall in one of the two ranges."""
         for _ in range(100):
             value = _bimodal_sample(0.0, 0.3, 0.7, 1.0)
             assert (0.0 <= value <= 0.3) or (0.7 <= value <= 1.0)
 
 
 class TestResourceAttribute:
-    """Tests for the ResourceAttribute dataclass."""
+    """ResourceAttribute dataclass."""
 
     def test_valid_success_effect(self):
-        """Can create ResourceAttribute with 'success' effect."""
+        """The success effect is accepted."""
         ra = ResourceAttribute(commodity="nova_fuel_ore", effect="success")
         assert ra.commodity == "nova_fuel_ore"
         assert ra.effect == "success"
 
     def test_valid_output_effect(self):
-        """Can create ResourceAttribute with 'output' effect."""
+        """The output effect is accepted."""
         ra = ResourceAttribute(commodity="biomass", effect="output")
         assert ra.commodity == "biomass"
         assert ra.effect == "output"
 
     def test_invalid_effect_raises_error(self):
-        """Invalid effect type should raise ValueError."""
+        """An unknown effect raises ValueError."""
         with pytest.raises(ValueError, match="effect must be one of"):
             ResourceAttribute(commodity="biomass", effect="invalid")
 
 
 class TestSimulationIntegration:
-    """Integration tests for planet attributes in simulation."""
+    """Planet attributes in a running simulation."""
 
     def test_simulation_with_planet_attributes(self):
-        """Simulation generates planet attributes."""
+        """setup_simple gives every planet attributes."""
         from spacesim2.core.simulation import Simulation
 
         sim = Simulation()
@@ -149,7 +146,7 @@ class TestSimulationIntegration:
             assert isinstance(planet.attributes, PlanetAttributes)
 
     def test_different_planets_have_different_attributes(self):
-        """Each planet should have randomly generated unique attributes."""
+        """Planets get independently generated attributes."""
         from spacesim2.core.simulation import Simulation
 
         sim = Simulation()
@@ -159,19 +156,18 @@ class TestSimulationIntegration:
             num_market_makers=1,
         )
 
-        # With 5 planets, it's extremely unlikely they'd all be identical
+        # Five random planets are almost never all identical.
         attributes_sets = [
             (p.attributes.biomass, p.attributes.nova_fuel_ore) for p in sim.planets
         ]
-        # At least 2 different combinations should exist
         assert len(set(attributes_sets)) > 1
 
 
 class TestProcessCommandIntegration:
-    """Integration tests for ProcessCommand with planet attributes."""
+    """ProcessCommand with planet attributes."""
 
     def test_process_with_output_effect_reduces_yield(self):
-        """Processes with 'output' effect should have reduced yield on low-availability planets."""
+        """The output effect reduces yield on a low-availability planet."""
         from spacesim2.core.commands import ProcessCommand
         from spacesim2.core.simulation import Simulation
 
@@ -183,41 +179,34 @@ class TestProcessCommandIntegration:
         )
 
         planet = sim.planets[0]
-        # Set a known low biomass availability
         planet.attributes = PlanetAttributes(biomass=0.25)
 
         actor = sim.actors[0]
         actor.planet = planet
 
-        # Give the actor high agriculture skill to ensure success
+        # High agriculture skill so the process succeeds.
         actor.improve_skill("agriculture", 10.0)
 
-        # Get initial biomass count
         biomass = sim.commodity_registry["biomass"]
         initial_biomass = actor.inventory.get_quantity(biomass)
 
-        # Execute gather_biomass (base output is 4)
         cmd = ProcessCommand("gather_biomass")
         result = cmd.execute(actor)
 
-        # The process should succeed
         assert result is True, f"Process failed with action: {actor.last_action}"
 
-        # The output should be reduced (4 * 0.25 = 1, with max(1, round(...)))
         new_biomass = actor.inventory.get_quantity(biomass)
         gained = new_biomass - initial_biomass
-        # With 0.25 availability, we should get 1 (or 2 if skill multiplier triggered)
-        # Base output 4 * 0.25 = 1, or 4 * 2 * 0.25 = 2 with skill multiplier
+        # Base output 4 * 0.25 = 1, or 2 if the skill multiplier doubled it.
         assert gained in (1, 2), f"Expected 1 or 2 biomass, got {gained}"
 
     def test_process_with_success_effect_can_fail(self):
-        """Processes with 'success' effect should fail on zero-availability planets."""
+        """The success effect fails the process on a zero-availability planet."""
         import random
 
         from spacesim2.core.commands import ProcessCommand
         from spacesim2.core.simulation import Simulation
 
-        # Fix random seed for deterministic test
         random.seed(42)
 
         sim = Simulation()
@@ -228,26 +217,22 @@ class TestProcessCommandIntegration:
         )
 
         planet = sim.planets[0]
-        # Set nova_fuel_ore availability to 0 (mining should always fail)
         planet.attributes = PlanetAttributes(nova_fuel_ore=0.0)
 
         actor = sim.actors[0]
         actor.planet = planet
 
-        # Give actor the required tools for mining nova fuel ore
         simple_tools = sim.commodity_registry.get_commodity("simple_tools")
         actor.inventory.add_commodity(simple_tools, 1)
 
-        # Execute mine_nova_fuel_ore (should fail due to 0 availability)
         cmd = ProcessCommand("mine_nova_fuel_ore")
         result = cmd.execute(actor)
 
-        # The process should fail
         assert result is False
         assert "insufficient planetary resources" in actor.last_action
 
     def test_process_without_resource_attribute_unaffected(self):
-        """Processes without resource_attribute should work normally."""
+        """A process without resource_attribute ignores planet attributes."""
         from spacesim2.core.commands import ProcessCommand
         from spacesim2.core.simulation import Simulation
 
@@ -259,34 +244,31 @@ class TestProcessCommandIntegration:
         )
 
         planet = sim.planets[0]
-        # Even with low attributes, make_food shouldn't be affected
         planet.attributes = PlanetAttributes(biomass=0.1)
 
         actor = sim.actors[0]
         actor.planet = planet
 
-        # Give actor some biomass to make food
         biomass = sim.commodity_registry["biomass"]
         actor.inventory.add_commodity(biomass, 10)
 
         food = sim.commodity_registry["food"]
         initial_food = actor.inventory.get_quantity(food)
 
-        # Execute make_food (converts biomass to food, no resource_attribute)
         cmd = ProcessCommand("make_food")
         result = cmd.execute(actor)
 
         assert result is True
-        # make_food outputs 2 food normally
+        # make_food outputs 2 food; the skill multiplier may double it.
         gained = actor.inventory.get_quantity(food) - initial_food
-        # Should get full output (may be doubled by skill multiplier)
         assert gained >= 2
 
 
 def test_setup_guarantees_a_fuel_rich_planet():
-    """Every generated galaxy must contain at least one planet where fuel can
-    realistically be mined — an all-poor bimodal roll strands all ships by
-    design, so setup re-rolls one planet into the abundant band."""
+    """Setup re-rolls one planet into the abundant fuel band when none lands there.
+
+    An all-poor bimodal roll would strand every ship.
+    """
     from spacesim2.core.simulation import Simulation
 
     for _ in range(30):

@@ -1,10 +1,9 @@
-"""Tests for the Market scaling work: bounded histories, incremental quotes,
-cheap order ids, and cached bid levels.
+"""Tests for Market scaling: bounded histories, incremental quotes, cheap
+order ids, and cached bid levels.
 
-These guard the invariants introduced when Market was reworked for
-500-market x 100-actor x 1000-turn runs: caches must stay exact under
-place/cancel/fill churn, histories must stay bounded while still serving the
-windows real consumers read, and order ids must remain unique.
+Caches must stay exact under place, cancel, and fill churn; histories must
+stay bounded while still serving the windows consumers read; order ids must
+stay unique.
 """
 
 import random
@@ -35,7 +34,7 @@ def food(commodity_registry):
 
 
 def _brute_force_quote(market: Market, commodity) -> tuple:
-    """Reference best bid/ask computed by a full book scan."""
+    """Reference best bid and ask from a full book scan."""
     bids = [o.price for o in market.buy_orders.get(commodity, []) if not o.cancelled]
     asks = [o.price for o in market.sell_orders.get(commodity, []) if not o.cancelled]
     return (max(bids) if bids else None, min(asks) if asks else None)
@@ -52,7 +51,7 @@ def _brute_force_bid_levels(market: Market, commodity) -> list:
 
 
 class TestQuoteCacheExactness:
-    """get_bid_ask_spread must always equal a brute-force scan of the books."""
+    """get_bid_ask_spread always equals a brute-force scan of the books."""
 
     def test_place_updates_best_quote(self, commodity_registry, food, mock_sim):
         market = Market()
@@ -95,7 +94,7 @@ class TestQuoteCacheExactness:
     def test_randomized_churn_matches_brute_force(
         self, commodity_registry, food, mock_sim
     ):
-        """Random place/cancel/match churn: cached quote == brute force always."""
+        """Under random place, cancel, and match churn the cached quote stays exact."""
         market = Market()
         market.commodity_registry = commodity_registry
         buyer = get_actor("Buyer", mock_sim, initial_money=1_000_000)
@@ -182,7 +181,7 @@ class TestBoundedHistories:
         assert len(market.price_history[food]) <= HISTORY_TRIM_THRESHOLD
         assert len(market.price_history[food]) >= HISTORY_KEEP
         assert len(market.volume_history[food]) == len(market.price_history[food])
-        # Windows consumers actually read still work after trimming.
+        # The windows consumers read still work after trimming.
         assert market.get_30_day_average_price(food) == pytest.approx(10.0)
         assert market.get_30_day_average_volume(food) == pytest.approx(1.0)
         assert market.volume_history[food][-10:] == [1] * 10
@@ -228,7 +227,7 @@ class TestBoundedHistories:
         events = market.order_events_by_actor[buyer.name]
         assert len(events) <= ORDER_EVENTS_PER_ACTOR
 
-        # The live consumer (data logger) reads the current turn's events.
+        # The data logger reads the current turn's events.
         current = market.get_actor_order_events(buyer, since_turn=299)
         assert [e.event_type for e in current] == ["created", "cancelled"]
 
@@ -243,7 +242,7 @@ class TestBoundedHistories:
             market.set_current_turn(turn)
             self._trade_once(market, buyer, seller, food, 1)
 
-        # Trim runs at the START of match_orders, so at most keep+1 remain.
+        # Trim runs at the start of match_orders, so at most keep + 1 remain.
         assert len(market.transaction_history) <= 1001
         assert len(market.actor_transaction_history[buyer.name]) <= 101
         # Most recent transactions retained, oldest dropped.
@@ -272,7 +271,7 @@ class TestMatchingBehaviorPreserved:
     def test_price_time_priority_and_fill_results(
         self, commodity_registry, food, mock_sim
     ):
-        """Multi-order match: price priority, then oldest timestamp wins."""
+        """Matching takes the best price first, then the oldest timestamp."""
         market = Market()
         market.commodity_registry = commodity_registry
         buyer_a = get_actor("BuyerA", mock_sim, initial_money=1_000)
@@ -287,7 +286,7 @@ class TestMatchingBehaviorPreserved:
         market.place_sell_order(seller, food, 7, 8)
         market.match_orders()
 
-        # BuyerA (older) fills fully first; BuyerB gets the remaining 2.
+        # The older BuyerA fills fully first; BuyerB gets the remaining 2.
         assert buyer_a.inventory.get_quantity(food) == 5
         assert buyer_b.inventory.get_quantity(food) == 2
         assert seller.money == 50 + 7 * 8
@@ -339,5 +338,5 @@ class TestMatchingBehaviorPreserved:
         assert len(market.transaction_history) == 0
         assert len(market.buy_orders[food]) == 1
         assert len(market.sell_orders[food]) == 1
-        # Unmet demand grows scarcity pressure exactly as before.
+        # Unmet demand grows scarcity pressure.
         assert market.scarcity_pressure_for(food) == pytest.approx(0.5)

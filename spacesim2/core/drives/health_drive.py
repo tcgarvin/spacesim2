@@ -9,13 +9,13 @@ from spacesim2.core.drives.actor_drive import (
     log_norm_ratio,
 )
 
-# Stochastic health events — less frequent than clothing, comfort-tier need
-BASE_EVENT_PROB = 1.0 / 90.0  # ~1 health event per 90 days
+# Stochastic health events. A comfort-tier need, less frequent than clothing.
+BASE_EVENT_PROB = 1.0 / 90.0  # about 1 health event per 90 days
 DEBT_DECAY_FACTOR = 0.8
 QUALITY_DEBT_DECAY_FACTOR = 0.5
-DEBT_MISS_PENALTY = 0.4  # Missing medicine is bad but not as critical as food
+DEBT_MISS_PENALTY = 0.4  # less critical than food
 BUFFER_TARGET_DAYS = 90.0
-BUFFER_MAX_DAYS = 270.0  # ~9 months saturation
+BUFFER_MAX_DAYS = 270.0  # saturates at about 9 months
 URGENCY = 1.0
 DRIVE_NAME = "health"
 
@@ -32,12 +32,11 @@ class HealthDriveMetrics(DriveMetrics):
 
 
 class HealthDrive(ActorDrive):
-    """
-    Health maintenance drive with quality tiers.
+    """Health maintenance with quality tiers.
 
-    - Stochastic health events (~1 per 90 days)
-    - Prefers advanced_medicine (quality), falls back to medicine
-    - Quality medicine provides faster debt recovery
+    - Stochastic health events, about 1 per 90 days.
+    - Uses advanced_medicine first, then medicine.
+    - Quality medicine recovers debt faster.
     """
 
     MISS_PENALTY = DEBT_MISS_PENALTY
@@ -84,7 +83,7 @@ class HealthDrive(ActorDrive):
         did_treat = False
 
         if event_today and has_medicine:
-            # Try quality first, fall back to basic
+            # Quality first.
             if self.quality_medicine and actor.inventory.remove_commodity(
                 self.quality_medicine, 1
             ):
@@ -93,7 +92,7 @@ class HealthDrive(ActorDrive):
             elif self.medicine and actor.inventory.remove_commodity(self.medicine, 1):
                 did_treat = True
 
-            # Recalculate post-consumption
+            # Post-consumption inventory.
             medicine_qty = (
                 actor.inventory.get_available_quantity(self.medicine)
                 if self.medicine
@@ -117,7 +116,7 @@ class HealthDrive(ActorDrive):
             decay_rate = DEBT_DECAY_FACTOR if has_medicine else 1.0
             debt = self.metrics.debt * decay_rate
 
-        # Buffer from remaining inventory (both types)
+        # Buffer counts both types.
         exp_events_per_day = max(p_event, 1e-9)
         expected_coverage_days = total_qty / exp_events_per_day
         buffer = log_norm_ratio(

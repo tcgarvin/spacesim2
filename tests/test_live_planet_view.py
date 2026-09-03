@@ -1,9 +1,8 @@
 """Unit tests for the planet renderer's wellbeing cues.
 
-The glow/tint mappings are pure functions, so they're asserted directly; a
-pygame-backed case (SDL dummy driver) proves the tint overlay actually changes
-the baked-sprite pixels on a distressed world while leaving a thriving one
-untouched.
+The glow and tint mappings are pure functions and are asserted directly. A
+pygame-backed case using the SDL dummy driver checks that the tint overlay
+changes a distressed world's sprite pixels and leaves a thriving one alone.
 """
 
 import os
@@ -66,8 +65,7 @@ def test_tint_alpha_ramps_up_with_distress() -> None:
 def test_tint_overlay_changes_baked_sprite_pixels(
     wellbeing: float, expect_tinted: bool
 ) -> None:
-    """The multiply-tint path recolours a sick world's sprite, and only a sick
-    world's — reproducing draw_planet's overlay steps on a flat test sprite."""
+    """The multiply tint, as in draw_planet, recolours only a sick world's sprite."""
     pygame.display.init()
     pygame.display.set_mode((64, 64))
     try:

@@ -21,7 +21,7 @@ print(
 )
 
 
-# ---- 1. Drive health/debt trend by turn window ----------------------------
+# 1. Drive health and debt trend by turn window.
 def window(t):
     if t <= 100:
         return "1_early(<=100)"
@@ -46,7 +46,7 @@ dep = (
 print("\n=== DRIVE TRENDS (deprived = debt>0.5) ===")
 print(dep)
 
-# ---- 2. Upper-tier production: transaction volume by window ----------------
+# 2. Upper-tier transaction volume by window.
 upper = [
     "chemicals",
     "refined_chemicals",
@@ -72,7 +72,7 @@ vol = (
 print("\n=== UPPER-TIER TRADE VOLUME BY WINDOW ===")
 print(vol)
 
-# ---- 3. Price stability: late-window mean & CV per commodity ---------------
+# 3. Late-window mean price and CV per commodity.
 late = snaps.filter(pl.col("turn") > 300)
 price_stab = (
     late.group_by("commodity_id")
@@ -87,7 +87,7 @@ price_stab = (
 print("\n=== LATE-WINDOW (turn>300) PRICE STABILITY ===")
 print(price_stab)
 
-# ---- 4. Whole-run price trajectory for key commodities ---------------------
+# 4. Whole-run price trajectory for key commodities.
 key = ["food", "simple_tools", "medicine", "clothing", "chemicals", "refined_chemicals"]
 traj = (
     snaps.filter(pl.col("commodity_id").is_in(key))
@@ -101,8 +101,7 @@ traj = (
 print("\n=== KEY PRICE TRAJECTORY (deflation watch: food~11, tools~25) ===")
 print(traj)
 
-# ---- 5. Ship activity: cross-planet transactions & recent activity --------
-# Ships are the agents that move goods between planets; identify by name.
+# 5. Ship activity. Ships move goods between planets; identify them by name.
 names = pl.concat(
     [
         txns.select(pl.col("buyer_name").alias("name")),
@@ -115,7 +114,7 @@ ship_names = names.filter(
 print("\n=== NAMES matching ship pattern ===")
 print(ship_names.head(20))
 
-# Cross-planet trade proxy: total volume + late-window volume per commodity
+# Cross-planet trade proxy: transaction counts by window.
 recent = txns.filter(pl.col("turn") > 450)
 print(f"\nTxns in last 50 turns: {len(recent)} (total {len(txns)})")
 print("Per-window txn counts:")

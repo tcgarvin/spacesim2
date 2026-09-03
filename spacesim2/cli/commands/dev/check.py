@@ -1,8 +1,7 @@
 """`dev check` umbrella command: the canonical change->verify sequence.
 
-Runs the same gates the dev loop documents (format, lint, types, tests, plus a
-short macro-behavior run) and prints a single pass/fail block, so an agent or
-developer recalls one command instead of five. Non-mutating by default: the
+Runs the gates the dev loop documents, format, lint, types, tests, and a short
+macro-behavior run, and prints a single pass/fail block. Non-mutating: the
 format stage only checks, it does not rewrite files.
 """
 
@@ -19,14 +18,7 @@ from spacesim2.cli.output import print_error, print_section, print_success
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser:  # type: ignore
-    """Add the 'check' dev subcommand parser.
-
-    Args:
-        subparsers: Subparsers to add this command to
-
-    Returns:
-        The created parser
-    """
+    """Add the 'check' dev subcommand parser."""
     parser: argparse.ArgumentParser = subparsers.add_parser(
         "check",
         help="Run the canonical verify sequence (format, lint, types, tests, sim)",
@@ -46,7 +38,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
 
 
 def _run_subprocess(cmd: list[str]) -> tuple[bool, str]:
-    """Run a command, returning (passed, captured combined output)."""
+    """Run a command, returning (passed, combined stdout and stderr)."""
     result = subprocess.run(cmd, capture_output=True, text=True)
     output = (result.stdout or "") + (result.stderr or "")
     return result.returncode == 0, output
@@ -74,8 +66,8 @@ SIM_STAGE_TURNS = 200
 def _stage_sim() -> tuple[bool, str]:
     """Macro-behavior stage: run the sim and check the KPI verdict.
 
-    Runs in-process (not via a subprocess) so it reuses the already-imported
-    simulation code and avoids a redundant interpreter startup.
+    Runs in-process so it reuses the imported simulation code and avoids a
+    second interpreter startup.
     """
     # Imported lazily so `dev check --fast` does not pay the import cost.
     from spacesim2.analysis.summary import compute_summary
@@ -97,14 +89,7 @@ def _stage_sim() -> tuple[bool, str]:
 
 
 def execute(args: argparse.Namespace) -> int:
-    """Execute the check command.
-
-    Args:
-        args: Parsed command-line arguments
-
-    Returns:
-        Exit code (0 if every stage passed, 1 otherwise)
-    """
+    """Execute the check command. Returns 0 if every stage passed, else 1."""
     stages: list[tuple[str, Callable[[], tuple[bool, str]]]] = [
         ("format", _stage_format),
         ("lint", _stage_lint),
@@ -125,7 +110,7 @@ def execute(args: argparse.Namespace) -> int:
         mark = "PASS" if passed else "FAIL"
         print(f"  [{mark}] {name} ({elapsed:.1f}s)")
         if not passed and output.strip():
-            # Surface what broke; indent so it reads as belonging to the stage.
+            # Indent so the output reads as belonging to the stage.
             for line in output.rstrip().splitlines():
                 print(f"        {line}")
 

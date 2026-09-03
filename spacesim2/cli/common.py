@@ -15,18 +15,13 @@ def create_and_setup_simulation(
     arms: int = DEFAULT_ARMS,
     lane_density: float = DEFAULT_LANE_DENSITY,
 ) -> Simulation:
-    """Create and configure a simulation with standard setup.
+    """Create a simulation with the standard setup.
 
     Args:
-        planets: Number of planets to create
-        actors: Number of regular actors per planet
-        makers: Number of market makers per planet
-        ships: Number of ships to create
-        arms: Spiral arms in the galaxy layout
-        lane_density: Fraction of optional local star lanes kept (0..1)
-
-    Returns:
-        Configured Simulation instance
+        actors: Regular actors per planet.
+        makers: Market makers per planet.
+        arms: Spiral arms in the galaxy layout.
+        lane_density: Fraction of optional local star lanes kept, 0..1.
     """
     sim = Simulation()
     sim.setup_simple(
@@ -41,15 +36,14 @@ def create_and_setup_simulation(
 
 
 def configure_actor_logging(sim: Simulation, spec: str = "1") -> int:
-    """Select actors for the detailed logging pipeline (post-hoc analysis).
+    """Select actors for the detailed logging pipeline.
 
     Args:
-        sim: Simulation instance
-        spec: "all" (every actor and ship), an integer N (random sample of
-            N non-market-maker actors; default "1"), or an actor name.
+        spec: "all" for every actor and ship, an integer N for a random
+            sample of N non-market-maker actors, or an actor name.
 
     Returns:
-        Number of actors configured for logging
+        Number of actors configured for logging.
 
     Raises:
         ValueError: If spec names an actor that does not exist.

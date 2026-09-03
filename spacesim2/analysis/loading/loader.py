@@ -7,19 +7,13 @@ import polars as pl
 
 
 class SimulationData:
-    """High-level interface for loading and querying simulation data."""
+    """Lazily loads a run's Parquet tables as Polars frames."""
 
     def __init__(self, run_path: Path | str):
-        """
-        Initialize data loader.
-
-        Args:
-            run_path: Path to directory containing Parquet files
-        """
+        """Point the loader at a run directory containing the Parquet files."""
         self.run_path = Path(run_path)
         self.simulation_id = self.run_path.name
 
-        # Lazy-loaded DataFrames
         self._actor_turns: Optional[pl.DataFrame] = None
         self._actor_drives: Optional[pl.DataFrame] = None
         self._market_transactions: Optional[pl.DataFrame] = None
@@ -27,21 +21,21 @@ class SimulationData:
 
     @property
     def actor_turns(self) -> pl.DataFrame:
-        """Load actor turn data."""
+        """Actor state per turn."""
         if self._actor_turns is None:
             self._actor_turns = pl.read_parquet(self.run_path / "actor_turns.parquet")
         return self._actor_turns
 
     @property
     def actor_drives(self) -> pl.DataFrame:
-        """Load actor drive metrics."""
+        """Actor drive metrics per turn."""
         if self._actor_drives is None:
             self._actor_drives = pl.read_parquet(self.run_path / "actor_drives.parquet")
         return self._actor_drives
 
     @property
     def market_transactions(self) -> pl.DataFrame:
-        """Load market transactions."""
+        """Market transactions."""
         if self._market_transactions is None:
             self._market_transactions = pl.read_parquet(
                 self.run_path / "market_transactions.parquet"
@@ -50,7 +44,7 @@ class SimulationData:
 
     @property
     def market_snapshots(self) -> pl.DataFrame:
-        """Load market snapshots."""
+        """Aggregated market state per turn."""
         if self._market_snapshots is None:
             self._market_snapshots = pl.read_parquet(
                 self.run_path / "market_snapshots.parquet"

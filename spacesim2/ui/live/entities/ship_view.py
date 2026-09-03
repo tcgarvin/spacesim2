@@ -1,8 +1,8 @@
 """Draws ships.
 
-A traveling ship gets an engine-glow trail behind it and an arrow glyph facing
-its heading along the current lane segment. Docked ships are drawn as a small
-mark at their planet. Lanes and route highlights live in ``lane_view``.
+A traveling ship gets an engine trail and a glyph facing its heading along
+the current lane segment. Docked ships are drawn as a small mark at their
+planet. Lanes and route highlights live in ``lane_view``.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from spacesim2.ui.live.camera import Camera
 from spacesim2.ui.live.director import RenderedShip
 from spacesim2.ui.live.procgen.placeholders import ship_glyph
 
-# Ship glyph length in map units. Public: the scene uses it for hit-testing.
+# Ship glyph length in map units. The scene uses it for hit-testing.
 SHIP_MAP_LENGTH = 1.6
 # Floor so a baked sprite stays legible when the whole galaxy is zoomed out.
 MIN_SHIP_PX = 12
@@ -33,11 +33,11 @@ def draw_ship(
     screen_pos = camera.world_to_screen(rendered.pos)
 
     if ship.traveling:
-        # The route itself is a star lane, already drawn by the scene under the
-        # ships; only the selected ship's path is highlighted (see lane_view).
-        # Engine trail: a short fading segment behind the ship. Drawn on a
-        # surface sized to the trail's bounding box (not the whole screen) so
-        # per-ship per-frame allocation stays small.
+        # The route is a star lane the scene already drew under the ships; only
+        # the selected ship's path is highlighted (see lane_view). The engine
+        # trail is a short fading segment behind the ship, drawn on a surface
+        # sized to its bounding box so per-ship per-frame allocation stays
+        # small.
         trail_len = int(camera.scale(SHIP_MAP_LENGTH * 2.5))
         if trail_len > 1:
             heading = rendered.heading
@@ -58,10 +58,11 @@ def draw_ship(
             surface.blit(trail, (left, top))
 
     if ship_sprites:
-        # Baked directional sprite: pick the nearest of the 8 facings and scale
-        # to the ship's on-screen footprint. The frame is square, so match the
-        # glyph's length*2 footprint (its centred arrow spans SHIP_MAP_LENGTH).
-        # ``scale`` (nearest-neighbour), not ``smoothscale``, keeps pixel art crisp.
+        # Pick the nearest of the 8 baked facings and scale it to the ship's
+        # on-screen footprint. The frame is square, so match the glyph's
+        # length*2 footprint; its centred arrow spans SHIP_MAP_LENGTH.
+        # Nearest-neighbour ``scale``, not ``smoothscale``, keeps pixel art
+        # crisp.
         target = max(MIN_SHIP_PX, int(round(camera.scale(SHIP_MAP_LENGTH * 2.0))))
         frame = ship_sprites.frame_for_heading(rendered.heading)
         sprite = pygame.transform.scale(frame, (target, target))

@@ -1,11 +1,10 @@
 """Run a Tier-1 analysis script against a simulation run.
 
-This is the token-controlled "notebook" runner for agents. An analysis
-script uses ``load_run()`` to get Polars frames, then PRINTS compact
-aggregates and SAVES any figures to a directory. This command runs it with
-the run path injected, relays its stdout, and lists any new figure files so
-the agent reads numbers (cheap) and points the human at charts (free) —
-never rendering pixels into the agent's context.
+An analysis script uses ``load_run()`` to get Polars frames, prints compact
+aggregates, and saves any figures to a directory. This command runs it with
+the run path injected, relays its stdout, and lists any new figure files, so
+the agent reads numbers and points the human at charts without rendering
+pixels into its context.
 
 See the ``sim-evaluation`` skill and ``notebooks/scratch_template.py``.
 """
@@ -42,7 +41,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
 
 
 def _snapshot(figdir: Path) -> set[Path]:
-    """Return the set of files currently in figdir (non-recursive)."""
+    """Return the set of files directly in figdir."""
     if not figdir.exists():
         return set()
     return {p for p in figdir.iterdir() if p.is_file()}
@@ -55,16 +54,15 @@ def execute(args: argparse.Namespace) -> int:
         print_error(f"Analysis script not found: {script}")
         return 1
 
-    # Imported here, not at module top: the analysis stack (polars et al.)
-    # is an optional extra, and importing it eagerly would break the whole
-    # CLI — including plain `run` — on environments without it (e.g. the
-    # free-threaded side venv, docs/performance.md).
+    # Imported lazily: the analysis stack is an optional extra, and importing
+    # it at module top would break the whole CLI, including plain `run`, on
+    # environments without it such as the free-threaded side venv. See
+    # docs/performance.md.
     from spacesim2.analysis.loading import (
         NoRunsFoundError,
         get_run_path_with_fallback,
     )
 
-    # Resolve the run directory.
     if args.run is not None:
         run_path = Path(args.run)
     else:
@@ -85,12 +83,11 @@ def execute(args: argparse.Namespace) -> int:
 
     print(f"Analyzing run: {run_path.name}  (script: {script})")
     print("=" * 60)
-    sys.stdout.flush()  # keep our banner ahead of the subprocess output
-    # Run in-process interpreter so the venv/deps match; stream output through.
+    sys.stdout.flush()  # keep the banner ahead of the subprocess output
+    # Use the current interpreter so the venv and deps match.
     result = subprocess.run([sys.executable, str(script)], env=env)
     print("=" * 60)
 
-    # Report any newly written figures for the human to open.
     new_figures = sorted(_snapshot(figdir) - before)
     if new_figures:
         print("Figures written (open these to view):")

@@ -5,16 +5,17 @@ description: Edit commodities and production processes for the economic simulati
 
 # Commodity & Process Design
 
-Guide for editing the economic simulation's commodities and production processes.
+How to edit the simulation's commodities and production processes.
 
 ## Data Files
 
 | File | Purpose |
 |------|---------|
-| `data/commodities.yaml` | Define tradeable goods and facilities |
-| `data/processes.yaml` | Define production recipes |
+| `data/commodities.yaml` | Tradeable goods and facilities |
+| `data/processes.yaml` | Production recipes |
 
-See `CLAUDE.md` for current state (requirements table, bootstrap path, drive mappings).
+`CLAUDE.md` has the bootstrap path, planet attributes and drive mappings.
+`docs/needs.md` lists which commodity each drive consumes.
 
 ## Commodity Schema
 
@@ -45,56 +46,52 @@ See `CLAUDE.md` for current state (requirements table, bootstrap path, drive map
     effect: output|success   # output=reduced yield, success=may fail
 ```
 
-## Key Constraints
+## Constraints
 
-### Bootstrap Path
-The economy must have a **bootstrap path** where actors start with nothing and can reach tools without requiring tools first.
-
-**When modifying processes**: Always verify a tool-free path to initial tools exists. Run the graph command (below) to visualize and confirm.
-
-### Resource Attributes
-For new gathering/extraction processes tied to planetary resources:
-1. Add attribute to `core/planet_attributes.py` PlanetAttributes dataclass
-2. Add `resource_attribute` field to the process in `processes.yaml`
-
-### Drive Dependencies
-If changing what commodity a drive consumes, update the corresponding drive class in `core/drives/`. See CLAUDE.md for current drive-to-commodity mappings.
+- **Bootstrap path.** Actors start with nothing and must be able to reach
+  tools without tools. After any process change, confirm a tool-free path
+  to the first tools still exists; the graph below shows it.
+- **Resource attributes.** A new gathering or extraction process tied to a
+  planet resource needs an attribute on `PlanetAttributes` in
+  `core/planet_attributes.py` and a `resource_attribute` field on the
+  process.
+- **Drives.** Changing the commodity a drive consumes means updating that
+  drive class in `core/drives/`.
 
 ## Workflow
 
-### 1. Make Changes
+### 1. Edit
 Edit `data/commodities.yaml` and/or `data/processes.yaml`.
 
-### 2. Verify Syntax
+### 2. Verify syntax
 ```bash
 uv run python -c "import yaml; yaml.safe_load(open('data/commodities.yaml')); yaml.safe_load(open('data/processes.yaml')); print('OK')"
 ```
 
-### 3. Generate Dependency Graph
+### 3. Generate the dependency graph
 ```bash
 uv run spacesim2 dev graph
 ```
 
 Outputs `tmp/commodity-graph.svg` and `tmp/commodity-graph.mmd`.
 
-### 4. Review Graph
+### 4. Review the graph
 
-**Visual conventions:**
-- **Green nodes**: Consumables (inputs/outputs that flow through the economy)
-- **Amber nodes**: Tools (used in `tools_required`, not consumed)
-- **Blue nodes**: Facilities (used in `facilities_required`, not consumed)
-- **Process labels**: Show `[Tool, Facility]` requirements in brackets below the name
+Node colors: green for consumables, amber for tools (`tools_required`, not
+consumed), blue for facilities (`facilities_required`, not consumed).
+Process labels show `[Tool, Facility]` requirements below the name.
 
-Check the SVG for:
-- All commodities connected to at least one process
-- No orphan processes (missing input commodities)
-- Bootstrap path exists (path from nothing to tools)
-- No impossible cycles
+Check that:
+- every commodity connects to at least one process
+- no process references a missing input commodity
+- a path from nothing to tools exists
+- there are no impossible cycles
 
-### 5. Run Tests
+### 5. Run tests
 ```bash
 uv run pytest tests/ -v
 ```
 
-### 6. Update Documentation
-If the bootstrap path or requirements table changed, update the corresponding section in `CLAUDE.md`.
+### 6. Update documentation
+If the bootstrap path or requirements changed, update the matching section
+in `CLAUDE.md`.

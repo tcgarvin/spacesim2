@@ -1,23 +1,23 @@
 """Runs simulation turns off the render thread and publishes frames.
 
-The contract between the UI and the simulation is deliberately thin:
+The contract between the UI and the simulation:
 
 * The worker owns the mutable simulation. ``run_turn`` and every snapshot
-  builder run under ``_sim_lock`` on the worker thread; the render thread reads
+  builder run under ``_sim_lock`` on the worker thread. The render thread reads
   only :attr:`SimulationWorker.latest_frame`, an immutable
   :class:`~spacesim2.ui.live.frame.TurnFrame` swapped in by reference.
-* The director paces turns by calling :meth:`request_turn`; the worker runs
-  at most one turn at a time and remembers at most one pending request, so a
-  simulation slower than the requested rate simply runs flat out instead of
-  building up a burst of catch-up turns that would freeze the window.
-* Drill-down detail is a *subscription*. The scene subscribes to its selection;
-  every published frame carries details for the subscribed entities only. A
-  subscription made while the worker is idle (paused, or between turns) is
-  serviced immediately under the lock so the panel opens without waiting for
-  the next turn; one made mid-turn is picked up at the turn boundary.
+* The director paces turns through :meth:`request_turn`. The worker runs at
+  most one turn at a time and remembers at most one pending request, so a
+  simulation slower than the requested rate runs flat out instead of queuing
+  catch-up turns that would freeze the window.
+* Drill-down detail is a subscription. The scene subscribes to its selection
+  and every published frame carries details for subscribed entities only. A
+  subscription made while the worker is idle is serviced at once under the
+  lock so the panel opens without waiting for the next turn. One made mid-turn
+  is picked up at the turn boundary.
 
-Without :meth:`start` the worker is synchronous — :meth:`request_turn` runs the
-turn on the calling thread. That is the headless/test mode, and it keeps tests
+Without :meth:`start` the worker is synchronous: :meth:`request_turn` runs the
+turn on the calling thread. This is the headless and test mode; it keeps tests
 deterministic without sleeping on a thread.
 """
 
@@ -31,7 +31,7 @@ from spacesim2.ui.live.frame import Subscription, TurnFrame, build_frame, with_d
 from spacesim2.ui.live.history import HistoryRecorder
 from spacesim2.ui.live.view_model import GalaxyViewModel, planet_wellbeing_by_name
 
-# How long a stop() waits for an in-flight turn before giving up on the join.
+# Seconds stop() waits for an in-flight turn before giving up on the join.
 STOP_JOIN_TIMEOUT_S = 30.0
 
 
@@ -45,8 +45,8 @@ class SimulationWorker:
         self._sim = simulation
         self._vm = view_model
         self.history = history
-        # Held for the whole of run_turn + frame build; taken non-blockingly
-        # by subscribe() to service a selection while the sim is idle.
+        # Held for the whole of run_turn plus frame build. subscribe() takes
+        # it non-blockingly to service a selection while the sim is idle.
         self._sim_lock = threading.Lock()
         self._subscriptions: Set[Subscription] = set()
         self._subscriptions_lock = threading.Lock()
@@ -57,7 +57,7 @@ class SimulationWorker:
             target=self._run, name="spacesim2-simulation", daemon=True
         )
         # The recorder already holds its turn-0 baseline, so the startup frame
-        # reuses a fresh sweep without recording a second baseline point.
+        # runs its own sweep without recording a second point.
         with self._sim_lock:
             self._latest = build_frame(
                 self._sim, self._vm, frozenset(), planet_wellbeing_by_name(self._sim)
@@ -122,9 +122,9 @@ class SimulationWorker:
     def _refresh_details_if_idle(self) -> None:
         """Republish the current turn's frame with the new detail set.
 
-        Only when the sim is idle: if a turn is in flight the boundary will
-        build the details anyway, and blocking the render thread on the lock
-        would be exactly the stall this worker exists to prevent.
+        Only when the sim is idle. If a turn is in flight the boundary builds
+        the details anyway, and blocking the render thread on the lock would
+        be the stall this worker exists to prevent.
         """
         if not self._sim_lock.acquire(blocking=False):
             return

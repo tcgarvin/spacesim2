@@ -1,4 +1,4 @@
-"""Streaming Parquet writer with batched writes for memory efficiency."""
+"""Streaming Parquet writer with batched writes."""
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -8,17 +8,10 @@ import pyarrow.parquet as pq
 
 
 class StreamingParquetWriter:
-    """Write data to Parquet in batches to avoid memory issues."""
+    """Write rows to Parquet in batches so memory stays bounded."""
 
     def __init__(self, filepath: Path, schema: pa.Schema, batch_size: int = 1000):
-        """
-        Initialize streaming Parquet writer.
-
-        Args:
-            filepath: Path to output Parquet file
-            schema: PyArrow schema defining table structure
-            batch_size: Number of rows to buffer before writing
-        """
+        """Create a writer that flushes every ``batch_size`` rows."""
         self.filepath = filepath
         self.schema = schema
         self.batch_size = batch_size
@@ -26,24 +19,17 @@ class StreamingParquetWriter:
         self.writer: Optional[pq.ParquetWriter] = None
 
     def write_row(self, row_dict: Dict[str, Any]) -> None:
-        """
-        Add a row to the buffer, flush if batch_size reached.
-
-        Args:
-            row_dict: Dictionary with keys matching schema field names
-        """
+        """Buffer a row keyed by schema field name; flush at batch_size."""
         self.buffer.append(row_dict)
 
         if len(self.buffer) >= self.batch_size:
             self.flush()
 
     def flush(self) -> None:
-        """Write buffered rows to Parquet file."""
+        """Write buffered rows to the Parquet file."""
         if not self.buffer:
             return
 
-        # Convert buffer to PyArrow Table
-        # Build column arrays from buffered rows
         arrays = {}
         for field in self.schema:
             field_name = field.name
@@ -51,26 +37,23 @@ class StreamingParquetWriter:
 
         table = pa.table(arrays, schema=self.schema)
 
-        # Write to file
         if self.writer is None:
-            # First write - create file
             self.writer = pq.ParquetWriter(
                 self.filepath, self.schema, compression="snappy"
             )
 
         self.writer.write_table(table)
 
-        # Clear buffer
         self.buffer = []
 
     def close(self) -> None:
-        """Flush remaining rows and close writer."""
+        """Flush remaining rows and close the writer."""
         self.flush()
         if self.writer:
             self.writer.close()
             self.writer = None
         elif not self.filepath.exists():
-            # Create empty file if no data was written
+            # Write an empty file so readers find every table.
             empty_table = pa.table(
                 {field.name: [] for field in self.schema}, schema=self.schema
             )

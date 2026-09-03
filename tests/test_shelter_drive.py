@@ -23,7 +23,7 @@ from tests.helpers import get_actor
 
 
 class TestShelterDriveConstants:
-    """Test the constants and configuration of ShelterDrive."""
+    """ShelterDrive constants."""
 
     def test_constants_are_reasonable(self):
         assert 0 < BASE_EVENT_PROB < 1
@@ -38,7 +38,7 @@ class TestShelterDriveConstants:
 
 
 class TestShelterDrive:
-    """Test the ShelterDrive class."""
+    """ShelterDrive with a mocked registry."""
 
     @pytest.fixture
     def mock_commodity_registry(self):
@@ -83,7 +83,7 @@ class TestShelterDrive:
 
     @patch("spacesim2.core.drives.shelter_drive.random.random")
     def test_tick_no_event(self, mock_random, shelter_drive, mock_actor):
-        """No event fires — debt decays, nothing consumed."""
+        """With no event, debt decays and nothing is consumed."""
         mock_random.return_value = 0.9  # above BASE_EVENT_PROB
 
         def get_qty(commodity):
@@ -102,7 +102,7 @@ class TestShelterDrive:
     def test_tick_event_consumes_basic_material(
         self, mock_random, shelter_drive, mock_actor
     ):
-        """Event fires with basic materials only — debt uses normal decay."""
+        """An event with only basic materials uses the normal debt decay."""
         mock_random.return_value = 0.001  # below BASE_EVENT_PROB
 
         def get_qty(commodity):
@@ -118,21 +118,21 @@ class TestShelterDrive:
         result = shelter_drive.tick(mock_actor)
 
         assert result.health == 1.0
-        # Standard decay (not quality decay) since basic material was used
+        # Basic material was used, so the standard decay applies.
         assert abs(result.debt - initial_debt * DEBT_DECAY_FACTOR) < 1e-6
 
     @patch("spacesim2.core.drives.shelter_drive.random.random")
     def test_tick_event_prefers_quality_material(
         self, mock_random, shelter_drive, mock_actor
     ):
-        """Event fires with both tiers available — quality preferred, faster debt recovery."""
+        """An event with both tiers consumes quality first and decays debt faster."""
         mock_random.return_value = 0.001
 
         def get_qty(commodity):
             return 5  # both tiers in stock
 
         mock_actor.inventory.get_available_quantity.side_effect = get_qty
-        # remove_commodity succeeds for quality first
+        # remove_commodity succeeds for either tier.
         mock_actor.inventory.remove_commodity.side_effect = lambda c, q: True
         initial_debt = 0.4
         shelter_drive.metrics.debt = initial_debt
@@ -140,13 +140,13 @@ class TestShelterDrive:
         result = shelter_drive.tick(mock_actor)
 
         assert result.health == 1.0
-        # Quality decay should be faster (smaller factor) than normal decay
+        # The quality decay factor is smaller, so debt falls further.
         quality_debt = initial_debt * QUALITY_DEBT_DECAY_FACTOR
         normal_debt = initial_debt * DEBT_DECAY_FACTOR
         assert result.debt <= normal_debt
         assert abs(result.debt - quality_debt) < 1e-6
 
-        # First remove_commodity call should be for quality material
+        # The first remove_commodity call is for the quality material.
         first_call = mock_actor.inventory.remove_commodity.call_args_list[0]
         assert first_call[0][0].id == PREFAB_HOUSING_NAME
 
@@ -154,7 +154,7 @@ class TestShelterDrive:
     def test_tick_event_failed_maintenance(
         self, mock_random, shelter_drive, mock_actor
     ):
-        """Event fires with no inventory — debt penalized."""
+        """An event with no inventory penalizes debt."""
         mock_random.return_value = 0.001
         mock_actor.inventory.get_available_quantity.return_value = 0
         initial_debt = 0.2
@@ -167,7 +167,7 @@ class TestShelterDrive:
         assert abs(result.debt - expected_debt) < 1e-6
 
     def test_buffer_calculation(self, shelter_drive, mock_actor):
-        """Buffer is calculated from combined basic + quality inventory."""
+        """Buffer comes from combined basic and quality inventory."""
 
         def get_qty(commodity):
             return 50  # both tiers
@@ -199,7 +199,7 @@ class TestShelterDrive:
         assert result.buffer == 0.0
 
     def test_debt_no_decay_without_inventory(self, shelter_drive, mock_actor):
-        """Debt doesn't decay when no materials and no event."""
+        """Debt does not decay with no materials and no event."""
         mock_actor.inventory.get_available_quantity.return_value = 0
         initial_debt = 0.6
         shelter_drive.metrics.debt = initial_debt
@@ -217,7 +217,7 @@ class TestShelterDrive:
 
 
 class TestShelterDriveIntegration:
-    """Integration tests for ShelterDrive with real components."""
+    """ShelterDrive with a real registry and inventory."""
 
     @pytest.fixture
     def real_registry(self):
@@ -261,7 +261,7 @@ class TestShelterDriveIntegration:
         assert all(0 <= d <= 1 for d in debt_progression)
 
     def test_mixed_inventory_consumption(self, real_registry):
-        """Drive consumes one unit from available stock when event fires."""
+        """An event consumes one unit from the available stock."""
         drive = ShelterDrive(real_registry)
         actor = get_actor("TestActor")
         basic = real_registry.get_commodity(BUILDING_MATERIALS_NAME)
@@ -278,10 +278,10 @@ class TestShelterDriveIntegration:
         total_remaining = actor.inventory.get_available_quantity(
             basic
         ) + actor.inventory.get_available_quantity(quality)
-        assert total_remaining == 19  # consumed exactly 1
+        assert total_remaining == 19
 
     def test_quality_preferred_over_basic(self, real_registry):
-        """Quality material is consumed first when both are available."""
+        """Quality material is consumed first when both tiers are available."""
         drive = ShelterDrive(real_registry)
         actor = get_actor("TestActor")
         basic = real_registry.get_commodity(BUILDING_MATERIALS_NAME)
@@ -294,13 +294,12 @@ class TestShelterDriveIntegration:
         ):
             drive.tick(actor)
 
-        # Quality should have been consumed, basic left intact
         assert actor.inventory.get_available_quantity(quality) == 4
         assert actor.inventory.get_available_quantity(basic) == 5
 
 
 class TestShelterDriveStochastic:
-    """Test stochastic behavior of ShelterDrive."""
+    """ShelterDrive stochastic behavior."""
 
     @pytest.fixture
     def setup_drive_and_actor(self):
@@ -326,7 +325,7 @@ class TestShelterDriveStochastic:
         return drive, actor
 
     def test_event_probability_distribution(self, setup_drive_and_actor):
-        """Events occur with approximately the correct probability."""
+        """Event frequency matches BASE_EVENT_PROB within 3 standard deviations."""
         drive, actor = setup_drive_and_actor
         actor.inventory.get_available_quantity = Mock(return_value=100)
         actor.inventory.remove_commodity = Mock(return_value=True)

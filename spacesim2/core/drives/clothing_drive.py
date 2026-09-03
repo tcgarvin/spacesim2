@@ -13,12 +13,12 @@ from spacesim2.core.drives.actor_drive import (
 BASE_EVENT_PROB = 1.0 / 60.0  # ~one replacement event per 60 days
 DEBT_DECAY_FACTOR = 0.8
 QUALITY_DEBT_DECAY_FACTOR = 0.5
-DEBT_MISS_PENALTY = 0.5  # with 0.8 decay, steady-state cap <= 1
-BUFFER_TARGET_DAYS = 60.0  # "good" wardrobe cushion
-BUFFER_MAX_DAYS = 180.0  # saturates near ~6 months
+DEBT_MISS_PENALTY = 0.5  # steady state exceeds 1; clamp01 caps debt
+BUFFER_TARGET_DAYS = 60.0  # good wardrobe cushion
+BUFFER_MAX_DAYS = 180.0  # saturates at about 6 months
 CLOTHING_NAME = "clothing"
 QUALITY_CLOTHING_NAME = "quality_clothing"
-URGENCY = 1.0  # fixed urgency for clothing drive
+URGENCY = 1.0  # fixed
 DRIVE_NAME = "clothing"
 
 
@@ -27,19 +27,19 @@ class ClothingDriveMetrics(DriveMetrics):
         return DRIVE_NAME
 
     def get_score(self) -> float:
-        # Score is based solely on debt
+        # Score is debt only.
         return 1 - self.debt
 
 
 class ClothingDrive(ActorDrive):
-    """
-    Random-demand clothing replacement with quality tiers.
+    """Random-demand clothing replacement with quality tiers.
 
     - Daily Bernoulli demand with probability BASE_EVENT_PROB.
-    - If event fires, try quality_clothing first, then clothing; miss -> debt accrues.
-    - Quality clothing provides faster debt recovery.
-    - Health is based on *current stock*, not event outcome.
-    - Buffer = expected days of coverage from all clothing types.
+    - On an event, use quality_clothing first, then clothing. A miss accrues
+      debt.
+    - Quality clothing recovers debt faster.
+    - Health reflects current stock, not the event outcome.
+    - Buffer is expected days of coverage from all clothing types.
     """
 
     MISS_PENALTY = DEBT_MISS_PENALTY
@@ -83,7 +83,7 @@ class ClothingDrive(ActorDrive):
         consumed_quality = False
         event_today = random.random() < p_event
         if event_today:
-            # Try quality first, fall back to basic
+            # Quality first.
             if self.quality_good and actor.inventory.remove_commodity(
                 self.quality_good, 1
             ):
@@ -91,7 +91,7 @@ class ClothingDrive(ActorDrive):
             else:
                 actor.inventory.remove_commodity(self.clothing_good, 1)
 
-            # Recalculate post-consumption inventory
+            # Post-consumption inventory.
             clothing_inventory = actor.inventory.get_available_quantity(
                 self.clothing_good
             )
@@ -106,7 +106,7 @@ class ClothingDrive(ActorDrive):
         debt = decay * self.metrics.debt + (not has_clothes) * DEBT_MISS_PENALTY
         debt = clamp01(debt)
 
-        # Buffer from post-consumption stock (both types)
+        # Buffer counts both types.
         exp_events_per_day = max(p_event, 1e-9)
         expected_coverage_days = total_inventory / exp_events_per_day
         buffer = log_norm_ratio(

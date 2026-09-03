@@ -1,34 +1,30 @@
-"""Threaded per-planet actor phase (perf hit-list Tier 3).
+"""Threaded per-planet actor phase.
 
 Runs each turn's actor phase across a shared-memory thread pool, sharding
-planets round-robin. This only yields real parallelism on a free-threaded
-CPython build (3.13t+/3.14t): the actor phase is pure-Python bytecode, so
-under a GIL-enabled interpreter the threads serialize and the phase runs at
-roughly serial speed. The code is correct either way, which keeps the tests
-runnable on stock interpreters.
+planets round-robin. Real parallelism needs a free-threaded CPython build,
+3.13t or 3.14t: the actor phase is pure-Python bytecode, so under a GIL the
+threads serialize and the phase runs at about serial speed. The code is
+correct either way, so tests run on stock interpreters.
 
-Why threads are safe here — the isolation argument, originally proven out by
-the fork-per-turn prototype (branch ``parallel-actor-phase``): an actor turn
-touches only
+Threads are safe here because an actor turn touches only
 
-- the actor's own state (inventory, money, skills, drives, brain memory),
-- its own planet's market (place/cancel; matching runs later, serially),
-- read-only registries (commodities, processes, skills),
-- the data logger, which is written under per-actor keys with a single
-  writer each (per-key dict ops are atomic on free-threaded CPython),
-- the global order-id counter, which is lock-wrapped (market._LockedCounter).
+- the actor's own state: inventory, money, skills, drives, brain memory,
+- its own planet's market, to place and cancel orders; matching runs later,
+  serially,
+- read-only registries: commodities, processes, skills,
+- the data logger, written under per-actor keys with a single writer each;
+  per-key dict ops are atomic on free-threaded CPython,
+- the global order-id counter, wrapped in a lock by market._LockedCounter.
 
 Planets are disjoint across shards, so no market is touched by two threads.
 Ships, market matching, and export stay serial in ``Simulation.run_turn``.
 
-Ordering semantics differ from the serial path: instead of one global
-shuffle of ``sim.actors``, each planet's actors are shuffled independently
-(per-shard RNG). Within the actor phase, cross-planet ordering cannot matter
-— actors never observe another planet — so this changes no observable
-behavior, only the (already non-reproducible) random stream. In-actor code
-keeps using the global ``random`` module: free-threaded CPython makes it
-thread-safe via an internal lock, which is a known contention point (the
-measured 12-thread speedup is ~2.8x, not 12x, largely for this reason).
+Ordering differs from the serial path: each planet's actors are shuffled
+independently with a per-shard RNG instead of one global shuffle of
+``sim.actors``. Actors never observe another planet during the actor phase,
+so this changes only the random stream, not observable behavior. In-actor
+code keeps using the global ``random`` module; free-threaded CPython guards
+it with an internal lock, which is a known contention point.
 """
 
 import random
@@ -43,8 +39,8 @@ if TYPE_CHECKING:
 def _warm_shared_caches(sim: "Simulation") -> None:
     """Populate lazily built read-only caches before threads race to do it.
 
-    Concurrent lazy initialization would at worst duplicate work, but warming
-    once up front keeps the shards' first turns from all paying it.
+    Concurrent lazy initialization would only duplicate work, but warming
+    once up front keeps every shard's first turn from paying it.
     """
     for commodity in sim.commodity_registry.all_commodities():
         sim.process_registry.get_processes_producing(commodity)
@@ -60,7 +56,7 @@ def _run_shard(planets: List["Planet"], rng: random.Random) -> None:
 
 
 def _get_pool(sim: "Simulation", workers: int) -> ThreadPoolExecutor:
-    """The sim's persistent actor-phase pool, (re)built if the size changed."""
+    """The sim's persistent actor-phase pool, rebuilt if the size changed."""
     pool = sim._actor_phase_pool
     if pool is None or sim._actor_phase_pool_size != workers:
         if pool is not None:
@@ -74,13 +70,13 @@ def _get_pool(sim: "Simulation", workers: int) -> ThreadPoolExecutor:
 def run_actor_phase_threaded(sim: "Simulation", workers: int) -> None:
     """Run every planet's actor turns across a thread pool.
 
-    Must be called at the point run_turn would otherwise run its serial
-    actor loop (after set_current_turn, before the ship phase).
+    Must be called where run_turn would otherwise run its serial actor
+    loop: after set_current_turn, before the ship phase.
     """
     if workers <= 1:
         raise ValueError("run_actor_phase_threaded requires workers >= 2")
     # Shards iterate planet.actors; an actor registered on the sim but not
-    # on its planet would silently never act again.
+    # on its planet would never act again.
     if sum(len(p.actors) for p in sim.planets) != len(sim.actors):
         raise RuntimeError(
             "planet.actors does not cover sim.actors; cannot shard the "
@@ -92,6 +88,6 @@ def run_actor_phase_threaded(sim: "Simulation", workers: int) -> None:
     rngs = [random.Random(random.random()) for _ in shards]
     pool = _get_pool(sim, workers)
     futures = [pool.submit(_run_shard, shard, rng) for shard, rng in zip(shards, rngs)]
-    # result() re-raises the first shard failure; let it propagate loudly.
+    # result() re-raises the first shard failure.
     for future in futures:
         future.result()

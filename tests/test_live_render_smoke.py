@@ -1,8 +1,8 @@
 """Headless render smoke test for the live galaxy view.
 
-Uses SDL's dummy video driver so it runs in CI with no display. Drives the app
-through real frames (director steps turns, scene renders) and asserts the output
-is non-blank and exception-free.
+Uses SDL's dummy video driver so it runs with no display. Drives the app
+through real frames, with the director stepping turns and the scene rendering,
+and asserts the output is non-blank and exception-free.
 """
 
 import math
@@ -34,17 +34,17 @@ def test_app_renders_non_blank_frames_over_several_turns() -> None:
     app = LiveGalaxyApp(_sim(), speed=4.0, size=(400, 300))
     try:
         app.initialize()
-        # ~30 frames at 50ms each -> a handful of simulation turns.
+        # 30 frames at 50 ms each is a handful of simulation turns.
         for _ in range(30):
             app.update(0.05)
             app.render()
 
         assert app._screen is not None
         frame = pygame.surfarray.array3d(app._screen)
-        # The backdrop alone has nebula/star variation, so the frame must not be
-        # a single flat colour.
+        # The backdrop alone has nebula and star variation, so the frame is
+        # never a single flat colour.
         assert frame.std() > 1.0
-        # And it must contain something brighter than the deep void background.
+        # Something must be brighter than the deep void background.
         assert int(np.max(frame.sum(axis=2))) > 30
     finally:
         pygame.quit()
@@ -55,8 +55,8 @@ def test_charts_panel_renders_and_cycles_commodities() -> None:
     try:
         app.initialize()
         assert app._scene is not None
-        # Panel is visible by default; cycling commodities must not raise even
-        # before/while trades accumulate.
+        # The panel is visible by default. Cycling commodities must not raise
+        # before or while trades accumulate.
         for _ in range(10):
             app.update(0.05)
             app._scene.charts.cycle_commodity(1)
@@ -74,18 +74,18 @@ def test_charts_panel_renders_and_cycles_commodities() -> None:
 
 
 def test_baked_ship_sprites_and_good_icons_render() -> None:
-    """The committed sprite/icon assets exercise the baked path by default.
+    """The committed sprite and icon assets render through the baked path.
 
-    Forces a ship into travel (so a non-zero-heading directional frame renders)
-    and opens both a planet panel (market-row icons) and the ship panel
-    (hold-row icons), asserting the frame stays exception-free and non-blank.
+    Forces a ship into travel so a directional frame renders, then opens a
+    planet panel for market-row icons and the ship panel for hold-row icons.
+    The frame must stay exception-free and non-blank.
     """
     sim = _sim()
     app = LiveGalaxyApp(sim, speed=4.0, size=(900, 600))
     try:
         app.initialize()
         assert app._scene is not None
-        # Committed assets must actually be loaded, not silently skipped.
+        # Committed assets must be loaded, not silently skipped.
         assert app._scene._ship_sprites
         assert app._scene._good_icons
 
@@ -98,16 +98,16 @@ def test_baked_ship_sprites_and_good_icons_render() -> None:
             app.update(0.05)
             app.render()
 
-        # Put the ship in transit so a non-zero-heading directional frame
-        # renders. Set this *after* the update loop and only render below, so no
-        # turn advances against the forced (travel_time-less) travel state.
+        # Put the ship in transit so a directional frame renders. Set this
+        # after the update loop and only render below, so no turn advances
+        # against the forced travel state, which has no travel_time.
         ship.planet = sim.planets[0]
         ship.destination = sim.planets[1]
         ship.status = ShipStatus.TRAVELING
         ship.travel_progress = 0.4
         app.render()
 
-        # Render a planet panel (market icons) then the ship panel (hold icons).
+        # Render a planet panel, then the ship panel.
         app._scene.selection = ("planet", sim.planets[0].name)
         app.render()
         app._scene.selection = ("ship", ship.name)
@@ -122,10 +122,10 @@ def test_baked_ship_sprites_and_good_icons_render() -> None:
 
 
 def test_hundred_planet_galaxy_renders_with_lanes_and_highlights() -> None:
-    """The default 100-planet spiral must fit, draw its lanes, and pick.
+    """The default 100-planet spiral fits, draws its lanes, and picks.
 
-    Renders zoomed-out (labels hidden by the declutter threshold), then with a
-    ship and a planet selected so the route/incident-lane highlight paths run,
+    Renders zoomed out with labels hidden by the declutter threshold, then with
+    a ship and a planet selected so the route and lane highlight paths run,
     then zoomed in so labels appear.
     """
     sim = Simulation()
@@ -147,8 +147,8 @@ def test_hundred_planet_galaxy_renders_with_lanes_and_highlights() -> None:
             app.render()
 
         # A planet is pickable at its own screen position even at fit zoom.
-        # Use the most isolated planet: in the dense core two planets can sit
-        # within one pick radius of each other, making the pick ambiguous.
+        # Use the most isolated planet; in the dense core two planets can sit
+        # within one pick radius of each other.
         target = max(
             sim.planets,
             key=lambda p: min(
@@ -203,15 +203,15 @@ def test_click_planet_selects_and_renders_detail_panel() -> None:
         assert app.handle_event(up) is True
         assert app._scene.selection == ("planet", planet.name)
 
-        # Panel + planet-scoped charts render without error.
+        # Panel and planet-scoped charts render without error.
         app.render()
         assert app._scene._panel_rect is not None
 
-        # Esc closes the panel first (app keeps running)...
+        # Esc closes the panel first and the app keeps running.
         esc = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE)
         assert app.handle_event(esc) is True
         assert app._scene.selection is None
-        # ...and quits once nothing is open.
+        # A second Esc quits once nothing is open.
         assert app.handle_event(esc) is False
     finally:
         pygame.quit()
@@ -259,7 +259,7 @@ def test_click_void_clears_selection_and_ship_pick_works() -> None:
         app.render()  # ship panel renders without error
         assert scene._panel_rect is not None
 
-        # Find a void spot (no pick) and click it: selection clears.
+        # Clicking a spot that picks nothing clears the selection.
         void = None
         for x in range(10, 900, 40):
             for y in range(10, 600, 40):

@@ -1,10 +1,10 @@
-"""Tests for the offline asset pipeline (no network, no API keys).
+"""Tests for the offline asset pipeline. No network, no API keys.
 
 Provider HTTP is mocked, so nothing here reaches PixelLab. The pipeline scripts
 live in ``tools/assetgen`` and are not an installed package, so they are loaded
-by path; the loader also registers them under their bare module names and puts
-their directory on ``sys.path`` so their sibling imports (``from postprocess
-import ...``) resolve.
+by path. The loader also registers them under their bare module names and puts
+their directory on ``sys.path`` so sibling imports such as ``from postprocess
+import ...`` resolve.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ def _png_bytes(color: tuple[int, int, int, int] = (200, 60, 60, 255)) -> bytes:
 
 
 def _sprite_png_bytes() -> bytes:
-    """A small opaque blob on a transparent RGBA canvas (has an alpha bbox)."""
+    """A small opaque blob on a transparent RGBA canvas, so it has an alpha bbox."""
     img = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
     for y in range(4, 12):
         for x in range(4, 12):
@@ -75,7 +75,7 @@ class _FakeResponse:
 
 
 # --------------------------------------------------------------------------- #
-# postprocess (pure image transforms)
+# postprocess: pure image transforms
 # --------------------------------------------------------------------------- #
 
 
@@ -125,11 +125,11 @@ def test_trim_pad_square_preserves_alpha_and_is_square_and_crisp() -> None:
     assert out.size == (32, 32)
     assert out.mode == "RGBA"
     arr = np.asarray(out)
-    # Content survived and stays opaque somewhere; the border stays transparent.
+    # Content survives and is opaque somewhere; the border stays transparent.
     assert arr[..., 3].max() == 255
     assert arr[0, 0, 3] == 0
     assert arr[-1, -1, 3] == 0
-    # NEAREST keeps hard edges: alpha is strictly binary, no anti-aliased ramp.
+    # NEAREST keeps hard edges, so alpha is binary with no anti-aliased ramp.
     assert set(np.unique(arr[..., 3]).tolist()) <= {0, 255}
 
 
@@ -169,7 +169,7 @@ def test_pack_strip_rejects_empty() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# pixellab provider (mocked HTTP)
+# pixellab provider: mocked HTTP
 # --------------------------------------------------------------------------- #
 
 
@@ -266,7 +266,7 @@ def test_provider_raises_on_non_200(
 
 
 # --------------------------------------------------------------------------- #
-# generate dispatch (providers monkeypatched, no HTTP at all)
+# generate dispatch: providers monkeypatched, no HTTP
 # --------------------------------------------------------------------------- #
 
 
@@ -334,7 +334,7 @@ def test_rotation_dispatch_makes_8_raw_frames_and_one_strip(
     assert candidate.exists()
     strip = Image.open(candidate)
     assert strip.size == (48 * 8, 48)  # 8 frames wide
-    # One base create + seven rotations.
+    # One base create and seven rotations.
     assert calls[0] == ("object", "e.png")
     assert sum(1 for c in calls if c[0] == "rotate") == 7
 
@@ -346,8 +346,8 @@ def test_rotation_dispatch_resumes_without_regenerating_existing_frames(
     generate = _load("generate")
     monkeypatch.setattr(generate, "_HERE", tmp_path)
 
-    # Pre-seed the east base and the NE frame with a recognisable marker sprite
-    # (distinct from what the fakes would write, so a skip is byte-verifiable).
+    # Pre-seed the east base and the NE frame with a marker sprite distinct
+    # from what the fakes write, so a skip is byte-verifiable.
     raw_dir = tmp_path / "staging" / "raw" / "freighter"
     raw_dir.mkdir(parents=True)
     _marker = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
@@ -379,7 +379,7 @@ def test_rotation_dispatch_resumes_without_regenerating_existing_frames(
     manifest = _rotation_manifest()
     generate._generate_entry(manifest, manifest["assets"][0], force=False)
 
-    # Existing base was not regenerated; NE was skipped; the other six rotated.
+    # The base was not regenerated, NE was skipped, the other six rotated.
     assert created == []
     assert "ne" not in rotated
     assert sorted(rotated) == ["n", "nw", "s", "se", "sw", "w"]
@@ -388,7 +388,7 @@ def test_rotation_dispatch_resumes_without_regenerating_existing_frames(
 
 
 # --------------------------------------------------------------------------- #
-# promote (into a temp asset root)
+# promote: into a temp asset root
 # --------------------------------------------------------------------------- #
 
 
@@ -430,7 +430,7 @@ def test_promote_routes_ships_and_goods_to_correct_indexes(tmp_path: Path) -> No
                 "provider": "pixellab",
                 "kind": "object",
                 "size": 32,
-                "status": "draft",  # not approved -> ignored
+                "status": "draft",  # not approved, so ignored
                 "prompt": "green matter",
             },
         ]

@@ -14,8 +14,7 @@ from .helpers import get_actor
 
 
 def test_load_commodities_from_yaml():
-    """Test loading commodities from YAML file."""
-    # Create a temp YAML file
+    """CommodityRegistry loads a definition from a YAML file."""
     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".yaml") as f:
         yaml.dump(
             [
@@ -31,11 +30,9 @@ def test_load_commodities_from_yaml():
         temp_file = f.name
 
     try:
-        # Load the file
         registry = CommodityRegistry()
         registry.load_from_file(temp_file)
 
-        # Check if commodity was loaded
         commodity = registry.get_commodity("test_commodity")
         assert commodity is not None
         assert commodity.id == "test_commodity"
@@ -43,16 +40,13 @@ def test_load_commodities_from_yaml():
         assert commodity.transportable is True
         assert commodity.description == "A test commodity"
     finally:
-        # Clean up
         os.unlink(temp_file)
 
 
 def test_load_processes_from_yaml():
-    """Test loading processes from YAML file."""
-    # First create commodity registry with required commodities
+    """ProcessRegistry loads a process and resolves its commodity references."""
     commodity_registry = CommodityRegistry()
 
-    # Add the necessary commodities
     input_commodity = CommodityDefinition(
         id="input_commodity",
         name="Input Commodity",
@@ -78,13 +72,11 @@ def test_load_processes_from_yaml():
         description="Test facility",
     )
 
-    # Register the commodities
     commodity_registry._commodities["input_commodity"] = input_commodity
     commodity_registry._commodities["output_commodity"] = output_commodity
     commodity_registry._commodities["tool_commodity"] = tool_commodity
     commodity_registry._commodities["facility_commodity"] = facility_commodity
 
-    # Create a temp YAML file for processes
     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".yaml") as f:
         yaml.dump(
             [
@@ -104,11 +96,9 @@ def test_load_processes_from_yaml():
         process_file = f.name
 
     try:
-        # Load the processes file
         process_registry = ProcessRegistry(commodity_registry)
         process_registry.load_from_file(process_file)
 
-        # Check if process was loaded
         process = process_registry.get_process("test_process")
         assert process is not None
         assert process.id == "test_process"
@@ -126,30 +116,25 @@ def test_load_processes_from_yaml():
         assert process.labor == 3
         assert process.description == "A test process"
     finally:
-        # Clean up
         os.unlink(process_file)
 
 
 def test_inventory_commodity_items(mock_sim):
-    """Test the Inventory class with string commodity IDs."""
+    """Inventory add, remove, reserve, and unreserve work with string ids."""
     mock_sim = mock_sim
     inventory = Inventory()
 
-    # Add and check commodity
     inventory.add_commodity("test_commodity", 5)
     assert inventory.get_quantity("test_commodity") == 5
 
-    # Remove some and check
     inventory.remove_commodity("test_commodity", 2)
     assert inventory.get_quantity("test_commodity") == 3
 
-    # Reserve some and check
     assert inventory.reserve_commodity("test_commodity", 1)
     assert inventory.get_available_quantity("test_commodity") == 2
     assert inventory.get_reserved_quantity("test_commodity") == 1
     assert inventory.get_quantity("test_commodity") == 3
 
-    # Unreserve and check
     inventory.unreserve_commodity("test_commodity", 1)
     assert inventory.get_available_quantity("test_commodity") == 3
     assert inventory.get_reserved_quantity("test_commodity") == 0
@@ -157,15 +142,13 @@ def test_inventory_commodity_items(mock_sim):
 
 
 def test_actor_execute_process(monkeypatch):
-    """Test actor executing a process."""
-    # Pin the RNG above the 1% tool-break probability so the "tools aren't
-    # consumed" assertion can't flake on a random breakage.
+    """ProcessCommand consumes inputs, produces outputs, and keeps tools."""
+    # Pin the RNG above the 1% tool-break probability so the tool assertion
+    # cannot flake on a random breakage.
     monkeypatch.setattr("spacesim2.core.commands.random.random", lambda: 0.99)
 
-    # Set up simulation
     sim = Simulation()
 
-    # Set up commodity registry
     sim.commodity_registry = CommodityRegistry()
     sim.commodity_registry._commodities["input_commodity"] = CommodityDefinition(
         id="input_commodity",
@@ -192,10 +175,8 @@ def test_actor_execute_process(monkeypatch):
         description="Test facility",
     )
 
-    # Create process registry
     sim.process_registry = ProcessRegistry(sim.commodity_registry)
 
-    # Add a test process
     process_def = ProcessDefinition(
         id="test_process",
         name="Test Process",
@@ -208,34 +189,28 @@ def test_actor_execute_process(monkeypatch):
     )
     sim.process_registry._processes["test_process"] = process_def
 
-    # Create planet
     market = Market()
     planet = Planet("Test Planet", market)
 
-    # Create actor with required inputs, tools, and facilities
     actor = get_actor("Test Actor", sim, planet=planet)
     actor.inventory.add_commodity("input_commodity", 5)
     actor.inventory.add_commodity("tool_commodity", 1)
-    actor.inventory.add_commodity("facility_commodity", 1)  # Actor has the facility
+    actor.inventory.add_commodity("facility_commodity", 1)
 
-    # Execute process via command pattern
     command = ProcessCommand("test_process")
     result = command.execute(actor)
     assert result is True
 
-    # Check results
     assert actor.inventory.get_quantity("input_commodity") == 3  # 5 - 2
     assert actor.inventory.get_quantity("output_commodity") == 1
-    assert actor.inventory.get_quantity("tool_commodity") == 1  # Tools aren't consumed
+    assert actor.inventory.get_quantity("tool_commodity") == 1  # tools not consumed
     assert actor.last_action == "Executed process: Test Process"
 
 
 def test_process_requires_facility():
-    """Test that process requires facility."""
-    # Set up simulation
+    """A process fails without its required facility and succeeds with it."""
     sim = Simulation()
 
-    # Set up commodity registry
     sim.commodity_registry = CommodityRegistry()
     sim.commodity_registry._commodities["input_commodity"] = CommodityDefinition(
         id="input_commodity",
@@ -256,10 +231,8 @@ def test_process_requires_facility():
         description="Test facility",
     )
 
-    # Create process registry
     sim.process_registry = ProcessRegistry(sim.commodity_registry)
 
-    # Add a test process requiring a facility
     process_def = ProcessDefinition(
         id="test_process",
         name="Test Process",
@@ -272,27 +245,21 @@ def test_process_requires_facility():
     )
     sim.process_registry._processes["test_process"] = process_def
 
-    # Create planet
     market = Market()
     planet = Planet("Test Planet", market)
 
-    # Create actor with required inputs but without facility
     actor = get_actor("Test Actor", sim, planet=planet)
     actor.inventory.add_commodity("input_commodity", 5)
 
-    # Try to execute process - should fail because actor doesn't have the facility
     command1 = ProcessCommand("test_process")
     result = command1.execute(actor)
     assert result is False
 
-    # Add the facility to actor's inventory
     actor.inventory.add_commodity("facility_commodity", 1)
 
-    # Try again - should succeed
     command2 = ProcessCommand("test_process")
     result = command2.execute(actor)
     assert result is True
 
-    # Check results
     assert actor.inventory.get_quantity("input_commodity") == 4  # 5 - 1
     assert actor.inventory.get_quantity("output_commodity") == 1

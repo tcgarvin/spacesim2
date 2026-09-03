@@ -1,14 +1,14 @@
 """LiveGalaxyApp: window, main loop, and input for the live galaxy view.
 
-Holds the pygame window, a fixed-timestep-ish clock, the camera, the director
-(turn pacing), and the galaxy scene. Input is restrained: play/pause, speed,
-zoom, pan, click-to-inspect, quit. A mouse press only pans once it moves past a
-small slop; a release inside the slop is a click and selects the planet/ship
-under the cursor. ``initialize`` / ``update`` / ``render`` are split out so tests
-can drive frames headlessly (``SDL_VIDEODRIVER=dummy``) without the blocking loop.
+Holds the pygame window, clock, camera, director for turn pacing, and the
+galaxy scene. Input: play/pause, speed, zoom, pan, click-to-inspect, quit. A
+mouse press pans only once it moves past a small slop; a release inside the
+slop is a click and selects the planet or ship under the cursor.
+``initialize``, ``update``, and ``render`` are separate so tests can drive
+frames headlessly with ``SDL_VIDEODRIVER=dummy`` and no blocking loop.
 
 Turns run on a :class:`~spacesim2.ui.live.worker.SimulationWorker` thread that
-``run`` starts and stops; ``initialize`` alone leaves the worker synchronous so
+``run`` starts and stops. ``initialize`` alone leaves the worker synchronous so
 headless drivers step turns deterministically on their own thread.
 """
 
@@ -36,8 +36,8 @@ from spacesim2.ui.live.worker import SimulationWorker
 DEFAULT_SIZE = (1600, 900)
 TARGET_FPS = 60
 ZOOM_STEP = 1.1
-# A press-release pair that moves less than this many pixels is a click
-# (select), anything more is a drag (pan).
+# A press-release pair that moves at most this many pixels is a click;
+# anything more is a drag.
 CLICK_SLOP_PX = 5
 
 
@@ -74,7 +74,7 @@ class LiveGalaxyApp:
         self._clock = pygame.time.Clock()
 
         view_model = GalaxyViewModel(self._sim)
-        # Fit the galaxy above the charts strip so it isn't hidden at startup.
+        # Fit the galaxy above the charts strip so the strip does not hide it.
         self._camera = Camera(
             self._size, view_model.galaxy_size, strip_reserve_px(self._size[1])
         )
@@ -97,8 +97,8 @@ class LiveGalaxyApp:
             return False
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
-                # Esc peels back one layer: close the detail panel first,
-                # quit only when nothing is open.
+                # Esc closes the detail panel first and quits only when
+                # nothing is open.
                 assert self._scene is not None
                 return self._scene.clear_selection()
             if event.key == pygame.K_q:
@@ -193,7 +193,7 @@ class LiveGalaxyApp:
                 self.update(dt)
                 self.render()
         finally:
-            # Let an in-flight turn finish rather than tearing pygame down
-            # under a thread that may still be building a frame.
+            # Let an in-flight turn finish before pygame is torn down; the
+            # worker may still be building a frame.
             self._worker.stop()
             pygame.quit()

@@ -1,4 +1,4 @@
-"""Unit tests for the shared galaxy navigation cache (core/navigation.py)."""
+"""Unit tests for the shared galaxy navigation cache in core/navigation.py."""
 
 import math
 
@@ -16,7 +16,7 @@ from spacesim2.core.ship import Ship
 
 
 def _make_world(planet_specs):
-    """Build a registry (nova_fuel + food), planets with markets, and a mock sim."""
+    """Build a nova_fuel and food registry, planets with markets, and a mock sim."""
     registry = CommodityRegistry()
     fuel = CommodityDefinition(
         id="nova_fuel",
@@ -88,9 +88,9 @@ def test_fuel_purchasable_cached_until_refresh():
     assert nav.fuel_purchasable_at(a) is False
     a.market.place_sell_order(supplier, fuel, 50, 10)
 
-    # Still False: the answer is cached for the current planning decision...
+    # Still False: the answer is cached for the current planning decision.
     assert nav.fuel_purchasable_at(a) is False
-    # ...and reflects the live book after a refresh.
+    # After a refresh it reflects the live book.
     nav.refresh_market_facts()
     assert nav.fuel_purchasable_at(a) is True
 
@@ -105,7 +105,7 @@ def test_nearest_fuel_source_distance_tracks_purchasability():
     b.market.place_sell_order(supplier, fuel, 50, 10)
     nav.refresh_market_facts()
 
-    # B is the only fuel source: 100 away from A, and excluded from its own
+    # B is the only fuel source: 100 from A, and excluded from its own
     # escape options.
     assert nav.nearest_fuel_source_distance(a) == 100.0
     assert nav.nearest_fuel_source_distance(b) is None
@@ -149,8 +149,7 @@ def test_exportable_commodity_summaries():
 
 
 def test_refresh_with_turn_is_a_per_turn_snapshot():
-    """Same-turn refresh calls are no-ops; a new turn (or a forced refresh)
-    rebuilds the market-fact snapshot."""
+    """Same-turn refreshes are no-ops; a new turn or forced refresh rebuilds."""
     sim, _, food, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
     nav = Navigator(sim)
     nav.refresh_market_facts(turn=0)
@@ -172,7 +171,7 @@ def test_refresh_with_turn_is_a_per_turn_snapshot():
     assert nav.exportable_commodities(a) == frozenset({food})
     assert nav.has_any_trade_signal() is True
 
-    # A turn-less call always forces a refresh, even within the same turn.
+    # A call without a turn always refreshes, even within the same turn.
     b.market.cancel_order(b.market.buy_orders[food][0].order_id)
     assert nav.candidate_destinations(a, food) == (b,)  # still snapshotted
     nav.refresh_market_facts()
@@ -180,20 +179,19 @@ def test_refresh_with_turn_is_a_per_turn_snapshot():
 
 
 def test_cold_galaxy_has_no_trade_signal():
-    """With no orders and no trade history anywhere, the index reports a cold
-    galaxy and candidate lists are empty."""
+    """With no orders or history anywhere, the galaxy is cold and has no candidates."""
     sim, _, food, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
     nav = Navigator(sim)
     assert nav.has_any_trade_signal() is False
     assert nav.candidate_destinations(a, food) == ()
 
-    # Supply alone (no demand signal anywhere) is still cold.
+    # Supply alone, with no demand signal anywhere, is still cold.
     seller = Ship("Seller", sim, a)
     seller.cargo.add_commodity(food, 50)
     a.market.place_sell_order(seller, food, 50, 10)
     nav.refresh_market_facts()
-    # The ask itself creates a demand signal nowhere; only planet A gains an
-    # exportable entry. B has no bid and no price history.
+    # The ask creates no demand signal; only planet A gains an exportable
+    # entry. B has no bid and no price history.
     assert nav.exportable_commodities(a) == frozenset({food})
     assert nav.candidate_destinations(a, food) == ()
 
@@ -201,8 +199,8 @@ def test_cold_galaxy_has_no_trade_signal():
 def _demand_world(num_planets: int):
     """A line of planets where planet i rests a food bid at price 10 + i.
 
-    Planet 0 (the origin) also bids so demand-set membership excludes the
-    origin itself, not just planets without signals.
+    Planet 0, the origin, also bids, so demand-set membership must exclude
+    the origin itself and not just planets without signals.
     """
     specs = [(f"P{i}", i * 10, 0) for i in range(num_planets)]
     sim, _fuel, food, planets = _make_world(specs)
@@ -213,23 +211,24 @@ def _demand_world(num_planets: int):
 
 
 def test_candidate_destinations_degenerate_to_all_in_small_galaxies():
-    """At or below K + M demand planets, the shortlist is every demand planet
-    (so small-galaxy behavior matches an exhaustive survey)."""
+    """At or below K + M demand planets, the shortlist is every demand planet.
+
+    Small-galaxy behavior therefore matches an exhaustive survey.
+    """
     count = DESTINATION_TOP_K + DESTINATION_NEAREST_M + 1  # origin + K + M
     sim, food, planets = _demand_world(count)
     nav = Navigator(sim)
     origin = planets[0]
     candidates = nav.candidate_destinations(origin, food)
     assert set(candidates) == set(planets) - {origin}
-    # Ranked by demand value (bid price), best first.
+    # Ranked by bid price, best first.
     assert list(candidates) == sorted(
         candidates, key=lambda p: -max(o.price for o in p.market.buy_orders[food])
     )
 
 
 def test_candidate_destinations_match_bruteforce_topk_union_nearest():
-    """Above the threshold, candidates equal brute-force top-K-by-value
-    united with the M nearest demand planets."""
+    """Above the threshold, candidates are the top K by value plus the M nearest."""
     sim, food, planets = _demand_world(30)
     nav = Navigator(sim)
     origin = planets[0]
@@ -249,7 +248,7 @@ def test_candidate_destinations_match_bruteforce_topk_union_nearest():
     )
     assert candidates == top_k | nearest_m
     # Bid prices rise with distance here, so the two halves are disjoint and
-    # the union genuinely mixes near and high-value planets.
+    # the union mixes near and high-value planets.
     assert top_k.isdisjoint(nearest_m)
     assert len(candidates) == DESTINATION_TOP_K + DESTINATION_NEAREST_M
 

@@ -1,26 +1,24 @@
 """Spiral-galaxy layout and the star-lane network ships travel along.
 
-Planets used to float on an open plane where any planet could fly directly to
-any other. This module replaces that with a **graph**: planets sit on the arms
-of a spiral galaxy and are joined by star lanes. Ships can only travel along
-lanes, so the distance between two planets is the length of the shortest lane
-route between them (see :class:`~spacesim2.core.navigation.Navigator`), not the
-straight-line distance.
+Planets sit on the arms of a spiral galaxy and are joined by star lanes.
+Ships travel only along lanes, so the distance between two planets is the
+length of the shortest lane route between them, as computed by
+:class:`~spacesim2.core.navigation.Navigator`, not the straight-line distance.
 
 Two structural guarantees matter to the rest of the simulation and are covered
 by tests:
 
-- **Connected**: every planet can reach every other planet (no islands).
-- **Planar**: no two lanes cross. Lanes are a subset of the Delaunay
+- Connected: every planet can reach every other planet.
+- Planar: no two lanes cross. Lanes are a subset of the Delaunay
   triangulation of the planet positions, and Delaunay edges never cross.
 
-The layout is built in three steps, all in :func:`generate_spiral_layout`:
+:func:`generate_spiral_layout` builds the layout in three steps:
 
 1. Scatter planets along ``arms`` logarithmic-spiral arms with a small core.
-2. Triangulate them (Bowyer-Watson Delaunay, pure Python; n <= ~500 is fine).
-3. Keep the minimum spanning tree (connectivity) plus a random fraction of the
-   remaining Delaunay edges that pass the Gabriel test (short, local lanes),
-   controlled by ``lane_density``.
+2. Triangulate them with a pure-Python Bowyer-Watson Delaunay.
+3. Keep the minimum spanning tree for connectivity, plus the fraction
+   ``lane_density`` of the remaining Delaunay edges that pass the Gabriel
+   test, which selects short, local lanes.
 
 :class:`StarLaneNetwork` is the runtime object the simulation holds: it maps
 :class:`~spacesim2.core.planet.Planet` objects to their lane neighbours.
@@ -36,15 +34,14 @@ from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Sequence, Tupl
 if TYPE_CHECKING:
     from spacesim2.core.planet import Planet
 
-# Baseline spatial feel: the historical 5-planet galaxy lived on a 100x100 map.
-# Arm density (area per planet along the arms) is kept constant as galaxies
-# grow so nearest-neighbour lane lengths — and therefore fuel economics — feel
-# the same at any scale.
+# Area per planet along the arms, sized from a 100x100 map holding 5 planets.
+# Held constant as galaxies grow so nearest-neighbour lane lengths, and so
+# fuel economics, stay the same at any scale.
 AREA_PER_PLANET = (100.0 * 100.0) / 5
 MIN_PLANET_DISTANCE = 10.0
 DEFAULT_ARMS = 3
-# Fraction of the non-tree Gabriel lanes that are kept. 1.0 keeps every local
-# lane (mean degree ~3.5); 0.0 leaves a bare spanning tree.
+# Fraction of the non-tree Gabriel lanes kept. 1.0 keeps every local lane,
+# for a mean degree of about 3.5; 0.0 leaves a bare spanning tree.
 DEFAULT_LANE_DENSITY = 0.6
 # Share of planets placed in the galactic core rather than on an arm.
 CORE_FRACTION = 0.08
@@ -58,10 +55,10 @@ Point = Tuple[float, float]
 class GalaxyLayout:
     """Pure-data result of galaxy generation, before any Planet exists.
 
-    ``positions[i]`` is planet ``i``'s map coordinate (all non-negative, inside
-    a ``width`` x ``height`` box) and ``lanes`` holds ``(i, j)`` index pairs
-    with ``i < j``. ``arm_of[i]`` is the arm index each planet was seeded on
-    (``-1`` for core planets) — informational, for rendering and analysis.
+    ``positions[i]`` is planet ``i``'s map coordinate; all are non-negative
+    and inside a ``width`` x ``height`` box. ``lanes`` holds ``(i, j)`` index
+    pairs with ``i < j``. ``arm_of[i]`` is the arm each planet was seeded on,
+    ``-1`` for core planets; it is informational, for rendering and analysis.
     """
 
     positions: Tuple[Point, ...]
@@ -92,9 +89,9 @@ class StarLane:
 class StarLaneNetwork:
     """The undirected star-lane graph over a simulation's planets.
 
-    Held by :class:`~spacesim2.core.simulation.Simulation`; queried by the
-    navigator (shortest routes), ships (departure), the live view (lane
-    rendering) and the exporter. Lanes are added once at setup and never
+    Held by :class:`~spacesim2.core.simulation.Simulation`. Queried by the
+    navigator for shortest routes, ships on departure, the live view for lane
+    rendering, and the exporter. Lanes are added once at setup and never
     removed.
     """
 
@@ -103,7 +100,7 @@ class StarLaneNetwork:
 
     @classmethod
     def complete(cls, planets: Sequence["Planet"]) -> "StarLaneNetwork":
-        """A lane between every pair of planets (the legacy open-plane model).
+        """A lane between every pair of planets.
 
         Route distances then equal straight-line distances, which is what
         hand-built test worlds expect.
@@ -127,7 +124,7 @@ class StarLaneNetwork:
         return lane
 
     def lanes_from(self, planet: "Planet") -> List[StarLane]:
-        """Every lane touching ``planet`` (empty if it has none)."""
+        """Every lane touching ``planet``; empty if it has none."""
         return self._adjacency.get(planet, [])
 
     def neighbors(self, planet: "Planet") -> List["Planet"]:
@@ -169,7 +166,8 @@ def generate_spiral_layout(
 
     Raises:
         ValueError: On invalid arguments, or if planets could not be separated
-            (only possible with an absurdly small radius/large min_distance).
+            by ``min_distance``, which needs a very large value for the
+            galaxy radius.
     """
     if num_planets < 1:
         raise ValueError(f"num_planets must be >= 1, got {num_planets}")
@@ -203,8 +201,8 @@ def generate_spiral_layout(
 def _galaxy_radius(num_planets: int) -> float:
     """Outer radius that keeps along-arm planet density roughly constant.
 
-    Arms fill only part of the disk, so the disk is sized for the historical
-    density with a modest inflation factor rather than the full disk area.
+    Arms fill only part of the disk, so the disk is sized for AREA_PER_PLANET
+    with a modest inflation factor rather than the full disk area.
     """
     return max(50.0, 1.15 * math.sqrt(AREA_PER_PLANET * num_planets / math.pi))
 
@@ -214,11 +212,11 @@ def _spiral_positions(
 ) -> Tuple[List[Point], List[int]]:
     """Scatter planets along spiral arms plus a small core, enforcing separation.
 
-    Each planet draws an arm and a parameter ``t`` in [0, 1] along it; the arm
+    Each planet draws an arm and a parameter ``t`` in [0, 1] along it. The arm
     is a logarithmic spiral ``r = r0 * exp(k * theta)`` with Gaussian scatter
     across the arm that widens towards the rim. Candidates closer than
     ``min_distance`` to an accepted planet are redrawn; after a bounded number
-    of failures the scatter is widened so generation always terminates.
+    of failures the scatter widens so generation always terminates.
     """
     radius = _galaxy_radius(num_planets)
     core_radius = 0.18 * radius
@@ -248,8 +246,8 @@ def _spiral_positions(
             theta = math.log(r / r0) / growth
             t = theta / ARM_SWEEP
             base_angle = theta + (2.0 * math.pi * arm) / arms
-            # Gaussian scatter around the arm's centreline, widening a little
-            # towards the rim so the outer arms fray naturally.
+            # Gaussian scatter around the arm centreline, wider towards the
+            # rim so the outer arms fray.
             width = (0.025 + 0.035 * t) * radius * scatter_boost
             angle = rng.uniform(0.0, 2.0 * math.pi)
             off = abs(rng.gauss(0.0, width))
@@ -267,7 +265,7 @@ def _spiral_positions(
             continue
         failures += 1
         if failures > 200:
-            # Widen the arms a little so a crowded galaxy can still fit.
+            # Widen the arms so a crowded galaxy can still fit.
             scatter_boost *= 1.25
             failures = 0
             if scatter_boost > 64.0:
@@ -288,8 +286,8 @@ def _circumcircle(a: Point, b: Point, c: Point) -> Tuple[float, float, float]:
     cx, cy = c
     d = 2.0 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by))
     if abs(d) < 1e-12:
-        # Degenerate (collinear) triangle: treat as an infinitely large circle
-        # so it is always invalidated by the next insertion.
+        # Collinear triangle: treat as an infinite circle so the next
+        # insertion always invalidates it.
         return (0.0, 0.0, float("inf"))
     a2 = ax * ax + ay * ay
     b2 = bx * bx + by * by
@@ -300,13 +298,13 @@ def _circumcircle(a: Point, b: Point, c: Point) -> Tuple[float, float, float]:
 
 
 def _delaunay_edges(points: Sequence[Point]) -> List[Tuple[int, int]]:
-    """Edges of the Delaunay triangulation of ``points`` (indices, i < j).
+    """Edges of the Delaunay triangulation of ``points``, as (i, j) with i < j.
 
-    Bowyer-Watson: insert points one at a time into a super-triangle,
-    removing every triangle whose circumcircle contains the new point and
-    re-triangulating the resulting cavity. O(n^2) in the worst case, which is
-    fine for the few hundred planets a galaxy holds. With fewer than three
-    points the result is simply the complete graph.
+    Bowyer-Watson: insert points one at a time into a super-triangle, remove
+    every triangle whose circumcircle contains the new point, and
+    re-triangulate the cavity. O(n^2) worst case, fine for the few hundred
+    planets a galaxy holds. With fewer than three points the result is the
+    complete graph.
     """
     n = len(points)
     if n < 3:
@@ -360,9 +358,10 @@ def _delaunay_edges(points: Sequence[Point]) -> List[Tuple[int, int]]:
             continue
         for u, v in ((i, j), (j, k), (k, i)):
             edges.add((u, v) if u < v else (v, u))
-    # Every point must touch at least one edge; a point that only appeared in
-    # super-triangle faces (possible when all points are collinear) is joined
-    # to its nearest neighbour so the caller's connectivity step can succeed.
+    # Every point must touch an edge. A point that appeared only in
+    # super-triangle faces, which happens when all points are collinear, is
+    # joined to its nearest neighbour so the caller's connectivity step can
+    # succeed.
     touched = {u for u, _ in edges} | {v for _, v in edges}
     for i in range(n):
         if i not in touched:
@@ -389,11 +388,11 @@ def _select_lanes(
 ) -> List[Tuple[int, int]]:
     """Choose the lanes: the Euclidean MST plus a sample of Gabriel edges.
 
-    The MST (Kruskal over the Delaunay edges — the Euclidean MST is always a
-    Delaunay subgraph) guarantees connectivity. The Gabriel test ("no other
-    planet lies inside the circle whose diameter is the lane") drops long
-    lanes that skim past intermediate planets, which keeps the network local
-    and natural-looking; ``lane_density`` then samples from those.
+    Kruskal over the Delaunay edges gives the MST, which guarantees
+    connectivity; the Euclidean MST is always a Delaunay subgraph. The
+    Gabriel test, no other planet inside the circle whose diameter is the
+    lane, drops long lanes that skim past intermediate planets and keeps the
+    network local. ``lane_density`` then samples from those.
     """
     n = len(points)
     by_length = sorted(edges, key=lambda e: _dist2(points[e[0]], points[e[1]]))
@@ -459,8 +458,10 @@ def is_connected(num_nodes: int, edges: Iterable[Tuple[int, int]]) -> bool:
 
 
 def segments_cross(a: Point, b: Point, c: Point, d: Point) -> bool:
-    """Whether open segments ab and cd properly intersect (shared endpoints
-    do not count as a crossing)."""
+    """Whether open segments ab and cd properly intersect.
+
+    Shared endpoints do not count as a crossing.
+    """
 
     def orient(p: Point, q: Point, r: Point) -> float:
         return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
@@ -475,7 +476,7 @@ def segments_cross(a: Point, b: Point, c: Point, d: Point) -> bool:
 def crossing_lane_pairs(
     points: Sequence[Point], lanes: Sequence[Tuple[int, int]]
 ) -> List[Tuple[Tuple[int, int], Tuple[int, int]]]:
-    """Every pair of lanes that cross each other (empty for a planar layout)."""
+    """Every pair of lanes that cross; empty for a planar layout."""
     crossings = []
     for i, (a, b) in enumerate(lanes):
         for c, d in lanes[i + 1 :]:

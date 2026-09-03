@@ -1,33 +1,27 @@
 # Simulation Design
 
-## Overview
-A turn-based economic simulation featuring multiple planets with frictionless internal economies, actors performing economic activities, and interplanetary commodity trading.
+A turn-based economic simulation: planets with frictionless internal
+economies, actors doing economic work, and ships trading between planets.
 
----
-
-## Simulation Entities
+## Entities
 
 ### Actors
-- **Regular Actors**:
-  - Hold inventories and currency.
-  - Perform one economic action per turn (production, labor, maintenance).
-  - Execute multiple market actions per turn (buying/selling commodities).
-  - May perform "government work" to inject currency into the economy when other actions are unprofitable.
 
-- **Market-Makers**:
-  - Identical to regular actors but prioritize market-making strategies.
-  - No special market privileges.
-
-- **Ships**:
-  - Specialized actors transporting commodities between planets.
-  - Fixed cargo capacity, fuel efficiency, and speed.
-  - Consume refined fuel and commodities for maintenance.
+- Regular actors hold inventory and currency, perform one economic action
+  per turn (production, labor, maintenance), and place several market orders
+  per turn. When nothing else is profitable they do government work, which
+  injects currency.
+- Market makers are regular actors that run a market-making strategy. They
+  have no special privileges.
+- Ships carry commodities between planets. Each has a cargo capacity, fuel
+  efficiency, and speed, and consumes refined fuel plus occasional
+  maintenance commodities.
 
 ### Commodities
-Defined in YAML format. Each commodity is:
-- **Transportable** (tools, raw materials, refined goods) or **Non-transportable** (facilities).
 
-Example:
+Defined in `data/commodities.yaml`. A commodity is transportable (tools,
+raw materials, refined goods) or not (facilities).
+
 ```yaml
 - id: common_metal
   name: Common Metal
@@ -41,9 +35,11 @@ Example:
 ```
 
 ### Processes
-Economic activities consuming inputs (commodities, labor, facilities, tools) and producing outputs (commodities).
 
-Example:
+Defined in `data/processes.yaml`. A process consumes inputs, labor, tools,
+and facilities and produces commodities. Facilities hold the tools; actors
+supply the labor.
+
 ```yaml
 - id: refine_common_metal
   name: Refine Common Metal
@@ -58,64 +54,59 @@ Example:
   description: Smelts common metal ore into usable metal.
 ```
 
-**Facilities** contain tools necessary for production; actors provide labor.
-
----
+Editing either file: see the `commodity-process-design` skill.
 
 ## Markets
-- Each planet has an order-matching commodity market.
-- Orders persist across turns unless explicitly canceled.
-- Matched orders execute immediately, but commodities/money become available next turn.
 
----
+- Each planet has one order-matching market.
+- Orders persist across turns until cancelled.
+- Matching runs at the end of the turn; goods and money from a match are
+  usable next turn. Details in `docs/dev-guide-simulation.md`.
 
-## Planets and Solar Systems
-- Planets sit in a 2D spiral galaxy (configurable arm count, default 3) and
-  are joined by **star lanes**: a planar, connected graph generated at setup
-  (Delaunay ∩ Gabriel edges over a spanning tree; `--lane-density` controls
-  how many extra local lanes are kept beyond the tree). See `core/galaxy.py`.
-- Travel only follows lanes. Distance between two planets is the shortest lane
-  route (all-pairs Dijkstra in `core/navigation.py`), not the straight line.
-- **Planet Attributes** (enabled by default, disable with `--no-planet-attributes`): Each planet has randomly generated resource availability ratings (0.0-1.0) affecting gathering/mining yields. See `core/planet_attributes.py`.
-- Fixed populations initially, with actors aiming to meet basic needs (food, shelter).
+## Planets and galaxy
 
----
+- Planets sit on a 2D spiral (configurable arm count, default 3) joined by
+  star lanes: a planar, connected graph built at setup from Delaunay and
+  Gabriel edges over a spanning tree. `--lane-density` controls how many
+  extra local lanes are kept. See `core/galaxy.py`.
+- Travel follows lanes only. Distance is the shortest lane route, computed
+  by all-pairs Dijkstra in `core/navigation.py`.
+- Every planet gets random resource availability ratings (0.0-1.0) that
+  scale gathering and mining yields. See the Planet Attributes section of
+  `CLAUDE.md` and `core/planet_attributes.py`.
+- Populations are fixed. Actors aim to meet basic needs (`docs/needs.md`).
 
-## Interplanetary Trade
-- Ships move commodities between planets, consuming refined fuel and occasional maintenance commodities.
-- Travel duration and fuel are based on lane-route length; no travel risks in MVP.
-- A multi-lane journey is a single flight: fuel for the whole route is loaded at
-  departure and intermediate planets are flown past without docking (spike
-  simplification — hop-by-hop refuelling/trading en route is future work).
+## Interplanetary trade
 
----
+- Ships burn refined fuel and occasionally maintenance commodities.
+- Travel time and fuel scale with lane-route length. There are no travel
+  risks.
+- A multi-lane journey is one flight: fuel for the whole route is loaded at
+  departure and intermediate planets are passed without docking. Hop-by-hop
+  refuelling and trading en route is future work.
 
-## Monetary System
-- Currency injected via actors performing "government work," providing a fixed daily wage.
-- Money represents a debt owed by the government ("King's debt").
+## Money
 
----
+Currency enters through government work, which pays a fixed daily wage.
+Money is a debt owed by the government.
 
-## Economic Graph
-- Commodities and processes form a directed economic graph (commodity ↔ process relationships).
-- AI actors utilize this graph to identify opportunities based on market conditions and inventory states.
+## Economic graph
 
----
+Commodities and processes form a directed graph. Brains walk it to find
+opportunities given market prices and inventory. Render it with
+`uv run spacesim2 dev graph`.
 
-## Decision and Turn Execution
-- Actors take turns in randomized order each round.
-- Each actor:
-  1. Performs one economic action.
-  2. Places multiple market orders (limited by CPU constraints).
+## Turn execution
 
-- Results of market actions become available on the next turn.
+Each turn: actors act in random order, then ships, then every market
+matches. Each actor performs one economic action and places several market
+orders. Results of market actions are available next turn. The full order
+is in `docs/dev-guide-simulation.md`.
 
----
+## Future extensions
 
-## Future Extensions
 - Population growth and decay.
 - Skill-based labor markets.
-- Expanded government economic controls (taxes, subsidies).
+- Government controls (taxes, subsidies).
 - Market information delays.
 - Travel hazards and piracy.
-

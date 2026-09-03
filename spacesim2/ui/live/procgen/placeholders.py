@@ -1,8 +1,8 @@
 """Procedural stand-in sprites used until baked AI assets exist.
 
-A shaded-sphere planet and a simple arrow ship glyph, both rendered to
-transparent Surfaces. Planet sprites are cached by their visual parameters so we
-don't rebuild them every frame.
+A shaded-sphere planet and an arrow ship glyph, both rendered to transparent
+Surfaces. Planet sprites are cached by their visual parameters so they are not
+rebuilt every frame.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from spacesim2.ui.live.assets import Color
 
 @lru_cache(maxsize=64)
 def planet_sprite(radius: int, base: Color, seed: int) -> pygame.Surface:
-    """A shaded sphere: lit from upper-left, with subtle procedural mottling."""
+    """A shaded sphere lit from upper-left with procedural mottling."""
     radius = max(2, radius)
     d = radius * 2
     cx = cy = radius
@@ -29,14 +29,14 @@ def planet_sprite(radius: int, base: Color, seed: int) -> pygame.Surface:
     r2 = dx * dx + dy * dy
     inside = r2 <= 1.0
 
-    # Surface normal z for a sphere; light from upper-left.
+    # Sphere surface normal z; light from upper-left.
     nz = np.sqrt(np.clip(1.0 - r2, 0.0, 1.0))
     lx, ly, lz = -0.5, -0.5, 0.7
     lnorm = math.sqrt(lx * lx + ly * ly + lz * lz)
     shade = (dx * lx + dy * ly + nz * lz) / lnorm
     shade = np.clip(shade, 0.05, 1.0)
 
-    # Mottling for a bit of surface texture.
+    # Mottling for surface texture.
     rng = np.random.default_rng(seed)
     mottle = 0.85 + 0.15 * rng.random((d, d))
     lit = shade * mottle
@@ -48,7 +48,7 @@ def planet_sprite(radius: int, base: Color, seed: int) -> pygame.Surface:
     pixels = np.zeros((d, d, 4), dtype=np.uint8)
     pixels[:, :, :3] = rgb.astype(np.uint8)
     pixels[:, :, 3] = np.where(inside, 255, 0).astype(np.uint8)
-    # pygame array3d/alpha want (col, row); transpose.
+    # pygame array3d/alpha want (col, row).
     rgb_view = pygame.surfarray.pixels3d(surf)
     alpha_view = pygame.surfarray.pixels_alpha(surf)
     rgb_view[:, :, :] = np.transpose(pixels[:, :, :3], (1, 0, 2))
@@ -60,14 +60,14 @@ def planet_sprite(radius: int, base: Color, seed: int) -> pygame.Surface:
 def ship_glyph(
     length: int, heading: float, body: Color, engine: Color
 ) -> pygame.Surface:
-    """An arrowhead pointing along ``heading`` (radians), with an engine dot."""
+    """An arrowhead pointing along ``heading`` in radians, with an engine dot."""
     length = max(6, length)
     size = length * 2
     surf = pygame.Surface((size, size), pygame.SRCALPHA)
     cx = cy = size // 2
     half = length / 2.0
 
-    # Arrow points: nose, two tail corners (in local space, +x = forward).
+    # Nose and two tail corners in local space, +x forward.
     pts_local = [
         (half, 0.0),
         (-half, half * 0.7),

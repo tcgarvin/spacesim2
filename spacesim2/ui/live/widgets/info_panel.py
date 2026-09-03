@@ -1,10 +1,10 @@
 """Right-side drill-down panel for a selected planet or ship.
 
 Pure draw functions over the immutable detail snapshots from
-:mod:`~spacesim2.ui.live.view_model`. The scene rebuilds the detail every frame,
-so the panel is *live* — prices, drives, and cargo update while the sim runs.
-Each ``draw_*`` returns the panel rect so the caller can keep clicks inside the
-panel from falling through to the map.
+:mod:`~spacesim2.ui.live.view_model`. The detail is rebuilt every turn, so
+prices, drives, and cargo update while the sim runs. Each ``draw_*`` returns
+the panel rect so the caller can keep clicks inside the panel from falling
+through to the map.
 """
 
 from __future__ import annotations
@@ -31,13 +31,13 @@ DIM: Color = (120, 130, 160)
 BAR_BACK: Color = (30, 38, 60)
 SCARCITY_HOT: Color = (220, 90, 70)
 
-# Scarcity pressure saturates at this value in the market; used to normalise
-# the warning colour (see SCARCITY_PRESSURE_MAX in core/market.py).
+# Scarcity pressure saturates at this value in the market; normalises the
+# warning colour. Must match SCARCITY_PRESSURE_MAX in core/market.py.
 SCARCITY_MAX = 3.0
 
 
 def _wrap(text: str, font: pygame.font.Font, width: int) -> List[str]:
-    """Greedy word-wrap; long enough for `last_action` strings."""
+    """Greedy word-wrap for `last_action` strings."""
     words = text.split()
     lines: List[str] = []
     current = ""
@@ -87,7 +87,7 @@ class _PanelWriter:
     ) -> None:
         """A labelled horizontal bar with a right-aligned value.
 
-        ``marker`` (if given) draws a notch at that fraction — used to show the
+        ``marker``, if given, draws a notch at that fraction. It shows the
         worst-off actor against the planet mean.
         """
         name = self.fonts.render(label, "small", TEXT)
@@ -115,8 +115,8 @@ class _PanelWriter:
     ) -> None:
         """Left label, right-aligned value on one line.
 
-        When ``icon`` is given it is drawn (crisp-scaled to ``ICON_PX``) before
-        the label and the label shifts right; text-only rows are unchanged.
+        When ``icon`` is given it is drawn crisp-scaled to ``ICON_PX`` before
+        the label and the label shifts right. Text-only rows are unchanged.
         """
         name = self.fonts.render(left, "small", TEXT)
         value = self.fonts.render(right, "small", right_color)
@@ -138,7 +138,7 @@ class _PanelWriter:
             self.text(line, "small", color)
 
     def fits(self, rows: int, row_height: int = 18) -> int:
-        """How many of ``rows`` fit before the panel bottom (with footer room)."""
+        """How many of ``rows`` fit before the panel bottom, leaving footer room."""
         remaining = self.panel.get_height() - PAD - self.y
         return max(0, min(rows, remaining // row_height))
 

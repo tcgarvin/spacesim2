@@ -1,8 +1,8 @@
 """Draws the star-lane network and highlighted routes.
 
 Lanes are the galaxy's fixed skeleton, so they sit under everything else as
-thin, dim lines; a highlighted route (the selected ship's flight path, or the
-lanes touching the selected planet) is drawn brighter and wider on top.
+thin dim lines. A highlighted route, meaning the selected ship's flight path
+or the lanes touching the selected planet, is drawn brighter and wider on top.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ def draw_route(
     color: assets.Color,
     width: int = 2,
 ) -> None:
-    """Draw a polyline through ``waypoints`` (a ship's route or a lane set)."""
+    """Draw a polyline through ``waypoints``."""
     if len(waypoints) < 2:
         return
     points = [camera.world_to_screen(p) for p in waypoints]
@@ -61,7 +61,7 @@ def draw_lane_set(
     color: assets.Color,
     width: int = 2,
 ) -> None:
-    """Draw a subset of lanes highlighted (e.g. those touching a planet)."""
+    """Draw a subset of lanes highlighted."""
     for lane in lanes:
         a = camera.world_to_screen(lane.a)
         b = camera.world_to_screen(lane.b)

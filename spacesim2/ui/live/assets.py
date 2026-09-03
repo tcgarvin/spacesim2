@@ -1,10 +1,8 @@
 """House palette, wellbeing colour ramp, and font loading for the live view.
 
-This consolidates the bits worth salvaging from the deleted ``ui/utils``: the
-restrained space palette and the font-loading pattern. Fonts are the bundled
-Space Grotesk OFL TTFs (``assets/fonts/``), loaded by path like every other
-committed asset in this module; for now everything else is procedural, aside
-from committed sprites promoted from the offline asset pipeline.
+Fonts are the bundled Space Grotesk OFL TTFs in ``assets/fonts/``, loaded by
+path like every other committed asset here. Everything else is procedural
+except the committed sprites promoted from the offline asset pipeline.
 """
 
 from __future__ import annotations
@@ -20,7 +18,7 @@ Color = Tuple[int, int, int]
 
 _ASSET_ROOT = Path(__file__).resolve().parent / "assets"
 
-# Restrained, moody space palette (MOO-II-ish: dark void, cool chrome).
+# Dark void, cool chrome.
 BACKGROUND: Color = (6, 7, 16)
 STARFIELD_TINTS: Tuple[Color, ...] = (
     (180, 190, 220),  # cool white
@@ -32,7 +30,7 @@ NEBULA_TINTS: Tuple[Color, ...] = (
     (20, 50, 90),  # teal-blue
     (70, 25, 55),  # magenta
 )
-TRADE_LANE: Color = (58, 70, 100)  # resting star lane (dim, under everything)
+TRADE_LANE: Color = (58, 70, 100)  # resting star lane, drawn under everything
 LANE_HIGHLIGHT: Color = (120, 170, 235)  # selected planet's lanes
 ROUTE_HIGHLIGHT: Color = (235, 205, 120)  # selected ship's flight path
 ROUTE_HOVER: Color = (150, 165, 200)  # hovered ship's flight path
@@ -66,11 +64,11 @@ def wellbeing_color(wellbeing: float) -> Color:
 class PlanetSprites:
     """Baked planet sprites promoted from the offline asset pipeline.
 
-    Loads every PNG listed in ``assets/planets/index.json`` once (after the
-    display is initialised so ``convert_alpha`` works) and hands one out per
-    planet by a stable hash, so a given world always keeps the same look. When no
-    assets are promoted yet the set is empty and callers fall back to the
-    procedural placeholder sphere.
+    Loads every PNG listed in ``assets/planets/index.json`` once and hands one
+    out per planet by a stable hash, so a world keeps the same look. Create
+    after the display is initialised so ``convert_alpha`` works. When no assets
+    are promoted the set is empty and callers fall back to the procedural
+    placeholder sphere.
     """
 
     def __init__(self) -> None:
@@ -95,8 +93,8 @@ class PlanetSprites:
 def _slice_strip(strip: pygame.Surface, frames: int, size: int) -> List[pygame.Surface]:
     """Cut a horizontal sprite strip into ``frames`` square ``size``px surfaces.
 
-    ``.copy()`` detaches each frame from the shared parent surface so later
-    scaling never has to reach back into the strip's pixel buffer.
+    ``.copy()`` detaches each frame from the parent surface so later scaling
+    never reaches back into the strip's pixel buffer.
     """
     out: List[pygame.Surface] = []
     for i in range(frames):
@@ -108,15 +106,14 @@ def _slice_strip(strip: pygame.Surface, frames: int, size: int) -> List[pygame.S
 def heading_to_frame(heading: float, frame_count: int) -> int:
     """Nearest baked facing for a screen-space ``heading`` (radians).
 
-    The renderer's heading comes from ``atan2(dest_y - origin_y, dest_x -
-    origin_x)`` over *map* coordinates, and the camera maps larger map-y to
-    larger screen-y — so heading is measured screen-space (y-down): 0 = east,
-    +pi/2 = down (visually south), -pi/2 = up (visually north).
+    The renderer's heading is ``atan2(dest_y - origin_y, dest_x - origin_x)``
+    over map coordinates, and the camera maps larger map-y to larger screen-y,
+    so heading is screen-space, y-down: 0 = east, +pi/2 = south, -pi/2 = north.
 
-    The strip is ordered E, NE, N, NW, W, SW, S, SE — i.e. frame ``k`` faces the
-    *math*-convention angle ``k * (2pi / frame_count)`` (y-up, counterclockwise).
-    Flipping y between the two conventions is a sign flip on the angle, so the
-    nearest frame is ``round(-heading / step) mod frame_count``.
+    The strip is ordered E, NE, N, NW, W, SW, S, SE: frame ``k`` faces the
+    math-convention angle ``k * (2pi / frame_count)``, y-up, counterclockwise.
+    Flipping y between the conventions negates the angle, so the nearest frame
+    is ``round(-heading / step) mod frame_count``.
     """
     step = 2.0 * math.pi / frame_count
     return round(-heading / step) % frame_count
@@ -126,9 +123,9 @@ class ShipSprites:
     """Baked directional ship sprites promoted from the offline asset pipeline.
 
     ``assets/ships/index.json`` lists ship types, each a horizontal strip of
-    evenly-spaced facings. Today there is one type (the freighter) and every
-    ship in the sim renders with it, so we bake the first entry's strip. When no
-    assets are promoted the set is empty and ``ship_view`` falls back to the
+    evenly spaced facings. There is one type, the freighter, and every ship
+    renders with it, so only the first entry's strip is loaded. When no assets
+    are promoted the set is empty and ``ship_view`` falls back to the
     procedural arrow glyph.
     """
 
@@ -158,10 +155,9 @@ class ShipSprites:
 class GoodIcons:
     """Baked commodity icons promoted from the offline asset pipeline.
 
-    Purely index-driven: ``assets/goods/index.json`` lists commodity ids, one
-    32x32 icon each. New ids are picked up with no code changes. Icons are
-    optional decoration, so a lookup for a missing id returns ``None`` and
-    callers render the text-only row unchanged.
+    ``assets/goods/index.json`` lists commodity ids, one 32x32 icon each, so
+    new ids need no code changes. Icons are optional decoration: a lookup for a
+    missing id returns ``None`` and callers render the text-only row.
     """
 
     def __init__(self) -> None:
@@ -189,13 +185,11 @@ _MEDIUM = _FONT_DIR / "SpaceGrotesk-Medium.ttf"
 
 
 class Fonts:
-    """Lazily-built font set. Must be created after ``pygame.font.init()``.
+    """Font set. Must be created after ``pygame.font.init()``.
 
-    Point sizes are calibrated against Space Grotesk's metrics (which render
-    noticeably taller than the old ``SysFont(None, N)`` default) to land close
-    to the previous rendered heights: small/normal/large previously rasterised
-    at ~12/16/22px tall and now sit at ~13/17/22px. Headers use the Medium
-    weight so section titles read distinctly from body text.
+    Point sizes are chosen against Space Grotesk's metrics so small, normal,
+    and large rasterise at about 13, 17, and 22 px tall. Headers use the Medium
+    weight so section titles stand out from body text.
     """
 
     def __init__(self) -> None:

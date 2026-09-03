@@ -1,26 +1,24 @@
 """Galaxy geometry and fuel-reachability facts shared by ship planning.
 
-Ship planning used to recompute the same galaxy-wide facts per candidate
-planet per commodity (distances, "is fuel purchasable here", "how far to the
-nearest fuel source"), which made a single planning decision O(planets^3).
-This module centralizes those facts in a :class:`Navigator`:
+A :class:`Navigator` holds the galaxy-wide facts every ship would otherwise
+recompute per candidate planet per commodity:
 
-- **Geometry** (planets and star lanes are fixed after setup): a lazily
-  built all-pairs **shortest-route** matrix over the star-lane network (see
-  ``core/galaxy.py``), the route waypoints that realise those distances, and
-  per-planet proximity orderings — computed once per simulation and shared by
-  every ship. Ships can only fly along lanes, so "distance" throughout ship
-  planning means lane-route length, never straight-line distance.
-- **Market-derived facts** (order books mutate as brains post orders): fuel
+- Geometry, fixed after setup: a lazily built all-pairs shortest-route
+  matrix over the star-lane network in ``core/galaxy.py``, the waypoints of
+  those routes, and per-planet proximity orderings. Computed once per
+  simulation and shared by every ship. Ships fly only along lanes, so
+  distance throughout ship planning means lane-route length, never
+  straight-line distance.
+- Market-derived facts, which change as brains post orders: fuel
   purchasability, nearest-fuel-source distances, the galaxy fuel price
-  reference, and the trade-signal index (per-planet commodity summaries plus
-  per-commodity ranked demand shortlists). These are cached **per turn**:
+  reference, and the trade-signal index of per-planet commodity summaries
+  and per-commodity ranked demand shortlists. These are cached per turn:
   ship brains call :meth:`Navigator.refresh_market_facts` with the current
   turn number, which rebuilds the snapshot only on the turn's first call, so
-  every ship planning that turn shares one consistent view of the galaxy.
-  Order execution is deferred to end-of-turn matching, which keeps the
-  snapshot a valid superset filter for the whole turn; plan evaluation
-  re-verifies exact prices against the live books anyway.
+  every ship planning that turn shares one view of the galaxy. Order
+  execution is deferred to end-of-turn matching, so the snapshot stays a
+  valid superset filter for the whole turn; plan evaluation re-verifies
+  exact prices against the live books anyway.
 
 Use :func:`get_navigator` to obtain the per-simulation shared instance.
 """
@@ -37,22 +35,20 @@ if TYPE_CHECKING:
     from spacesim2.core.planet import Planet
     from spacesim2.core.simulation import Simulation
 
-# How many recent turns of volume history count as "fuel trades here" when
-# judging whether fuel is realistically purchasable at a planet.
+# Turns of volume history in which fuel must have traded for a planet to
+# count as a place where fuel is purchasable.
 FUEL_MARKET_RECENCY_TURNS = 10
 
-# Window of volume history that counts as "this good trades here" for the
-# exportable-commodity summary (mirrors TraderBrain's flow recency window).
+# Turns of volume history in which a good must have traded to count as
+# exportable from a planet. Mirrors TraderBrain's flow recency window.
 FLOW_RECENCY_TURNS = 10
 
-# Candidate-destination shortlist sizes for the per-turn trade-signal index.
-# For each (origin, commodity) the candidate destinations are the union of
-# the DESTINATION_TOP_K demand planets with the highest demand value and the
-# DESTINATION_NEAREST_M demand planets nearest the origin (a nearby modest
-# market can beat a distant top-value one after fuel costs). When a commodity
-# has no more than K + M demand planets in total the shortlist degenerates to
-# ALL of them, so galaxies with <= 16 other planets are surveyed exhaustively
-# and small-run behavior is unchanged.
+# Shortlist sizes for the per-turn trade-signal index. For each (origin,
+# commodity) the candidate destinations are the union of the TOP_K demand
+# planets with the highest demand value and the NEAREST_M demand planets
+# nearest the origin; a nearby modest market can beat a distant top-value one
+# after fuel costs. A commodity with at most K + M demand planets gets all of
+# them, so galaxies with <= 16 other planets are surveyed exhaustively.
 DESTINATION_TOP_K = 8
 DESTINATION_NEAREST_M = 8
 
@@ -61,18 +57,18 @@ DESTINATION_NEAREST_M = 8
 class _TradeSignalIndex:
     """One turn's galaxy-wide supply/demand signal snapshot.
 
-    Built by :meth:`Navigator._trade_signal_index` in a single O(planets x
+    Built by :meth:`Navigator._trade_signal_index` in one O(planets x
     commodities) pass over every market, then shared by every ship planning
-    during that turn. All fields describe superset filters: plan evaluation
-    still re-verifies exact prices against the live books.
+    that turn. All fields are superset filters: plan evaluation still
+    re-verifies exact prices against the live books.
     """
 
-    # Per-planet summaries (what the old lazy per-planet caches held).
     exportable_by_planet: Dict["Planet", FrozenSet["CommodityDefinition"]]
     # Per-commodity: planets where it is plausibly acquirable.
     export_planets: Dict["CommodityDefinition", FrozenSet["Planet"]]
-    # Per-commodity: planets with a demand signal, best demand value first
-    # (ties keep simulation planet order), plus a set for membership tests.
+    # Per-commodity: planets with a demand signal, best demand value first;
+    # ties keep simulation planet order. demand_planets is the same set, for
+    # membership tests.
     demand_ranked: Dict["CommodityDefinition", Tuple["Planet", ...]]
     demand_planets: Dict["CommodityDefinition", FrozenSet["Planet"]]
     # Memo of candidate_destinations results, shared by all ships this turn.
@@ -81,10 +77,10 @@ class _TradeSignalIndex:
     ] = field(default_factory=dict)
 
     def has_any_trade_signal(self) -> bool:
-        """Whether any commodity is exportable somewhere AND demanded somewhere.
+        """Whether any commodity is exportable somewhere and demanded somewhere.
 
-        False means the galaxy is cold: no ship can construct a trade plan,
-        so planning can be skipped outright this turn.
+        False means the galaxy is cold: no ship can build a trade plan, so
+        planning can be skipped this turn.
         """
         return any(
             self.export_planets[commodity] and self.demand_ranked[commodity]
@@ -96,34 +92,35 @@ class Navigator:
     """Cached view of galaxy geometry and fuel reachability for one simulation.
 
     Geometry is cached for the simulation's lifetime. Market-derived facts
-    are cached until the next effective :meth:`refresh_market_facts` call —
-    once per turn when called with the turn number, as ship brains do.
+    are cached until the next effective :meth:`refresh_market_facts` call,
+    which is once per turn when called with the turn number, as ship brains
+    do.
     """
 
     def __init__(self, sim: "Simulation") -> None:
         """Create a navigator bound to ``sim``."""
         self._sim = sim
-        # --- static geometry (built lazily, rebuilt if the planet set changes)
+        # Static geometry, built lazily and rebuilt if the planet set changes.
         self._planet_index: Dict["Planet", int] = {}
         self._distances: List[List[float]] = []
         # _previous[i][j] = index of the planet before j on the shortest route
-        # from i to j (-1 for j == i); routes are rebuilt from it on demand.
+        # from i to j, or -1 for j == i. Routes are rebuilt from it on demand.
         self._previous: List[List[int]] = []
         self._by_proximity: Dict["Planet", List["Planet"]] = {}
         self._lane_count = -1  # lane count the matrix was built from
-        # --- static commodity facts
+        # Static commodity facts.
         self._tradeable: Optional[List["CommodityDefinition"]] = None
         self._fuel: Optional["CommodityDefinition"] = None
         self._fuel_resolved = False
-        # --- market-derived facts (cleared by refresh_market_facts)
+        # Market-derived facts, cleared by refresh_market_facts.
         self._fuel_purchasable: Dict["Planet", bool] = {}
         self._nearest_fuel_distance: Dict["Planet", Optional[float]] = {}
         self._fuel_scan: Optional[
             Tuple[List[Tuple["Planet", int]], Optional[int], Optional[float]]
         ] = None
         self._trade_index: Optional[_TradeSignalIndex] = None
-        # Turn the current market-fact snapshot belongs to (None = never
-        # refreshed, or force-refreshed outside a turn context).
+        # Turn the market-fact snapshot belongs to. None means never refreshed
+        # or force-refreshed outside a turn.
         self._facts_turn: Optional[int] = None
 
     # ------------------------------------------------------------------
@@ -133,14 +130,14 @@ class Navigator:
     def refresh_market_facts(self, turn: Optional[int] = None) -> None:
         """Drop market-derived caches so the next queries see the live books.
 
-        With ``turn`` given (how ship brains call it), the refresh is a no-op
-        when the caches were already refreshed for that turn: market facts are
-        a **per-turn shared snapshot**, built once and reused by every ship
-        planning that turn. Order books only mutate between turns via deferred
-        end-of-turn matching, so within a turn the snapshot stays a valid
-        superset filter. Calling without ``turn`` forces a refresh (tests and
-        ad-hoc probes use this). Geometry and commodity-registry caches are
-        unaffected either way.
+        With ``turn`` given, as ship brains call it, the refresh is a no-op
+        when the caches were already refreshed for that turn: market facts
+        are a per-turn shared snapshot, built once and reused by every ship
+        planning that turn. Order books only change between turns via
+        deferred end-of-turn matching, so within a turn the snapshot stays a
+        valid superset filter. Calling without ``turn`` forces a refresh;
+        tests and ad-hoc probes use this. Geometry and commodity-registry
+        caches are unaffected either way.
         """
         if turn is not None and turn == self._facts_turn:
             return
@@ -162,8 +159,9 @@ class Navigator:
     def route(self, a: "Planet", b: "Planet") -> List["Planet"]:
         """Planets along the shortest lane route from ``a`` to ``b``.
 
-        The list starts with ``a`` and ends with ``b`` (just ``[a]`` when they
-        are the same planet); consecutive entries are always joined by a lane.
+        The list starts with ``a`` and ends with ``b``, or is ``[a]`` when
+        they are the same planet. Consecutive entries are always joined by a
+        lane.
         """
         i, j = self._indices(a, b)
         planets = self._sim.planets
@@ -207,13 +205,12 @@ class Navigator:
         return ordered
 
     def _rebuild_geometry(self) -> None:
-        """(Re)build the all-pairs shortest-route matrix over the star lanes.
+        """Rebuild the all-pairs shortest-route matrix over the star lanes.
 
-        One Dijkstra per planet over the lane graph; O(P * L log P), trivial
-        for the few hundred planets and lanes a galaxy holds.
+        One Dijkstra per planet over the lane graph, O(P * L log P).
 
         Raises:
-            ValueError: If some planet cannot reach every other planet — the
+            ValueError: If some planet cannot reach every other planet. The
                 galaxy generator guarantees connectivity, so this means a
                 hand-built world forgot to add lanes.
         """
@@ -266,7 +263,7 @@ class Navigator:
     # ------------------------------------------------------------------
 
     def tradeable_commodities(self) -> List["CommodityDefinition"]:
-        """All transportable commodities (the registry is fixed after setup)."""
+        """All transportable commodities. The registry is fixed after setup."""
         if self._tradeable is None:
             self._tradeable = [
                 c
@@ -287,11 +284,11 @@ class Navigator:
     # ------------------------------------------------------------------
 
     def fuel_purchasable_at(self, planet: "Planet") -> bool:
-        """Whether nova_fuel can realistically be bought at ``planet`` right now.
+        """Whether nova_fuel can be bought at ``planet`` right now.
 
         True when a standing ask exists, or when the market has a real price
-        signal AND recent fuel volume (asks come and go between turns on an
-        actively supplied market, so recent trades count as availability).
+        signal and recent fuel volume. Asks come and go between turns on an
+        actively supplied market, so recent trades count as availability.
         """
         cached = self._fuel_purchasable.get(planet)
         if cached is not None:
@@ -315,10 +312,10 @@ class Navigator:
         return result
 
     def nearest_fuel_source_distance(self, planet: "Planet") -> Optional[float]:
-        """Distance from ``planet`` to the nearest OTHER fuel-selling planet.
+        """Distance from ``planet`` to the nearest other fuel-selling planet.
 
         Returns None when fuel is purchasable nowhere else in the galaxy.
-        Because fuel cost is monotone in distance, the nearest source also
+        Fuel cost is monotone in distance, so the nearest source also
         minimizes any ship's escape-fuel requirement.
         """
         if planet in self._nearest_fuel_distance:
@@ -343,10 +340,10 @@ class Navigator:
         """Cheapest believable fuel valuation anywhere in the galaxy.
 
         Minimum over every planet's current ask and its 30-day average price
-        (where real trades back it). During a local scarcity spike the rolling
-        averages stay near the pre-spike level, so this reference is what
-        keeps a ship from filling its whole tank at panic prices. Returns
-        None when no planet has any signal.
+        where real trades back it. During a local scarcity spike the rolling
+        averages stay near the pre-spike level, so this reference keeps a
+        ship from filling its whole tank at panic prices. Returns None when
+        no planet has any signal.
         """
         return self._fuel_market_scan()[2]
 
@@ -355,10 +352,10 @@ class Navigator:
     ) -> FrozenSet["CommodityDefinition"]:
         """Commodities plausibly acquirable at ``planet`` right now.
 
-        A commodity qualifies with a resting ask or an active local flow
-        (real price signal plus recent traded volume). This is a superset
-        filter: plan evaluation still verifies exact prices, but commodities
-        outside this set are guaranteed unacquirable and can be skipped.
+        A commodity qualifies with a resting ask or an active local flow,
+        meaning a real price signal plus recent traded volume. This is a
+        superset filter: plan evaluation still verifies exact prices, but
+        commodities outside this set cannot be acquired and can be skipped.
         Served from the per-turn trade-signal index.
         """
         return self._trade_signal_index().exportable_by_planet.get(planet, frozenset())
@@ -366,9 +363,9 @@ class Navigator:
     def has_any_trade_signal(self) -> bool:
         """Whether any commodity has both an export source and a demand planet.
 
-        False means the galaxy is cold (typically the pre-market bootstrap):
-        no trade plan can exist anywhere, so ship planning can early-out for
-        the turn instead of surveying every market.
+        False means the galaxy is cold, typically during the pre-market
+        bootstrap: no trade plan can exist anywhere, so ship planning can
+        early-out for the turn instead of surveying every market.
         """
         return self._trade_signal_index().has_any_trade_signal()
 
@@ -378,12 +375,12 @@ class Navigator:
         """Shortlist of destination planets worth evaluating for ``commodity``.
 
         The union of the :data:`DESTINATION_TOP_K` demand planets with the
-        highest demand value (best resting bid or recent clearing price) and
-        the :data:`DESTINATION_NEAREST_M` demand planets nearest ``origin``,
-        excluding ``origin`` itself. When the commodity has at most K + M
-        demand planets the shortlist is ALL of them, so small galaxies keep
-        exhaustive-survey behavior. Results are memoized in the per-turn
-        index and shared by every ship.
+        highest demand value, the better of best resting bid and recent
+        clearing price, and the :data:`DESTINATION_NEAREST_M` demand planets
+        nearest ``origin``, excluding ``origin`` itself. When the commodity
+        has at most K + M demand planets the shortlist is all of them, so
+        small galaxies keep exhaustive-survey behavior. Results are memoized
+        in the per-turn index and shared by every ship.
         """
         index = self._trade_signal_index()
         memo_key = (origin, commodity)
@@ -422,11 +419,11 @@ class Navigator:
         """The turn's trade-signal index, built lazily on first use.
 
         One O(planets x commodities) pass over every market collecting the
-        per-planet exportable summaries and, per commodity, the
-        export planets and the demand planets ranked by demand value (the
-        better of the best resting bid and the recent clearing price, when a
-        real price signal backs it). Cached until the next
-        :meth:`refresh_market_facts`, i.e. for the rest of the turn.
+        per-planet exportable summaries and, per commodity, the export
+        planets and the demand planets ranked by demand value: the better of
+        the best resting bid and the recent clearing price, when a real price
+        signal backs it. Cached until the next :meth:`refresh_market_facts`,
+        so for the rest of the turn.
         """
         if self._trade_index is not None:
             return self._trade_index
@@ -435,7 +432,7 @@ class Navigator:
         export_lists: Dict["CommodityDefinition", List["Planet"]] = {
             commodity: [] for commodity in tradeable
         }
-        # Per commodity: (negated demand value, planet) rows; sorting them is
+        # Per commodity, (negated demand value, planet) rows. Sorting is
         # stable, so ties keep simulation planet order without comparing
         # Planet objects.
         demand_rows: Dict["CommodityDefinition", List[Tuple[float, "Planet"]]] = {
@@ -486,8 +483,8 @@ class Navigator:
     ) -> Tuple[List[Tuple["Planet", int]], Optional[int], Optional[float]]:
         """One O(planets) sweep collecting galaxy-wide fuel market facts.
 
-        Returns (planets with resting asks, cheapest ask, cheapest believable
-        valuation), cached until the next refresh.
+        Returns a tuple of planets with resting asks, the cheapest ask, and
+        the cheapest believable valuation, cached until the next refresh.
         """
         if self._fuel_scan is not None:
             return self._fuel_scan
@@ -519,8 +516,8 @@ _navigators: "WeakKeyDictionary[Simulation, Navigator]" = WeakKeyDictionary()
 def get_navigator(sim: "Simulation") -> Navigator:
     """Return the shared :class:`Navigator` for ``sim``, creating it on demand.
 
-    Kept in a weak registry so a navigator lives exactly as long as its
-    simulation, without the simulation needing to know about navigation.
+    Kept in a weak registry so a navigator lives as long as its simulation,
+    without the simulation knowing about navigation.
     """
     navigator = _navigators.get(sim)
     if navigator is None:

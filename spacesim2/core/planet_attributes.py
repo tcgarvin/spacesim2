@@ -1,4 +1,4 @@
-"""Planet attributes affecting resource availability and other environmental factors."""
+"""Per-planet attributes that control resource availability."""
 
 import random
 from dataclasses import dataclass
@@ -7,19 +7,9 @@ from dataclasses import dataclass
 def _bimodal_sample(
     low_min: float, low_max: float, high_min: float, high_max: float
 ) -> float:
-    """Generate a bimodal distribution sample.
+    """Sample uniformly from the low range or the high range, 50/50.
 
-    50% chance of sampling from the low range, 50% from the high range.
-    Useful for resources that are either rare or abundant.
-
-    Args:
-        low_min: Minimum value for the low range
-        low_max: Maximum value for the low range
-        high_min: Minimum value for the high range
-        high_max: Maximum value for the high range
-
-    Returns:
-        A random value from one of the two ranges
+    Models resources that are either rare or abundant.
     """
     if random.random() < 0.5:
         return random.uniform(low_min, low_max)
@@ -28,18 +18,14 @@ def _bimodal_sample(
 
 @dataclass
 class PlanetAttributes:
-    """Per-planet environmental attributes affecting resource availability.
+    """Per-planet resource availability.
 
-    All resource attributes are floats in the range [0.0, 1.0] where:
-    - 0.0 = resource is absent/unavailable
-    - 0.5 = average availability
-    - 1.0 = excellent/abundant availability
-
-    These attributes are used by gathering processes to modify success
-    probability or output quantity based on per-process configuration.
+    Each resource attribute is a float in [0.0, 1.0]: 0.0 absent, 0.5
+    average, 1.0 abundant. Gathering processes use them to scale success
+    probability or output quantity, chosen per process.
     """
 
-    # Resource availability (0.0-1.0) for extractable resources
+    # Availability of each extractable resource.
     biomass: float = 1.0
     fiber: float = 1.0
     wood: float = 1.0
@@ -48,11 +34,6 @@ class PlanetAttributes:
     simple_building_materials: float = 1.0
     silica: float = 1.0
     rare_earth_ore: float = 1.0
-
-    # Future: non-resource attributes
-    # gravity: float = 1.0
-    # atmosphere: float = 1.0
-    # temperature: float = 0.5
 
     def __post_init__(self) -> None:
         """Validate attribute ranges."""
@@ -75,18 +56,13 @@ class PlanetAttributes:
 
     @classmethod
     def generate_random(cls) -> "PlanetAttributes":
-        """Generate random planet attributes with per-resource distributions.
+        """Roll random attributes with a distribution per resource.
 
-        Different resources have different generation logic:
-        - biomass: Always some organic life (0.2-1.0)
-        - fiber: Uniform distribution (0.0-1.0)
-        - wood: Uniform distribution (0.0-1.0)
-        - common_metal_ore: Uniform distribution (0.0-1.0)
-        - nova_fuel_ore: Bimodal - rare or abundant (0.0-0.3 or 0.7-1.0)
-        - simple_building_materials: Always some available (0.3-1.0)
-
-        Returns:
-            A PlanetAttributes instance with randomly generated values
+        - biomass: uniform 0.2-1.0, always some organic life
+        - fiber, wood, common_metal_ore, silica: uniform 0.0-1.0
+        - nova_fuel_ore: bimodal, 0.0-0.3 or 0.7-1.0
+        - rare_earth_ore: bimodal, 0.0-0.2 or 0.6-1.0
+        - simple_building_materials: uniform 0.3-1.0, always some available
         """
         return cls(
             biomass=random.uniform(0.2, 1.0),
@@ -101,33 +77,15 @@ class PlanetAttributes:
 
     @classmethod
     def default(cls) -> "PlanetAttributes":
-        """Return default attributes (all 1.0 - no penalties).
-
-        Use this when planet attributes feature is disabled.
-
-        Returns:
-            A PlanetAttributes instance with all values set to 1.0
-        """
+        """Return attributes with no penalties (all 1.0)."""
         return cls()
 
     def get_availability(self, commodity_id: str) -> float:
-        """Get the availability rating for a commodity.
-
-        Args:
-            commodity_id: The ID of the commodity to look up
-
-        Returns:
-            The availability value (0.0-1.0), or 1.0 if the commodity
-            is not tracked by planet attributes
-        """
+        """Availability for a commodity; 1.0 if it has no attribute."""
         return getattr(self, commodity_id, 1.0)
 
     def to_dict(self) -> dict:
-        """Convert attributes to a dictionary for serialization.
-
-        Returns:
-            Dictionary mapping attribute names to values
-        """
+        """Serialize to a dict of attribute name to value."""
         return {
             "biomass": self.biomass,
             "fiber": self.fiber,

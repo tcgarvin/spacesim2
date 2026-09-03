@@ -1,8 +1,8 @@
 """Unit tests for the live view's baked-asset helpers.
 
-Covers the heading->frame mapping (in the renderer's screen-space convention),
+Covers heading-to-frame mapping in the renderer's screen-space convention,
 sprite-strip slicing, and ``GoodIcons`` missing-id behaviour. Uses SDL's dummy
-video driver so the pygame-backed cases run headless in CI.
+video driver so the pygame-backed cases run headless.
 """
 
 import math
@@ -21,8 +21,8 @@ from spacesim2.ui.live.assets import (  # noqa: E402
 )
 
 # Strip order baked by the pipeline: frame index -> compass facing. The renderer
-# heading is screen-space (y-down): 0 = east, +pi/2 = down (south), -pi/2 = up
-# (north). Each entry is (label, heading_radians, expected_frame_index).
+# heading is screen-space, y-down: 0 = east, +pi/2 = south, -pi/2 = north.
+# Each entry is (label, heading_radians, expected_frame_index).
 _SECTORS = [
     ("E", 0.0, 0),
     ("NE", -math.pi / 4, 1),
@@ -48,14 +48,13 @@ def test_heading_to_frame_is_periodic_over_2pi() -> None:
 
 
 def test_heading_to_frame_wraps_west_from_both_sides() -> None:
-    # +pi and -pi are the same facing (west, frame 4).
+    # +pi and -pi are both west, frame 4.
     assert heading_to_frame(math.pi, 8) == 4
     assert heading_to_frame(-math.pi, 8) == 4
 
 
 def test_heading_to_frame_near_boundaries_picks_adjacent_facing() -> None:
-    # Just inside each side of a sector boundary must land on the two frames
-    # flanking that boundary, never anything further away.
+    # Either side of a sector boundary lands on one of the two flanking frames.
     step = 2 * math.pi / 8
     for _label, heading, expected in _SECTORS:
         boundary = heading - step / 2.0  # halfway toward the previous facing
@@ -73,7 +72,7 @@ def test_heading_to_frame_always_in_range_for_full_sweep() -> None:
 def test_slice_strip_yields_expected_count_and_size() -> None:
     frames, size = 8, 10
     strip = pygame.Surface((frames * size, size), pygame.SRCALPHA)
-    # Paint each cell a distinct colour so we can prove the cut is per-frame.
+    # A distinct colour per cell shows the cut is per-frame.
     for i in range(frames):
         strip.fill((i * 20 + 10, 0, 0, 255), pygame.Rect(i * size, 0, size, size))
 
@@ -94,7 +93,7 @@ def test_good_icons_missing_id_returns_none_and_known_id_returns_surface() -> No
         # Committed assets: the set is populated and truthy.
         assert icons
         assert icons.get("food") is not None
-        # Icons are optional decoration: unknown ids resolve to None cleanly.
+        # Icons are optional decoration, so unknown ids resolve to None.
         assert icons.get("definitely_not_a_commodity") is None
     finally:
         pygame.display.quit()

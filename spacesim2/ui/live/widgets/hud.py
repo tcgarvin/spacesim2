@@ -1,9 +1,8 @@
 """Minimal chrome: a top status strip and a bottom key-hint line.
 
-The top strip answers "where is the sim right now" at a glance — turn, pacing,
-and three galaxy vitals (population, mean wellbeing, ships in flight) — without
-competing with the map. The bottom line spells out the controls so nothing is a
-hidden keybinding. No blink, no scanlines.
+The top strip shows turn, pacing, and three galaxy vitals: population, mean
+wellbeing, and ships in flight. The bottom line spells out the controls so
+nothing is a hidden keybinding.
 """
 
 from __future__ import annotations
@@ -29,7 +28,7 @@ def draw_status_strip(
     frame: TurnFrame,
     director: Director,
 ) -> None:
-    """Top-left block: turn + pacing on one line, galaxy vitals on the next."""
+    """Top-left block: turn and pacing on one line, galaxy vitals on the next."""
     vitals = frame.vitals
     population, wellbeing, traveling = (
         vitals.population,

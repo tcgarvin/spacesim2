@@ -1,15 +1,14 @@
 """Pure-pygame line charts drawn in the galaxy's own aesthetic.
 
-Hand-drawn rather than matplotlib-blitted so the charts read as part of the
-moody MOO-II surface: a soft underglow beneath a crisp stroke, volume as dim
-bars under the price line, restrained labels. Each ``draw_*`` function is a pure
-function of its inputs and the target rect — no state, so they compose freely
-inside a panel and stay trivially testable headlessly.
+Hand-drawn rather than matplotlib-blitted so the charts match the rest of the
+surface: a soft underglow beneath a crisp stroke, volume as dim bars under the
+price line, restrained labels. Each ``draw_*`` function is a pure function of
+its inputs and the target rect, so they compose inside a panel and test
+headlessly.
 
-Time runs on a **fixed window**: the most recent turn is pinned to the right
-edge and older samples march left, falling off the left edge once they age past
-``WINDOW_TURNS``. So new data enters at the right and flows left as the sim runs,
-and the x-axis scale never rubber-bands.
+Time runs on a fixed window: the most recent turn is pinned to the right edge
+and older samples move left, falling off once they age past ``WINDOW_TURNS``.
+The x-axis scale never rubber-bands.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ import pygame
 from spacesim2.ui.live import assets
 from spacesim2.ui.live.assets import Color, Fonts
 
-# Number of turns visible across the chart width. Newest at the right edge.
+# Turns visible across the chart width. Newest at the right edge.
 WINDOW_TURNS = 100
 
 PANEL_FILL: Tuple[int, int, int, int] = (10, 12, 24, 205)
@@ -66,7 +65,7 @@ def _glow_line(
     """Draw a polyline with a soft underglow beneath a crisp 2px stroke.
 
     The translucent glow passes render onto a surface sized to the polyline's
-    bounding box (not the whole screen) to keep per-frame allocation small.
+    bounding box to keep per-frame allocation small.
     """
     if len(points) < 2:
         return
@@ -84,7 +83,7 @@ def _glow_line(
 
 
 def draw_panel_background(surface: pygame.Surface, rect: pygame.Rect) -> None:
-    """Translucent dark fill + thin border for a chart container."""
+    """Translucent dark fill and thin border for a chart container."""
     fill = pygame.Surface(rect.size, pygame.SRCALPHA)
     fill.fill(PANEL_FILL)
     surface.blit(fill, rect.topleft)
@@ -103,8 +102,8 @@ def draw_price_volume_plot(
 ) -> None:
     """Strike price as a glowing line over dim per-turn volume bars.
 
-    Price auto-scales to the visible window's min/max (with a little headroom);
-    volume scales independently to its own visible max so both stay legible.
+    Price auto-scales to the visible window's min and max with headroom.
+    Volume scales independently to its own visible max so both stay legible.
     """
     v_turns, v_prices = _visible(turns, prices, now, window)
     _, v_volumes = _visible(turns, volumes, now, window)
@@ -128,7 +127,7 @@ def draw_price_volume_plot(
                 surface, VOLUME_BAR, (x, bar_zone.bottom), (x, bar_zone.bottom - h)
             )
 
-    # Price line, auto-scaled with a touch of vertical headroom.
+    # Price line, auto-scaled with vertical headroom.
     p_lo, p_hi = min(v_prices), max(v_prices)
     if p_hi == p_lo:
         p_lo, p_hi = p_lo - 1.0, p_hi + 1.0
@@ -140,7 +139,7 @@ def draw_price_volume_plot(
     ]
     _glow_line(surface, points, PRICE_LINE)
 
-    # Min / max / current readouts.
+    # Min, max, and current readouts.
     hi_lbl = fonts.render(f"{p_hi:.0f}", "small", LABEL_DIM)
     lo_lbl = fonts.render(f"{p_lo:.0f}", "small", LABEL_DIM)
     surface.blit(hi_lbl, (rect.left, rect.top))
@@ -159,7 +158,7 @@ def draw_wellbeing_plot(
     window: int = WINDOW_TURNS,
 ) -> None:
     """Mean citizen wellbeing on a fixed 0..1 scale, coloured by current level."""
-    # Neutral midline at 0.5 for reference.
+    # Reference midline at 0.5.
     mid_y = rect.bottom - rect.height // 2
     pygame.draw.line(surface, AXIS, (rect.left, mid_y), (rect.right, mid_y))
 

@@ -27,21 +27,13 @@ NOTEBOOK_PATH = Path("notebooks/analysis_template.py")
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser:  # type: ignore
-    """Add the 'run' subcommand parser.
-
-    Args:
-        subparsers: Subparsers to add this command to
-
-    Returns:
-        The created parser
-    """
+    """Add the 'run' subcommand parser."""
     parser: argparse.ArgumentParser = subparsers.add_parser(
         "run",
         help="Run headless simulation with data export",
         description="Run simulation in headless mode with Parquet export for analysis",
     )
 
-    # Simulation parameters
     parser.add_argument(
         "--turns", type=int, default=1000, help="Number of turns to simulate"
     )
@@ -89,7 +81,6 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
         "(default: 1 random non-market-maker), or an actor name",
     )
 
-    # Output configuration
     parser.add_argument(
         "--no-export",
         action="store_true",
@@ -118,10 +109,9 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
 class _TailCapture(io.TextIOBase):
     """A write-only text stream that retains only the last ``max_chars``.
 
-    Used to swallow simulation stdout during runs with bounded memory (the old
-    ``io.StringIO`` grew without limit). Only rare warnings (e.g. failed market
-    settlements) write to stdout during runs; the retained tail is echoed after
-    the run so they are not lost.
+    Swallows simulation stdout during runs with bounded memory. Only rare
+    warnings such as failed market settlements write to stdout during runs;
+    the retained tail is echoed after the run so they are not lost.
     """
 
     def __init__(self, max_chars: int = 64_000) -> None:
@@ -149,15 +139,7 @@ class _TailCapture(io.TextIOBase):
 
 
 def execute(args: argparse.Namespace) -> int:
-    """Execute the run command.
-
-    Args:
-        args: Parsed command-line arguments
-
-    Returns:
-        Exit code (0 for success, non-zero for error)
-    """
-    # Determine if we should export
+    """Execute the run command and return the exit code."""
     should_export = not args.no_export
     if should_export and not ANALYSIS_AVAILABLE:
         print_warning(
@@ -166,7 +148,6 @@ def execute(args: argparse.Namespace) -> int:
         )
         should_export = False
 
-    # Create simulation
     print("Initializing simulation...")
     sim = create_and_setup_simulation(
         planets=args.planets,
@@ -189,7 +170,6 @@ def execute(args: argparse.Namespace) -> int:
     num_logged = configure_actor_logging(sim, args.log_actors)
     print(f"  Logging {num_logged} actor(s)")
 
-    # Setup exporter if needed
     exporter: Any = None
     output_path: Path | None = None
 
@@ -202,23 +182,20 @@ def execute(args: argparse.Namespace) -> int:
         exporter.setup(sim)
         sim.exporter = exporter
 
-    # Run simulation
     print(f"\nRunning {args.turns} turns...")
     print("=" * 60)
 
-    # Suppress simulation stdout, keeping a bounded tail of any warnings
-    # (only rare warnings print during runs; memory stays capped).
+    # Suppress simulation stdout, keeping a bounded tail of any warnings.
     captured = _TailCapture()
     old_stdout = sys.stdout
     sys.stdout = captured
 
     try:
-        # Default: progress bar (unless --quiet)
         iterator = range(args.turns)
         if not args.quiet:
             from tqdm import tqdm
 
-            # tqdm writes to stderr by default, so stdout stays suppressed
+            # tqdm writes to stderr, so stdout stays suppressed.
             iterator = tqdm(iterator, desc="Simulating turns", file=sys.stderr)
 
         for _ in iterator:
@@ -233,11 +210,10 @@ def execute(args: argparse.Namespace) -> int:
             header += " (truncated to last 64KB)"
         print(f"\n{header}:\n{tail}")
 
-    # Emit compact behavioral summary (Tier-0 readout) if requested.
+    # Tier-0 readout.
     if args.summary:
         _emit_summary(sim, output_path if should_export else None)
 
-    # Finalize export
     if should_export and exporter is not None:
         print("\n" + "=" * 60)
         print("Finalizing export...")
@@ -261,18 +237,18 @@ def execute(args: argparse.Namespace) -> int:
 
 
 def _emit_summary(sim: Any, output_path: Path | None) -> None:
-    """Compute and print the compact KPI summary, delimited for easy parsing.
+    """Print the compact KPI summary, delimited for parsing.
 
     Args:
-        sim: The finished simulation.
-        output_path: If exporting, the run directory to also write summary.json.
+        output_path: If exporting, the run directory to also write
+            summary.json.
     """
     from spacesim2.analysis.summary import compute_summary
 
     summary = compute_summary(sim)
     payload = json.dumps(summary, indent=2)
 
-    # Clear delimiters so an agent can slice the JSON out of mixed stdout.
+    # Delimiters let an agent slice the JSON out of mixed stdout.
     print("\n===SUMMARY_BEGIN===")
     print(payload)
     print("===SUMMARY_END===")
@@ -284,14 +260,9 @@ def _emit_summary(sim: Any, output_path: Path | None) -> None:
 
 
 def _open_notebook(output_path: Path) -> None:
-    """Open the analysis notebook with the run path set.
-
-    Args:
-        output_path: Path to the simulation output directory
-    """
+    """Open the analysis notebook with the run path set."""
     print("\nOpening marimo notebook...")
 
-    # Set environment variable for notebook to read
     env = os.environ.copy()
     env["SPACESIM_RUN_PATH"] = str(output_path)
 
@@ -299,7 +270,7 @@ def _open_notebook(output_path: Path) -> None:
         subprocess.run(
             ["marimo", "edit", "--no-token", str(NOTEBOOK_PATH)],
             env=env,
-            check=False,  # Don't raise error if marimo exits normally
+            check=False,
         )
     except FileNotFoundError:
         print_warning("marimo not found. Install with: uv sync --extra analysis")

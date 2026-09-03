@@ -43,7 +43,7 @@ def test_memory_bounded_across_many_turns() -> None:
 
 
 def test_set_turn_same_turn_keeps_logs() -> None:
-    """Re-setting the same turn (idempotent call) must not drop data."""
+    """Re-setting the same turn keeps that turn's logs."""
     logger = DataLogger()
     actor = _fake_actor("Alice")
     logger.add_actor_to_log(actor)

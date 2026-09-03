@@ -25,8 +25,8 @@ def test_planet_wellbeing_in_unit_range_and_excludes_market_makers() -> None:
         wellbeing = planet_wellbeing(planet)
         assert 0.0 <= wellbeing <= 1.0
 
-        # Recompute over regular actors only and confirm it matches: this is the
-        # exclusion guarantee (market makers must not influence the value).
+        # Recomputing over regular actors only must match: market makers
+        # must not influence the value.
         scores = []
         for actor in planet.actors:
             if actor.actor_type == ActorType.MARKET_MAKER or not actor.drives:
@@ -63,7 +63,7 @@ def test_traveling_ship_snapshot_interpolation_fields() -> None:
     ship = sim.ships[0]
     origin, dest = sim.planets[0], sim.planets[1]
 
-    # Force a traveling state directly (avoids fuel/decision dependencies).
+    # Force a traveling state directly to avoid fuel and decision dependencies.
     ship.planet = origin
     ship.destination = dest
     ship.status = ShipStatus.TRAVELING
