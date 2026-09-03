@@ -5,11 +5,14 @@ import math
 
 import pytest
 
-from spacesim2.core.ship import ShipStatus
+from spacesim2.core.planet import Planet
+from spacesim2.core.ship import Ship, ShipStatus
 from spacesim2.core.simulation import Simulation
 from spacesim2.ui.live.camera import FIT_MARGIN, Camera
 from spacesim2.ui.live.director import Director, polyline_point
+from spacesim2.ui.live.history import HistoryRecorder
 from spacesim2.ui.live.view_model import GalaxyViewModel
+from spacesim2.ui.live.worker import SimulationWorker
 
 
 def _sim(num_planets: int = 12) -> Simulation:
@@ -24,6 +27,15 @@ def _sim(num_planets: int = 12) -> Simulation:
 
 
 # --- polyline interpolation ---------------------------------------------------
+
+
+def _depart(ship: Ship, dest: Planet) -> None:
+    """Start a journey, retrying past the random pre-departure maintenance roll."""
+    for _ in range(50):
+        ship.status = ShipStatus.DOCKED
+        if ship.start_journey(dest):
+            return
+    raise AssertionError(f"ship never departed: {ship.last_action}")
 
 
 def test_polyline_midpoint_is_arc_length_midpoint_not_vertex() -> None:
@@ -154,7 +166,7 @@ def test_traveling_ship_waypoints_follow_core_route() -> None:
     )
     if dest is None:
         pytest.skip("galaxy too small for a multi-hop route")
-    ship.start_journey(dest)
+    _depart(ship, dest)
     assert ship.status == ShipStatus.TRAVELING
     assert len(ship.route) >= 3
 
@@ -202,9 +214,11 @@ def test_director_positions_ship_along_route_with_segment_heading() -> None:
     )
     if dest is None:
         pytest.skip("galaxy too small for a multi-hop route")
-    ship.start_journey(dest)
+    _depart(ship, dest)
     ship.travel_progress = 0.5
-    director = Director(sim, vm, paused=True)
+    # The worker's startup frame snapshots the forced travel state.
+    worker = SimulationWorker(sim, vm, HistoryRecorder(sim))
+    director = Director(worker, paused=True)
 
     rendered = next(
         r for r in director.rendered_ships() if r.snapshot.name == ship.name

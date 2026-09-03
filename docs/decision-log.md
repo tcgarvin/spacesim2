@@ -4,6 +4,33 @@ Append-only record of closed decisions, postmortems, and landed campaigns.
 Newest first. Open work lives in `TODO.md`; current reference docs live
 alongside this file.
 
+## 2026-09-02 — Live UI: simulation moved off the render thread behind a TurnFrame protocol
+
+**Landed on branch `spiral-galaxy-star-lanes`.** After the 100-planet default
+the `ui` command felt frozen. Measured headlessly (100 planets x 50 actors):
+`run_turn` took ~1.27 s and ran *inline* in `Director.update` on the render
+thread at a default 1 turn/s, so the sim could never keep up; the overflowing
+accumulator then let the `steps < 4` catch-up run up to four turns in one
+frame — ~5 s hangs. On top of that, a paused render frame cost ~30 ms because
+`view_model.planets()` re-swept every actor's drives for wellbeing (5k actors
+x 4 drives = 1M `get_score()` calls) **twice per frame** (galaxy draw + HUD
+vitals).
+
+Decision: a thin protocol rather than a whole-sim snapshot. A
+`SimulationWorker` thread owns the sim and publishes one immutable
+`TurnFrame` per turn boundary sized to what the screen shows (planet/ship
+snapshots + HUD vitals); drill-down detail rides along only for *subscribed*
+entities (the selection), serviced immediately when the worker is idle. The
+director paces turn *requests* with no catch-up debt, and interpolates ships
+between frames. The wellbeing sweep runs once per turn and is shared with the
+history recorder. The render thread never reads core objects (pinned by a
+test that stubs the sim out after a frame is built). Result: paused render
+frame 27–33 ms → 15–18 ms (the remainder is per-frame `smoothscale` of planet
+sprites, a separate follow-up), per-turn snapshot overhead ~10 ms, and no
+multi-turn freezes. The GIL means a running turn still steals render slices;
+true smoothness at this scale needs the sim itself to get faster (see
+`docs/performance.md`).
+
 ## 2026-09-01 — Spike: spiral galaxy with star lanes replaces the open plane
 
 **Landed on branch `spiral-galaxy-star-lanes`.** Planets used to be scattered

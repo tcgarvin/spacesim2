@@ -13,7 +13,7 @@ import pygame
 from spacesim2.ui.live import assets
 from spacesim2.ui.live.assets import Fonts
 from spacesim2.ui.live.director import Director
-from spacesim2.ui.live.view_model import GalaxyViewModel
+from spacesim2.ui.live.frame import TurnFrame
 
 PANEL_FILL = (10, 12, 24, 185)
 PANEL_BORDER = (60, 75, 110)
@@ -23,26 +23,19 @@ PAD = 10
 MARGIN = 12
 
 
-def _galaxy_vitals(vm: GalaxyViewModel) -> tuple[int, float, int]:
-    """(population, population-weighted mean wellbeing, ships traveling)."""
-    planets = vm.planets()
-    population = sum(p.population for p in planets)
-    if population > 0:
-        wellbeing = sum(p.wellbeing * p.population for p in planets) / population
-    else:
-        wellbeing = 0.0
-    traveling = sum(1 for s in vm.ships() if s.traveling)
-    return population, wellbeing, traveling
-
-
 def draw_status_strip(
     surface: pygame.Surface,
     fonts: Fonts,
-    vm: GalaxyViewModel,
+    frame: TurnFrame,
     director: Director,
 ) -> None:
     """Top-left block: turn + pacing on one line, galaxy vitals on the next."""
-    population, wellbeing, traveling = _galaxy_vitals(vm)
+    vitals = frame.vitals
+    population, wellbeing, traveling = (
+        vitals.population,
+        vitals.wellbeing,
+        vitals.traveling,
+    )
     well_color = assets.wellbeing_color(wellbeing)
 
     if director.paused:
@@ -54,7 +47,7 @@ def draw_status_strip(
         )
 
     # Render the pieces first so the backing panel can size to fit.
-    turn_lbl = fonts.render(f"turn {vm.current_turn}", "large", assets.HUD_TEXT)
+    turn_lbl = fonts.render(f"turn {frame.turn}", "large", assets.HUD_TEXT)
     state_lbl = fonts.render(state_text, "normal", state_color)
     vitals_pre = fonts.render(
         f"pop {population} · wellbeing ", "normal", assets.HUD_TEXT

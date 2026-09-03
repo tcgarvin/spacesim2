@@ -7,6 +7,11 @@ picking: hovering highlights a planet or ship, clicking selects it and opens a
 live detail panel, and the charts strip scopes itself to the selected planet's
 market. Selecting a ship lights up its lane route; selecting a planet lights up
 the lanes touching it.
+
+Everything drawn comes from the director's current
+:class:`~spacesim2.ui.live.frame.TurnFrame`; the scene never reads simulation
+objects. A selection is also a *subscription* on the simulation worker, which
+is what makes the frame carry that entity's drill-down detail.
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ from spacesim2.ui.live.procgen.nebula import Nebula
 from spacesim2.ui.live.view_model import GalaxyViewModel, LaneSnapshot
 from spacesim2.ui.live.widgets import hud, info_panel
 from spacesim2.ui.live.widgets.charts_panel import ChartsPanel, strip_reserve_px
+from spacesim2.ui.live.worker import SimulationWorker
 
 # (kind, name) where kind is "planet" or "ship".
 Selection = Tuple[str, str]
@@ -45,11 +51,15 @@ class GalaxyScene:
         self,
         view_model: GalaxyViewModel,
         director: Director,
+        worker: SimulationWorker,
         camera: Camera,
         size: tuple[int, int],
     ) -> None:
+        # The view model is used only for the static lane skeleton; all live
+        # state comes through the director's frame.
         self._vm = view_model
         self._director = director
+        self._worker = worker
         self._camera = camera
         self._nebula = Nebula(size)
         self._fonts = Fonts()
@@ -58,10 +68,29 @@ class GalaxyScene:
         self._planet_sprites = PlanetSprites()
         self._ship_sprites = ShipSprites()
         self._good_icons = GoodIcons()
-        self.charts = ChartsPanel(director.history)
-        self.selection: Optional[Selection] = None
+        self.charts = ChartsPanel(worker.history)
+        self._selection: Optional[Selection] = None
         self.hover: Optional[Selection] = None
         self._panel_rect: Optional[pygame.Rect] = None
+
+    @property
+    def selection(self) -> Optional[Selection]:
+        return self._selection
+
+    @selection.setter
+    def selection(self, target: Optional[Selection]) -> None:
+        """Select ``target`` (or nothing), keeping the worker subscription in step.
+
+        Subscribing is what puts the entity's detail into subsequent frames;
+        hover deliberately does not subscribe since it only needs positions.
+        """
+        if target == self._selection:
+            return
+        if self._selection is not None:
+            self._worker.unsubscribe(self._selection)
+        self._selection = target
+        if target is not None:
+            self._worker.subscribe(target)
 
     def resize(self, size: tuple[int, int]) -> None:
         self._nebula.resize(size)
@@ -72,7 +101,7 @@ class GalaxyScene:
     def pick(self, pos: Tuple[int, int]) -> Optional[Selection]:
         """The planet or ship under ``pos``, planets taking priority."""
         planet_r = planet_pixel_radius(self._camera)
-        for planet in self._vm.planets():
+        for planet in self._director.frame.planets:
             px, py = self._camera.world_to_screen(planet.pos)
             if math.hypot(pos[0] - px, pos[1] - py) <= planet_r + _PICK_SLOP_PX:
                 return ("planet", planet.name)
@@ -115,6 +144,10 @@ class GalaxyScene:
     # -- Drawing ---------------------------------------------------------
 
     def draw(self, surface: pygame.Surface) -> None:
+        # Pick up the newest published frame once, so the whole pass (ships,
+        # rings, panel, HUD) draws one consistent turn.
+        self._director.refresh_frame()
+        frame = self._director.frame
         # Parallax keys off the camera center so panning drifts the starfield.
         self._nebula.draw(surface, (self._camera.center_x, self._camera.center_y))
 
@@ -133,7 +166,7 @@ class GalaxyScene:
         focused = {
             target[1] for target in (self.hover, self.selection) if target is not None
         }
-        for planet in self._vm.planets():
+        for planet in frame.planets:
             draw_planet(
                 surface,
                 planet,
@@ -149,12 +182,12 @@ class GalaxyScene:
         reserve = info_panel.PANEL_W + info_panel.MARGIN if self.selection else 0
         self.charts.draw(surface, self._fonts, self.selected_planet, reserve)
         self._panel_rect = self._draw_detail_panel(surface)
-        hud.draw_status_strip(surface, self._fonts, self._vm, self._director)
+        hud.draw_status_strip(surface, self._fonts, frame, self._director)
         hud.draw_help_line(surface, self._fonts, self.selection is not None)
 
     def _planet_lanes(self, name: str) -> List[LaneSnapshot]:
         """Lanes touching the named planet (matched by map position)."""
-        for planet in self._vm.planets():
+        for planet in self._director.frame.planets:
             if planet.name == name:
                 return [
                     lane
@@ -193,7 +226,7 @@ class GalaxyScene:
         """Screen (x, y, radius) for a selection ring, or None if it vanished."""
         kind, name = target
         if kind == "planet":
-            for planet in self._vm.planets():
+            for planet in self._director.frame.planets:
                 if planet.name == name:
                     x, y = self._camera.world_to_screen(planet.pos)
                     r = planet_pixel_radius(self._camera) + 6
@@ -217,19 +250,31 @@ class GalaxyScene:
                 pygame.draw.circle(surface, _SELECT_RING, ring[:2], ring[2], 2)
 
     def _draw_detail_panel(self, surface: pygame.Surface) -> Optional[pygame.Rect]:
+        """Draw the selection's panel from the frame's subscribed details.
+
+        The detail can lag the selection by a turn when the worker was
+        mid-turn at click time; until it arrives nothing is drawn and the
+        selection is kept. The selection is dropped only when the entity
+        itself has vanished from the frame.
+        """
         if self.selection is None:
             return None
         kind, name = self.selection
+        frame = self._director.frame
         if kind == "planet":
-            planet = self._vm.planet_detail(name)
-            if planet is None:
+            if not frame.has_planet(name):
                 self.selection = None
+                return None
+            planet = frame.planet_details.get(name)
+            if planet is None:
                 return None
             return info_panel.draw_planet_panel(
                 surface, self._fonts, planet, self._good_icons
             )
-        ship = self._vm.ship_detail(name)
-        if ship is None:
+        if not frame.has_ship(name):
             self.selection = None
+            return None
+        ship = frame.ship_details.get(name)
+        if ship is None:
             return None
         return info_panel.draw_ship_panel(surface, self._fonts, ship, self._good_icons)

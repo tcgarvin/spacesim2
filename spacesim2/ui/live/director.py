@@ -1,9 +1,11 @@
 """Turn pacing and anti-slideshow ship interpolation.
 
-The simulation advances in discrete turns, but we render at ~60fps. The director
-converts real elapsed time into turn advances (``turns_per_second``) and, between
-turns, interpolates each ship's *map position* so ships glide smoothly instead of
-teleporting.
+The simulation advances in discrete turns on the worker thread, but we render
+at ~60fps. The director converts real elapsed time into turn *requests*
+(``turns_per_second``) and, between published frames, interpolates each ship's
+*map position* between the previous and the latest
+:class:`~spacesim2.ui.live.frame.TurnFrame` so ships glide smoothly instead of
+teleporting. The director never touches the simulation itself.
 
 Interpolating position (rather than ``travel_progress``) is deliberate: when a
 ship arrives, the core resets progress to 0, so interpolating progress would slide
@@ -17,9 +19,9 @@ import math
 from dataclasses import dataclass
 from typing import Dict, List, Sequence, Tuple
 
-from spacesim2.core.simulation import Simulation
-from spacesim2.ui.live.history import HistoryRecorder
-from spacesim2.ui.live.view_model import GalaxyViewModel, ShipSnapshot
+from spacesim2.ui.live.frame import TurnFrame
+from spacesim2.ui.live.view_model import ShipSnapshot
+from spacesim2.ui.live.worker import SimulationWorker
 
 MIN_SPEED = 0.1
 MAX_SPEED = 30.0
@@ -74,29 +76,29 @@ class RenderedShip:
 class Director:
     def __init__(
         self,
-        simulation: Simulation,
-        view_model: GalaxyViewModel,
+        worker: SimulationWorker,
         turns_per_second: float = 1.0,
         paused: bool = False,
     ) -> None:
-        self._sim = simulation
-        self._vm = view_model
-        # Records a turn-0 baseline on construction; updated after each run_turn.
-        self.history = HistoryRecorder(simulation)
+        self._worker = worker
         self.turns_per_second = max(MIN_SPEED, min(MAX_SPEED, turns_per_second))
         self.paused = paused
         self._accumulator = 0.0
-        # Per-ship map position at the start of the current inter-turn interval.
-        self._prev_pos: Dict[str, Tuple[float, float]] = {
-            s.name: _route_position(s) for s in view_model.ships()
-        }
+        # The frame being drawn and the one before it; ships lerp between the
+        # two. Seconds since the current frame arrived drive the lerp.
+        self._frame = worker.latest_frame
+        self._prev_pos: Dict[str, Tuple[float, float]] = self._positions(self._frame)
+        self._since_frame = 0.0
+
+    @property
+    def frame(self) -> TurnFrame:
+        """The frame everything on screen is drawn from this render pass."""
+        return self._frame
 
     @property
     def alpha(self) -> float:
-        """Fraction [0, 1) through the current inter-turn interval."""
-        if self.paused:
-            return 0.0
-        return min(1.0, self._accumulator * self.turns_per_second)
+        """Fraction [0, 1] through the current inter-turn interval."""
+        return min(1.0, self._since_frame * self.turns_per_second)
 
     def toggle_pause(self) -> None:
         self.paused = not self.paused
@@ -107,28 +109,40 @@ class Director:
         )
 
     def update(self, dt: float) -> None:
-        """Advance real time by ``dt`` seconds, stepping turns as needed."""
+        """Advance real time by ``dt`` seconds; request a turn when one is due."""
+        self.refresh_frame()
         if self.paused:
             return
+        self._since_frame += dt
         self._accumulator += dt
         seconds_per_turn = 1.0 / self.turns_per_second
-        # Step at most a few turns per frame so a hitch can't run away.
-        steps = 0
-        while self._accumulator >= seconds_per_turn and steps < 4:
-            self._accumulator -= seconds_per_turn
-            self._snapshot_positions()
-            self._sim.run_turn()
-            self.history.sample()
-            steps += 1
+        if self._accumulator >= seconds_per_turn:
+            # No catch-up debt: if the sim can't keep the requested pace it
+            # just runs continuously, one turn after another.
+            self._accumulator = 0.0
+            self._worker.request_turn()
 
-    def _snapshot_positions(self) -> None:
-        self._prev_pos = {s.name: _route_position(s) for s in self._vm.ships()}
+    def refresh_frame(self) -> None:
+        """Adopt the worker's newest frame, rotating the ship lerp on a new turn."""
+        latest = self._worker.latest_frame
+        if latest is self._frame:
+            return
+        if latest.turn != self._frame.turn:
+            # A new turn: what we were drawing becomes the lerp origin.
+            self._prev_pos = self._positions(self._frame)
+            self._since_frame = 0.0
+        # Same turn, refreshed details: positions are unchanged, just adopt it.
+        self._frame = latest
+
+    @staticmethod
+    def _positions(frame: TurnFrame) -> Dict[str, Tuple[float, float]]:
+        return {s.name: _route_position(s) for s in frame.ships}
 
     def rendered_ships(self) -> List[RenderedShip]:
         """Ships at their interpolated positions for this frame."""
         a = self.alpha
         out: List[RenderedShip] = []
-        for ship in self._vm.ships():
+        for ship in self._frame.ships:
             curr, heading = polyline_point(ship.waypoints, ship.progress)
             prev = self._prev_pos.get(ship.name, curr)
             pos = (prev[0] + (curr[0] - prev[0]) * a, prev[1] + (curr[1] - prev[1]) * a)

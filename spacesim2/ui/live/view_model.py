@@ -1,15 +1,17 @@
 """Read-only adapters over :class:`Simulation` for the live view.
 
-This layer is the *only* thing the renderer reads from. It exposes small,
-immutable snapshots (plain dataclasses) so rendering code never touches core
-objects directly and core stays free of any UI concerns. Nothing here mutates
-the simulation.
+This layer builds the small, immutable snapshots (plain dataclasses) that make
+up a :class:`~spacesim2.ui.live.frame.TurnFrame`, so rendering code never
+touches core objects directly and core stays free of any UI concerns. Every
+builder here reads live core objects and therefore runs only on the simulation
+worker thread (see ``worker.py``), never on the render thread. Nothing here
+mutates the simulation.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Dict, List, Mapping, Optional, Tuple
 
 from spacesim2.core.actor import ActorType
 from spacesim2.core.planet import Planet
@@ -146,6 +148,16 @@ def planet_wellbeing(planet: Planet) -> float:
     if not scores:
         return 0.0
     return max(0.0, min(1.0, sum(scores) / len(scores)))
+
+
+def planet_wellbeing_by_name(sim: Simulation) -> Dict[str, float]:
+    """One sweep over every actor's drives, keyed by planet name.
+
+    This is the expensive part of snapshotting a large galaxy (5k actors x 4
+    drives at the 100-planet default), so it is done once per turn and shared
+    by the frame builder and the history recorder.
+    """
+    return {p.name: planet_wellbeing(p) for p in sim.planets}
 
 
 def _regular_population(planet: Planet) -> int:
@@ -292,7 +304,7 @@ def _ship_snapshot(ship: Ship, fallback_pos: Tuple[float, float]) -> ShipSnapsho
 
 
 class GalaxyViewModel:
-    """Thin read-only facade the renderer queries each frame."""
+    """Thin read-only facade the simulation worker snapshots from each turn."""
 
     def __init__(self, simulation: Simulation) -> None:
         self._sim = simulation
@@ -321,12 +333,18 @@ class GalaxyViewModel:
             self._lanes_cache_count = len(network)
         return self._lanes_cache
 
-    def planets(self) -> List[PlanetSnapshot]:
+    def planets(self, wellbeing_by_name: Mapping[str, float]) -> List[PlanetSnapshot]:
+        """Per-planet snapshots using a precomputed wellbeing sweep.
+
+        Callers pass the result of :func:`planet_wellbeing_by_name` so the
+        actor sweep happens exactly once per turn; a planet missing from the
+        map (added after the sweep) reads as 0.0.
+        """
         return [
             PlanetSnapshot(
                 name=p.name,
                 pos=p.get_position(),
-                wellbeing=planet_wellbeing(p),
+                wellbeing=wellbeing_by_name.get(p.name, 0.0),
                 population=_regular_population(p),
             )
             for p in self._sim.planets

@@ -6,6 +6,10 @@ zoom, pan, click-to-inspect, quit. A mouse press only pans once it moves past a
 small slop; a release inside the slop is a click and selects the planet/ship
 under the cursor. ``initialize`` / ``update`` / ``render`` are split out so tests
 can drive frames headlessly (``SDL_VIDEODRIVER=dummy``) without the blocking loop.
+
+Turns run on a :class:`~spacesim2.ui.live.worker.SimulationWorker` thread that
+``run`` starts and stops; ``initialize`` alone leaves the worker synchronous so
+headless drivers step turns deterministically on their own thread.
 """
 
 from __future__ import annotations
@@ -23,9 +27,11 @@ except ImportError:  # pragma: no cover - exercised only without pygame installe
 
 from spacesim2.ui.live.camera import Camera
 from spacesim2.ui.live.director import Director
+from spacesim2.ui.live.history import HistoryRecorder
 from spacesim2.ui.live.scenes.galaxy_scene import GalaxyScene
 from spacesim2.ui.live.view_model import GalaxyViewModel
 from spacesim2.ui.live.widgets.charts_panel import strip_reserve_px
+from spacesim2.ui.live.worker import SimulationWorker
 
 DEFAULT_SIZE = (1600, 900)
 TARGET_FPS = 60
@@ -51,6 +57,7 @@ class LiveGalaxyApp:
         self._screen: Optional[pygame.Surface] = None
         self._clock: Optional[pygame.time.Clock] = None
         self._camera: Optional[Camera] = None
+        self._worker: Optional[SimulationWorker] = None
         self._director: Optional[Director] = None
         self._scene: Optional[GalaxyScene] = None
         self._running = False
@@ -71,13 +78,17 @@ class LiveGalaxyApp:
         self._camera = Camera(
             self._size, view_model.galaxy_size, strip_reserve_px(self._size[1])
         )
+        self._worker = SimulationWorker(
+            self._sim, view_model, HistoryRecorder(self._sim)
+        )
         self._director = Director(
-            self._sim,
-            view_model,
+            self._worker,
             turns_per_second=self._speed,
             paused=self._paused,
         )
-        self._scene = GalaxyScene(view_model, self._director, self._camera, self._size)
+        self._scene = GalaxyScene(
+            view_model, self._director, self._worker, self._camera, self._size
+        )
 
     def handle_event(self, event: "pygame.event.Event") -> bool:
         """Process one event. Returns False if the app should quit."""
@@ -169,14 +180,20 @@ class LiveGalaxyApp:
 
     def run(self) -> None:
         self.initialize()
-        assert self._clock is not None
+        assert self._clock is not None and self._worker is not None
+        self._worker.start()
         self._running = True
-        while self._running:
-            dt = self._clock.tick(TARGET_FPS) / 1000.0
-            for event in pygame.event.get():
-                if not self.handle_event(event):
-                    self._running = False
-                    break
-            self.update(dt)
-            self.render()
-        pygame.quit()
+        try:
+            while self._running:
+                dt = self._clock.tick(TARGET_FPS) / 1000.0
+                for event in pygame.event.get():
+                    if not self.handle_event(event):
+                        self._running = False
+                        break
+                self.update(dt)
+                self.render()
+        finally:
+            # Let an in-flight turn finish rather than tearing pygame down
+            # under a thread that may still be building a frame.
+            self._worker.stop()
+            pygame.quit()

@@ -8,45 +8,46 @@ a *galaxy-wide aggregate* across every planet market, and a citizen-wellbeing se
 per turn into ring buffers the renderer can read each frame without touching core
 internals or re-aggregating.
 
-Sampling is driven by the :class:`~spacesim2.ui.live.director.Director`, which calls
-:meth:`sample` immediately after each ``run_turn`` (and once at startup for a turn-0
-baseline). Nothing here mutates the simulation.
+Sampling is driven by the :class:`~spacesim2.ui.live.worker.SimulationWorker`,
+which calls :meth:`record` on the simulation thread immediately after each
+``run_turn`` (and :meth:`sample` once at startup for a turn-0 baseline). The
+charts read the series from the render thread, so writes and the list copies
+readers take are serialized by a lock. Nothing here mutates the simulation.
 """
 
 from __future__ import annotations
 
+import threading
 from collections import deque
-from typing import Deque, Dict, List
+from typing import Deque, Dict, List, Mapping
 
 from spacesim2.core.actor import ActorType
 from spacesim2.core.commodity import CommodityDefinition
 from spacesim2.core.planet import Planet
 from spacesim2.core.simulation import Simulation
-from spacesim2.ui.live.view_model import planet_wellbeing
+from spacesim2.ui.live.view_model import planet_wellbeing_by_name
 
 # How many turns of history to retain. At one point per turn this is plenty for a
 # scrolling chart while staying tiny in memory (a few thousand floats per series).
 DEFAULT_WINDOW = 2048
 
 
-def _global_wellbeing(sim: Simulation) -> float:
+def _global_wellbeing(sim: Simulation, wellbeing_by_name: Mapping[str, float]) -> float:
     """Mean welfare across every regular actor in the galaxy, in [0, 1].
 
-    Averaging each regular actor's mean drive score over the whole population is
-    naturally population-weighted (a planet with more colonists counts for more).
+    Weights each planet's mean by its regular population so it matches averaging
+    over the whole population (a planet with more colonists counts for more).
     Market makers are excluded — they are economic plumbing, not colonists.
     """
-    scores: List[float] = []
+    weighted = 0.0
+    population = 0
     for planet in sim.planets:
-        for actor in planet.actors:
-            if actor.actor_type == ActorType.MARKET_MAKER or not actor.drives:
-                continue
-            scores.append(
-                sum(d.metrics.get_score() for d in actor.drives) / len(actor.drives)
-            )
-    if not scores:
+        count = sum(1 for a in planet.actors if a.actor_type != ActorType.MARKET_MAKER)
+        weighted += wellbeing_by_name.get(planet.name, 0.0) * count
+        population += count
+    if population == 0:
         return 0.0
-    return max(0.0, min(1.0, sum(scores) / len(scores)))
+    return max(0.0, min(1.0, weighted / population))
 
 
 def _galaxy_price_and_volume(
@@ -112,6 +113,9 @@ class HistoryRecorder:
     def __init__(self, simulation: Simulation, window: int = DEFAULT_WINDOW) -> None:
         self._sim = simulation
         self._window = window
+        # Serializes the per-turn append (simulation thread) against the list
+        # copies the chart readers take (render thread).
+        self._lock = threading.Lock()
         self.commodities: List[CommodityDefinition] = [
             c
             for c in simulation.commodity_registry.all_commodities()
@@ -142,39 +146,57 @@ class HistoryRecorder:
         self.sample()
 
     def sample(self) -> None:
-        """Record one data point for the current simulation state."""
-        self._turns.append(self._sim.current_turn)
-        self._wellbeing.append(_global_wellbeing(self._sim))
-        for commodity in self.commodities:
-            price, volume = _galaxy_price_and_volume(self._sim, commodity)
-            self._price[commodity.id].append(price)
-            self._volume[commodity.id].append(volume)
-        for planet in self._sim.planets:
-            if planet.name not in self._planet_wellbeing:
-                continue  # planet added after startup; not tracked
-            self._planet_wellbeing[planet.name].append(planet_wellbeing(planet))
+        """Record one data point, running the actor wellbeing sweep itself."""
+        self.record(planet_wellbeing_by_name(self._sim))
+
+    def record(self, wellbeing_by_name: Mapping[str, float]) -> None:
+        """Record one data point using an already-computed wellbeing sweep.
+
+        The worker passes the same per-planet map it builds the frame from, so
+        the galaxy's actors are walked once per turn, not once per consumer.
+        """
+        with self._lock:
+            self._turns.append(self._sim.current_turn)
+            self._wellbeing.append(_global_wellbeing(self._sim, wellbeing_by_name))
             for commodity in self.commodities:
-                price, volume = _planet_price_and_volume(planet, commodity)
-                self._planet_price[planet.name][commodity.id].append(price)
-                self._planet_volume[planet.name][commodity.id].append(volume)
+                price, volume = _galaxy_price_and_volume(self._sim, commodity)
+                self._price[commodity.id].append(price)
+                self._volume[commodity.id].append(volume)
+            for planet in self._sim.planets:
+                if planet.name not in self._planet_wellbeing:
+                    continue  # planet added after startup; not tracked
+                self._planet_wellbeing[planet.name].append(
+                    wellbeing_by_name.get(planet.name, 0.0)
+                )
+                for commodity in self.commodities:
+                    price, volume = _planet_price_and_volume(planet, commodity)
+                    self._planet_price[planet.name][commodity.id].append(price)
+                    self._planet_volume[planet.name][commodity.id].append(volume)
 
     def turn_axis(self) -> List[int]:
-        return list(self._turns)
+        with self._lock:
+            return list(self._turns)
 
     def prices(self, commodity_id: str) -> List[float]:
-        return list(self._price.get(commodity_id, ()))
+        with self._lock:
+            return list(self._price.get(commodity_id, ()))
 
     def volumes(self, commodity_id: str) -> List[float]:
-        return list(self._volume.get(commodity_id, ()))
+        with self._lock:
+            return list(self._volume.get(commodity_id, ()))
 
     def wellbeing(self) -> List[float]:
-        return list(self._wellbeing)
+        with self._lock:
+            return list(self._wellbeing)
 
     def planet_prices(self, planet_name: str, commodity_id: str) -> List[float]:
-        return list(self._planet_price.get(planet_name, {}).get(commodity_id, ()))
+        with self._lock:
+            return list(self._planet_price.get(planet_name, {}).get(commodity_id, ()))
 
     def planet_volumes(self, planet_name: str, commodity_id: str) -> List[float]:
-        return list(self._planet_volume.get(planet_name, {}).get(commodity_id, ()))
+        with self._lock:
+            return list(self._planet_volume.get(planet_name, {}).get(commodity_id, ()))
 
     def planet_wellbeing_series(self, planet_name: str) -> List[float]:
-        return list(self._planet_wellbeing.get(planet_name, ()))
+        with self._lock:
+            return list(self._planet_wellbeing.get(planet_name, ()))
