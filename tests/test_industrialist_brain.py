@@ -52,6 +52,9 @@ class _StubDrive:
     def marginal_welfare(self):
         return self._stake * (1.0 - self._buffer)
 
+    def security(self, actor, unit_price):
+        return self._buffer
+
 
 class TestIndustrialistBrain:
     @pytest.fixture

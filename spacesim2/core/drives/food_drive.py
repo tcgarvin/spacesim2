@@ -45,6 +45,28 @@ class FoodDrive(ActorDrive):
     def target_units(self) -> int:
         return self.TARGET_UNITS
 
+    def security(self, actor: Actor, unit_price: float) -> float:
+        """Food security counting both the pantry and purchasing power.
+
+        Actors keep only a few days of food on hand by policy, so the pantry
+        buffer alone sits low forever and money never looks cheap, which
+        caps what any actor will pay for comfort goods at a small multiple
+        of the food price. Days of food the actor could buy with its money
+        are added to the pantry before the same log-normalization, so a
+        solvent actor on a working food market is secure even with a small
+        pantry, while a broke actor is not.
+        """
+        pantry_days = self.pantry_units(actor) / DAILY_CONSUMPTION
+        affordable_days = actor.money / unit_price if unit_price > 0 else 0.0
+        return log_norm_ratio(pantry_days + affordable_days, PANTRY_TARGET, PANTRY_MAX)
+
+    def pantry_units(self, actor: Actor) -> int:
+        """Units of food of either quality the actor holds."""
+        units = actor.inventory.get_available_quantity(self.food_commodity)
+        if self.quality_commodity:
+            units += actor.inventory.get_available_quantity(self.quality_commodity)
+        return units
+
     def tick(self, actor: Actor) -> DriveMetrics:
         # Quality food first.
         did_eat = False
@@ -59,10 +81,7 @@ class FoodDrive(ActorDrive):
         actor.food_consumed_this_turn = did_eat
 
         # Buffer counts both food types.
-        remaining = actor.inventory.get_available_quantity(self.food_commodity)
-        if self.quality_commodity:
-            remaining += actor.inventory.get_available_quantity(self.quality_commodity)
-        pantry_days = remaining / DAILY_CONSUMPTION
+        pantry_days = self.pantry_units(actor) / DAILY_CONSUMPTION
 
         decay = QUALITY_DEBT_DECAY_FACTOR if ate_quality else DEBT_DECAY_FACTOR
         self._update_metrics(

@@ -92,6 +92,17 @@ class ActorDrive:
         """
         return self.deprivation_stake() * (1.0 - self.metrics.buffer)
 
+    def security(self, actor: Actor, unit_price: float) -> float:
+        """How safe the actor is from this drive, in [0, 1].
+
+        The buffer measures stock on hand. Security also counts what the
+        actor could buy at ``unit_price``, so a wealthy actor with a small
+        pantry is still secure. Used to price money, not to decide purchases:
+        the marginal welfare of a unit still follows the physical buffer.
+        Defaults to the buffer for drives that do not model purchasing power.
+        """
+        return self.metrics.buffer
+
     def _update_metrics(
         self,
         health: float,

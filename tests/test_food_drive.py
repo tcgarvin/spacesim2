@@ -311,3 +311,41 @@ class TestFoodDriveConstants:
     def test_pantry_target_less_than_max(self):
         """Pantry target is below the max."""
         assert PANTRY_TARGET < PANTRY_MAX
+
+
+class TestFoodSecurity:
+    """FoodDrive.security() counts purchasing power as well as the pantry."""
+
+    @pytest.fixture
+    def food_drive(self):
+        registry = CommodityRegistry()
+        registry.load_from_file("data/commodities.yaml")
+        return FoodDrive(registry)
+
+    def _actor(self, food_drive, money: int, food: int) -> Actor:
+        actor = Mock(spec=Actor)
+        actor.inventory = Inventory()
+        actor.inventory.add_commodity(food_drive.food_commodity, food)
+        actor.money = money
+        return actor
+
+    def test_pantry_alone_stays_low(self, food_drive):
+        """A six-day pantry with no money is well below saturation."""
+        actor = self._actor(food_drive, money=0, food=6)
+        assert food_drive.security(actor, unit_price=7.0) < 0.5
+
+    def test_solvent_actor_is_secure(self, food_drive):
+        """Money worth more than PANTRY_MAX days of food saturates security."""
+        actor = self._actor(food_drive, money=int(PANTRY_MAX * 7 * 2), food=6)
+        assert food_drive.security(actor, unit_price=7.0) == pytest.approx(1.0)
+
+    def test_security_rises_with_money(self, food_drive):
+        poor = self._actor(food_drive, money=20, food=6)
+        rich = self._actor(food_drive, money=500, food=6)
+        assert food_drive.security(rich, 7.0) > food_drive.security(poor, 7.0)
+
+    def test_zero_price_counts_pantry_only(self, food_drive):
+        actor = self._actor(food_drive, money=1000, food=6)
+        assert food_drive.security(actor, unit_price=0.0) == food_drive.security(
+            self._actor(food_drive, money=0, food=6), unit_price=7.0
+        )

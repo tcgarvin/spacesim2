@@ -363,11 +363,15 @@ class ActorBrain:
         """Marginal welfare per unit of money, anchored on the food numeraire.
 
         lambda = marginal_welfare_food / price_food: the welfare a marginal
-        credit buys via its best survival use. As food security rises the
-        food buffer discounts this, money gets cheaper, and the actor pays
-        more for under-stocked drives. The food buffer is floored so lambda
-        never collapses to zero. Willingness-to-pay is also bounded above by
-        replacement cost, which is the real guard against blow-up.
+        credit buys via its best survival use. As food security rises this
+        is discounted, money gets cheaper, and the actor pays more for
+        under-stocked drives. Security counts purchasing power as well as
+        the pantry (``FoodDrive.security``); on the pantry alone every actor
+        looked food-insecure forever, since they stock only a few days, and
+        no drive could ever be worth more than a small multiple of the food
+        price. The discount is floored so lambda never collapses to zero.
+        Willingness-to-pay is also bounded above by replacement cost, which
+        is the real guard against blow-up.
         """
         for drive in actor.drives:
             if drive.metrics.get_name() != NUMERAIRE_DRIVE:
@@ -378,10 +382,10 @@ class ActorBrain:
             price_food = self._effective_food_price(actor, market, mats[0], cache)
             if price_food <= 0:
                 return 0.0
-            # Floor the coverage discount so a hoarded pantry can't zero lambda.
-            food_welfare = max(
-                drive.marginal_welfare(), 0.1 * drive.deprivation_stake()
-            )
+            # Floor the security discount so a wealthy actor can't zero lambda.
+            stake = drive.deprivation_stake()
+            security = drive.security(actor, price_food)
+            food_welfare = max(stake * (1.0 - security), 0.1 * stake)
             return food_welfare / price_food
         return 0.0
 
