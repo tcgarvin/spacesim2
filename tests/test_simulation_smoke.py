@@ -9,7 +9,11 @@ tolerances, not exact values. Keep the run short so the suite stays fast.
 
 import pytest
 
-from spacesim2.analysis.summary import compute_summary
+from spacesim2.analysis.summary import (
+    _DRIVE_HEALTH_THRESHOLDS,
+    _LATE_RUN_TURNS,
+    compute_summary,
+)
 from spacesim2.cli.common import create_and_setup_simulation
 
 
@@ -24,7 +28,16 @@ def smoke_summary() -> dict:
 
 def test_summary_has_expected_shape(smoke_summary: dict) -> None:
     """The summary has the KPI blocks agents and notebooks read."""
-    for key in ("turns", "money", "drives", "inventory_totals", "prices", "verdict"):
+    for key in (
+        "turns",
+        "money",
+        "drives",
+        "inventory_totals",
+        "prices",
+        "markets",
+        "trade",
+        "verdict",
+    ):
         assert key in smoke_summary, f"missing summary key: {key}"
     assert smoke_summary["turns"] == 120
     assert smoke_summary["regular_actors"] == 80  # 2 planets * 40 actors
@@ -48,3 +61,57 @@ def test_economy_produces_goods(smoke_summary: dict) -> None:
     totals = smoke_summary["inventory_totals"]
     assert totals.get("wood", 0) > 0, "no wood harvested (bootstrap broken)"
     assert totals.get("food", 0) > 0, "no food produced"
+
+
+def test_summary_has_market_liveness_section(smoke_summary: dict) -> None:
+    """The `markets` section reports a recent-volume window and traded counts."""
+    markets = smoke_summary["markets"]
+    assert markets["window_turns"] > 0
+    volume = markets["volume_per_planet_turn"]
+    assert isinstance(volume, dict)
+    # Every listed commodity has traded at some point, so counts agree with it.
+    assert markets["traded_ever"] == len(volume)
+    assert 0 <= markets["traded_recent"] <= markets["traded_ever"]
+    assert all(v >= 0.0 for v in volume.values())
+    # The survival market must still be moving units, not just have a price.
+    assert volume.get("food", 0.0) > 0.0, f"food market frozen: {volume}"
+
+
+def test_summary_has_trade_section(smoke_summary: dict) -> None:
+    """The `trade` section reports ship-delivered units and volume shares."""
+    trade = smoke_summary["trade"]
+    assert trade["window_turns"] > 0
+    delivered = trade["ship_delivered_units"]
+    assert isinstance(delivered, dict)
+    assert all(units > 0 for units in delivered.values())
+    assert trade["ship_delivered_total"] == sum(delivered.values())
+    for commodity, share in trade["ship_share_of_volume"].items():
+        assert 0.0 <= share <= 1.0, f"bad ship share for {commodity}: {share}"
+
+
+def test_comfort_and_health_drives_are_gated(smoke_summary: dict) -> None:
+    """Every drive is thresholded, each behind the turn its chain stands up."""
+    drives = smoke_summary["drives"]
+    for name in ("food", "clothing", "shelter", "health"):
+        assert name in drives, f"{name} not reported"
+        assert name in _DRIVE_HEALTH_THRESHOLDS, f"{name} is not gated"
+    assert _DRIVE_HEALTH_THRESHOLDS["food"][0] == 0, "food must always be judged"
+    for name in ("clothing", "shelter", "health"):
+        min_turns, warn, fail = _DRIVE_HEALTH_THRESHOLDS[name]
+        assert min_turns > 0, f"{name} must be gated on run length"
+        assert 0.0 < fail < warn < 1.0, f"bad {name} thresholds: {warn}, {fail}"
+
+
+def test_slow_drives_are_not_judged_on_short_runs(smoke_summary: dict) -> None:
+    """Comfort and health drives ramp slowly, so this short run must not flag.
+
+    The fixture runs far fewer turns than the comfort and chemistry tiers need;
+    a flag for them here would mean a turn gate regressed.
+    """
+    turns = smoke_summary["turns"]
+    flags = smoke_summary["verdict"]["flags"]
+    for name in ("clothing", "shelter", "health"):
+        assert turns < _DRIVE_HEALTH_THRESHOLDS[name][0]
+        assert not any(flag.startswith(f"{name} health") for flag in flags), flags
+    assert turns < _LATE_RUN_TURNS
+    assert not any(flag.startswith("no recent") for flag in flags), flags

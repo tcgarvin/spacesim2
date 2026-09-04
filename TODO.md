@@ -26,10 +26,6 @@ stockpiling. Scoring probe: `notebooks/chem_score_probe.py`
 - Test-on-edit `PostToolUse` hook: run `uv run pytest -q` on `core/**` edits,
   bootstrap/graph validation on `data/*.yaml` edits (scope matchers tightly).
 - Clean stale `SPACESIM_RUN_PATH` entries in `.claude/settings.local.json`.
-- Tune verdict thresholds to a real long-run steady state, then add comfort
-  drives to `_DRIVE_HEALTH_THRESHOLDS` in `analysis/summary.py` (+ smoke test).
 - `dev compare RUN_A RUN_B`: print only KPIs that moved beyond ~±0.05.
-- Trade-volume / market-liveness KPIs in the live summary (catch "market froze
-  but drives look fine").
 - Scenario fixtures (tool shortage, autarky, abundant ore) the smoke test can
   iterate.

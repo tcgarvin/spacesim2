@@ -33,10 +33,36 @@ uv run spacesim2 run --turns 200 --no-export --quiet --summary
 ```
 
 Returns turns, money distribution, per-drive mean health/debt/deprivation,
-population inventory totals, mean prices, and a `verdict`. The verdict is a
-catastrophe floor (food survival and a live market), not a target: `PASS`
-means not obviously broken. Comfort drives (shelter, clothing, health) are
-reported but not judged.
+population inventory totals, mean prices, a `markets` section, a `trade`
+section, and a `verdict`.
+
+- `markets`: `volume_per_planet_turn` (mean units traded per planet per turn
+  over the last `window_turns`, default 50) plus `traded_recent` /
+  `traded_ever` commodity counts. A commodity that once traded stays listed at
+  0.0 when its market freezes, which is the point: drives can look fine on
+  stock while trade has stopped.
+- `trade`: interplanetary movement over the same window. `ship_delivered_units`
+  is units sold by ships, netted of same-planet round trips, so it is cargo
+  that arrived from elsewhere; `ship_delivered_total` sums it; and
+  `ship_share_of_volume` gives the ship-carried fraction of total volume for
+  the drive materials plus `nova_fuel`. Shares read from each market's capped
+  transaction history, so on very busy markets they cover fewer turns than
+  `window_turns`; `markets` volume is the authority on what is trading.
+
+The verdict is a catastrophe floor, not a target: `PASS` means not obviously
+broken. It checks per-drive health floors, that the food market is alive, and
+on long runs that no drive material's market has frozen. Each drive's floor is
+gated on run length, because the tiers ramp at different rates:
+
+| Drive | Judged from turn | warn / fail |
+|-------|------------------|-------------|
+| food | 0 | 0.70 / 0.50 |
+| clothing, shelter | 200 | 0.70 / 0.40 |
+| health | 400 | 0.30 / 0.10 |
+
+So a 200-turn dev-loop run judges food, clothing and shelter but not health,
+whose chemistry tier only bootstraps after roughly 300-400 turns. The market
+liveness check also waits for turn 400.
 
 Thresholds live in `spacesim2/analysis/summary.py`; mirror any change in
 `tests/test_simulation_smoke.py`.
