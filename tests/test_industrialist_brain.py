@@ -3,7 +3,7 @@ from unittest.mock import Mock
 import pytest
 
 from spacesim2.core.actor import Actor, ActorType
-from spacesim2.core.actor_brain import ActorBrain
+from spacesim2.core.actor_brain import GOVERNMENT_WAGE, ActorBrain
 from spacesim2.core.brains.industrialist import IndustrialistBrain
 from spacesim2.core.commands import (
     GovernmentWorkCommand,
@@ -11,6 +11,7 @@ from spacesim2.core.commands import (
     ProcessCommand,
 )
 from spacesim2.core.commodity import CommodityDefinition, Inventory
+from spacesim2.core.market import Market
 from spacesim2.core.process import ProcessDefinition
 
 
@@ -66,6 +67,13 @@ class TestIndustrialistBrain:
         actor.money = 100
         actor.planet = Mock()
         actor.planet.market = Mock()
+        # Default the depth-aware output valuation to "the book cannot absorb
+        # a run", and route its trade-history fallback to the same stub the
+        # tests below already set, so they keep asserting on one price.
+        actor.planet.market.get_bid_price_at_depth.return_value = None
+        actor.planet.market.get_30_day_average_price.side_effect = (
+            lambda commodity: float(actor.planet.market.get_avg_price(commodity))
+        )
         actor.sim = Mock()
         _wire_producer_index(actor.sim)
         actor.inventory = Mock(spec=Inventory)
@@ -638,3 +646,200 @@ class TestDriveBidReference:
         # New turn: recompute; with no recipe, fall back to the default.
         market.current_turn = 6
         assert brain._drive_bid_reference(actor, market, refined) == pytest.approx(10.0)
+
+
+class TestDepthAwareOutputValuation:
+    """Recipe output is valued at the bid level that can actually absorb it.
+
+    A market maker seeding an illiquid good posts one-unit probes far above
+    fair value. Read as the top of book they look like demand, and producers
+    pile into a good nobody buys. See _output_unit_value.
+    """
+
+    @pytest.fixture
+    def brain(self):
+        return IndustrialistBrain()
+
+    @staticmethod
+    def _commodity(cid):
+        return CommodityDefinition(id=cid, name=cid, transportable=True, description="")
+
+    @staticmethod
+    def _actor():
+        actor = Mock(spec=Actor)
+        actor.name = "TestIndustrialist"
+        actor.actor_type = ActorType.REGULAR
+        actor.money = 100
+        actor.planet = Mock()
+        actor.sim = Mock()
+        _wire_producer_index(actor.sim)
+        actor.sim.process_registry.all_processes.return_value = []
+        actor.inventory = Mock(spec=Inventory)
+        return actor
+
+    @staticmethod
+    def _bidder():
+        bidder = Mock()
+        bidder.name = "Bidder"
+        bidder.money = 1_000_000
+        bidder.reserved_money = 0
+        bidder.active_orders = {}
+        return bidder
+
+    @staticmethod
+    def _process(output_commodity, quantity=1):
+        """A recipe with no inputs, so its cost is exactly a turn of labor."""
+        process = Mock(spec=ProcessDefinition)
+        process.id = "make_output"
+        process.inputs = {}
+        process.outputs = {output_commodity: quantity}
+        process.tools_required = []
+        process.facilities_required = []
+        process.resource_attribute = None
+        return process
+
+    def test_phantom_top_bid_is_ignored_in_favor_of_depth(self, brain):
+        """A 1-unit bid at 150 over a deep book at 20 scores against 20."""
+        actor = self._actor()
+        medicine = self._commodity("medicine")
+        market = Market()
+        bidder = self._bidder()
+
+        market.place_buy_order(bidder, medicine, 1, 150)  # discovery probe
+        market.place_buy_order(bidder, medicine, 20, 20)  # real demand
+
+        assert market.get_bid_ask_spread(medicine)[0] == 150
+
+        score = brain._calculate_recipe_score(actor, market, self._process(medicine))
+
+        # Output valued at 20, not 150, minus a turn of labor at the
+        # government wage.
+        assert score == pytest.approx(10.0)
+
+    def test_thin_book_below_cost_triggers_exit(self, brain):
+        """Depth pricing is what the exit check sees too, so it goes negative."""
+        actor = self._actor()
+        medicine = self._commodity("medicine")
+        market = Market()
+        bidder = self._bidder()
+
+        market.place_buy_order(bidder, medicine, 1, 150)
+        market.place_buy_order(bidder, medicine, 20, 5)
+
+        raw = brain._calculate_recipe_score(
+            actor, market, self._process(medicine), require_entry_margin=False
+        )
+
+        assert raw == pytest.approx(-5.0)
+
+    def test_never_traded_good_scores_via_reference_price(self, brain):
+        """With no bids and no history, fall back to the reference price."""
+        actor = self._actor()
+        widget = self._commodity("widget")
+        market = Market()
+
+        assert not market.has_price_signal(widget)
+
+        score = brain._calculate_recipe_score(
+            actor, market, self._process(widget, quantity=4)
+        )
+
+        # 4 units at the reference price of 10, minus a turn of labor.
+        assert score == pytest.approx(30.0)
+
+    def test_never_traded_good_scores_via_a_bootstrap_bid(self, brain):
+        """A lone procurement bid still enables a cold-start intermediate.
+
+        Depth cannot cover the sales horizon here, and there is no trade
+        history, so the resting bid is the only demand signal there is.
+        Refusing it would re-open the producer/consumer standoff.
+        """
+        actor = self._actor()
+        refined = self._commodity("refined_chemicals")
+        market = Market()
+        market.place_buy_order(self._bidder(), refined, 1, 28)
+
+        score = brain._calculate_recipe_score(actor, market, self._process(refined))
+
+        assert score == pytest.approx(18.0)
+
+    def test_liquid_good_still_uses_the_top_bid(self, brain):
+        """Turnover above the horizon means the top bid is backed by flow."""
+        actor = self._actor()
+        food = self._commodity("food")
+        market = Market()
+        market.place_buy_order(self._bidder(), food, 1, 40)
+
+        # 30 turns of heavy trade: the book is thin only because it is being
+        # rebuilt around us, not because demand is absent.
+        market.price_history[food] = [10] * 30
+        market.volume_history[food] = [50] * 30
+
+        score = brain._calculate_recipe_score(actor, market, self._process(food))
+
+        assert score == pytest.approx(30.0)
+
+    def test_never_traded_output_is_capped_at_its_make_cost(self, brain):
+        """A discovery probe above any plausible production cost is discounted."""
+        actor = self._actor()
+        widget = self._commodity("widget")
+        process = self._process(widget)
+        process.id = "make_widget"
+        actor.sim.process_registry.all_processes.return_value = [process]
+        actor.inventory.has_quantity.return_value = True
+
+        market = Market()
+        market.place_buy_order(self._bidder(), widget, 1, 150)
+
+        capped = brain._output_unit_value(actor, market, widget, 1.0, {})
+        uncapped = market.get_bid_ask_spread(widget)[0]
+
+        assert uncapped == 150
+        # Making one widget costs a turn of labor, so 150 is not demand.
+        assert capped == pytest.approx(GOVERNMENT_WAGE * 1.5)
+
+
+class TestBidDepthPricing:
+    """Market.get_bid_price_at_depth walks the book instead of the top of it."""
+
+    @staticmethod
+    def _market_with_levels(commodity, levels):
+        market = Market()
+        bidder = Mock()
+        bidder.name = "Bidder"
+        bidder.money = 1_000_000
+        bidder.reserved_money = 0
+        bidder.active_orders = {}
+        for price, quantity in levels:
+            market.place_buy_order(bidder, commodity, quantity, price)
+        return market
+
+    def test_walks_down_to_the_level_that_covers_the_quantity(self):
+        commodity = CommodityDefinition(
+            id="medicine", name="medicine", transportable=True, description=""
+        )
+        market = self._market_with_levels(commodity, [(150, 1), (30, 2), (20, 10)])
+
+        assert market.get_bid_price_at_depth(commodity, 1) == 150
+        assert market.get_bid_price_at_depth(commodity, 3) == 30
+        assert market.get_bid_price_at_depth(commodity, 4) == 20
+        assert market.get_bid_price_at_depth(commodity, 13) == 20
+
+    def test_returns_none_when_the_book_is_too_thin(self):
+        commodity = CommodityDefinition(
+            id="medicine", name="medicine", transportable=True, description=""
+        )
+        market = self._market_with_levels(commodity, [(150, 1)])
+
+        assert market.get_bid_price_at_depth(commodity, 2) is None
+        assert market.get_bid_price_at_depth(commodity, 0) is None
+
+    def test_cancelled_bids_do_not_count_as_depth(self):
+        commodity = CommodityDefinition(
+            id="medicine", name="medicine", transportable=True, description=""
+        )
+        market = self._market_with_levels(commodity, [(150, 1), (20, 10)])
+        deep_order = next(o for o in market.buy_orders[commodity] if o.price == 20)
+        market.cancel_order(deep_order.order_id)
+
+        assert market.get_bid_price_at_depth(commodity, 3) is None

@@ -43,6 +43,21 @@ EXIT_CHECK_INTERVAL = 10
 # cost we do, so a lower bid never triggers supplier entry and the cold-start
 # standoff moves one tier up the chain.
 PROCUREMENT_BOOTSTRAP_MARGIN = 1.25
+# Runs of output a recipe must be able to sell into the resting book before
+# its top-of-book bid is believed. Market makers seed illiquid goods with
+# one-unit probes an order of magnitude above fair value; at a horizon of one
+# unit those probes read as demand and pull producers into goods nobody buys.
+# Valuing output at the level that absorbs several runs ignores a probe
+# without ignoring genuine thin demand, which shows up as depth.
+OUTPUT_SALES_HORIZON_RUNS = 3
+# Floor on that horizon, so a recipe yielding a fraction of a unit per run
+# still has to clear more depth than a single probe.
+MIN_OUTPUT_DEPTH_UNITS = 3
+# Cap on what a never-traded output is worth, as a multiple of its imputed
+# make cost. It must exceed PROCUREMENT_BOOTSTRAP_MARGIN, or the bid a buyer
+# rests to bootstrap a cold-start intermediate would be capped below itself
+# and no supplier would ever enter.
+NEVER_TRADED_VALUE_CAP = 1.5
 
 
 class IndustrialistBrain(ActorBrain):
@@ -266,14 +281,12 @@ class IndustrialistBrain(ActorBrain):
                 total_output_value += FACILITY_NOTIONAL_VALUE * quantity
                 continue
 
-            bid, _ = market.get_bid_ask_spread(commodity)
-            if bid is not None:
-                price = bid
-            else:
-                price = market.get_avg_price(commodity)
-                if price <= 0:
-                    return 0.0
             expected_quantity = quantity * attribute_modifier
+            price = self._output_unit_value(
+                actor, market, commodity, expected_quantity, memo
+            )
+            if price <= 0:
+                return 0.0
             total_output_value += price * expected_quantity
 
         # Entry requires a 20% margin over costs, which include labor. Exit
@@ -282,6 +295,67 @@ class IndustrialistBrain(ActorBrain):
             return 0.0
 
         return total_output_value - total_input_cost
+
+    def _output_unit_value(
+        self,
+        actor: "Actor",
+        market: "Market",
+        commodity: "CommodityDefinition",
+        expected_quantity: float,
+        memo: Dict[str, float],
+    ) -> float:
+        """Price per unit this actor can realistically get for a recipe output.
+
+        Entry scoring and the exit-on-loss check both come here, so a
+        producer leaves a line on the same valuation that would have kept it
+        out.
+
+        The top of book overstates demand for a thin market. A market maker
+        seeds an illiquid good with one-unit probes an order of magnitude
+        above fair value; read as the price of a whole run they pull the
+        population into producing something nobody buys. So how much of the
+        book to believe depends on how much the good actually trades:
+
+        1. Liquid good, one whose recent turnover already exceeds this run's
+           output: the top bid is backed by flow, and is used as is.
+        2. Thin good: value at the bid level deep enough to absorb the run.
+           A lone probe sits above that level and is ignored.
+        3. Thin good with a book too shallow to absorb a run at all: recent
+           traded price. It sells, just not this much right now.
+        4. Never traded: the only demand signal is a buyer's resting
+           procurement bid, so it is honoured, but capped at a margin over
+           what the good costs to make. That admits the bootstrap bid
+           ``_buy_command`` rests for a cold-start intermediate, which is
+           priced off the same imputation, while a discovery probe far above
+           any production cost is not mistaken for demand. Refusing to value
+           this case at all would re-open the producer/consumer standoff (see
+           the decision log).
+        """
+        horizon = max(
+            MIN_OUTPUT_DEPTH_UNITS,
+            math.ceil(expected_quantity * OUTPUT_SALES_HORIZON_RUNS),
+        )
+        bid, _ = market.get_bid_ask_spread(commodity)
+
+        if bid is not None and market.get_30_day_average_volume(commodity) >= horizon:
+            return float(bid)
+
+        depth_price = market.get_bid_price_at_depth(commodity, horizon)
+        if depth_price is not None:
+            return float(depth_price)
+
+        if market.has_price_signal(commodity):
+            return market.get_30_day_average_price(commodity)
+
+        reference = (
+            float(bid) if bid is not None else float(market.get_avg_price(commodity))
+        )
+        imputed = self._imputed_unit_cost(
+            actor, market, commodity, 0, frozenset(), memo
+        )
+        if math.isinf(imputed):
+            return reference
+        return min(reference, imputed * NEVER_TRADED_VALUE_CAP)
 
     def _calculate_tool_willingness_to_pay(
         self, actor: "Actor", market: "Market", cache: Optional[BrainCache] = None

@@ -1,3 +1,4 @@
+import heapq
 import itertools
 import math
 import random
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
 # Anything that can place orders and trade. Ships use the same duck-typed
 # interface as actors: name, money, inventory, active_orders, reserved_money.
 MarketParticipant = Union[Actor, "Ship"]
+
 
 # Scarcity pressure is a per-commodity signal that rises each turn local buy
 # demand goes unfilled and decays when it is met. Buyers raise bids toward
@@ -82,6 +84,11 @@ class Order:
         """Generate a unique order ID if not provided."""
         if not self.order_id:
             self.order_id = str(next(_ORDER_ID_COUNTER))
+
+
+def _order_price(order: "Order") -> int:
+    """Sort key for order price; a module function beats a lambda on hot paths."""
+    return order.price
 
 
 @dataclass
@@ -836,6 +843,53 @@ class Market:
             cached.sort(key=lambda level: -level[0])
             self._bid_levels_cache[commodity_type] = cached
         return list(cached)
+
+    def get_bid_price_at_depth(
+        self, commodity_type: "CommodityDefinition", quantity: int
+    ) -> Optional[int]:
+        """Price of the bid level at which resting depth first covers ``quantity``.
+
+        The conservative price for selling ``quantity`` units into the book
+        right now: a seller sweeping that many units fills its last unit at
+        this level, so no unit is worth more than it. Returns ``None`` when
+        the resting bids cannot absorb ``quantity`` at all.
+
+        This is the depth-aware answer to ``get_bid_ask_spread``'s top of
+        book. A single one-unit probe far above fair value moves the top bid
+        but not this price, so planners that size their output against real
+        demand should ask here.
+
+        Brains call this every turn while the buy book is being rebuilt
+        around them, so it never sorts the whole book. Every order carries at
+        least one unit, so at most ``quantity`` orders can be needed and the
+        answer is a bounded partial selection, linear in book size. The
+        sorted levels are reused when ``get_bid_levels`` has already built
+        them for this book.
+        """
+        if quantity <= 0:
+            return None
+
+        levels = self._bid_levels_cache.get(commodity_type)
+        if levels is None:
+            levels = [
+                (o.price, o.quantity)
+                for o in heapq.nlargest(
+                    quantity,
+                    (
+                        o
+                        for o in self.buy_orders.get(commodity_type, ())
+                        if not o.cancelled
+                    ),
+                    key=_order_price,
+                )
+            ]
+
+        cumulative = 0
+        for price, level_quantity in levels:
+            cumulative += level_quantity
+            if cumulative >= quantity:
+                return price
+        return None
 
     def get_30_day_average_price(self, commodity_type: "CommodityDefinition") -> float:
         """Mean per-turn price over the last 30 turns; 10.0 with no history."""
