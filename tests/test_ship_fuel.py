@@ -729,3 +729,24 @@ def test_distress_is_not_blocked_by_a_plan_that_never_loads():
         ship.brain.decide_trade_actions()
 
     assert ship.brain.is_distressed
+
+
+# ---------------------------------------------------------------------------
+# is_stranded
+# ---------------------------------------------------------------------------
+
+
+def test_is_stranded_true_when_docked_out_of_fuel_and_no_ask():
+    sim, fuel, _food, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    ship = _make_ship(sim, a, fuel_units=0, name="Trader")
+
+    assert ship.brain.is_stranded()
+
+
+def test_is_stranded_false_once_fuel_exceeds_reserve():
+    sim, fuel, _food, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    ship = _make_ship(sim, a, fuel_units=0, name="Trader")
+    reserve = ship.brain._fuel_reserve_need()
+    ship.cargo.add_commodity(fuel, reserve + 5)
+
+    assert not ship.brain.is_stranded()

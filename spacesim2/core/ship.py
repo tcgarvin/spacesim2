@@ -366,6 +366,27 @@ class TraderBrain(ShipBrain):
             return 0
         return 2 * self.ship.fuel_required(nearest)
 
+    def is_stranded(self) -> bool:
+        """Whether this ship is docked, fuel-short, and has no local ask.
+
+        True when the ship is docked (not traveling), holds less fuel than
+        its round-trip reserve need, and its current planet has no live
+        nova_fuel ask to buy up from. Used by the KPI summary to count ships
+        at risk of being unable to leave.
+        """
+        planet = self.ship.planet
+        if planet is None or self.ship.destination is not None:
+            return False
+        fuel_commodity = self._fuel_commodity()
+        fuel_on_hand = (
+            self.ship.cargo.get_quantity(fuel_commodity)
+            if fuel_commodity is not None
+            else 0
+        )
+        if fuel_on_hand >= self._fuel_reserve_need():
+            return False
+        return not self._nav.fuel_purchasable_at(planet)
+
     def _fuel_sell_reserve(self) -> int:
         """Fuel units to withhold from any sale so the ship can still leave.
 

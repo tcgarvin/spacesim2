@@ -14,6 +14,7 @@ import statistics
 from typing import Dict, List, Sequence
 
 from spacesim2.core.actor import ActorType
+from spacesim2.core.navigation import get_navigator
 from spacesim2.core.ship import Ship
 from spacesim2.core.simulation import Simulation
 
@@ -87,6 +88,7 @@ def compute_summary(sim: Simulation) -> Dict[str, object]:
     prices = _summarize_prices(sim)
     markets = _summarize_markets(sim)
     trade = _summarize_trade(sim)
+    trade.update(_summarize_fleet_fuel(sim))
     summary: Dict[str, object] = {
         "turns": sim.current_turn,
         "planets": len(sim.planets),
@@ -284,6 +286,49 @@ def _summarize_trade(sim: Simulation) -> Dict[str, object]:
         "ship_delivered_units": delivered,
         "ship_delivered_total": sum(delivered.values()),
         "ship_share_of_volume": share,
+    }
+
+
+def _summarize_fleet_fuel(sim: Simulation) -> Dict[str, object]:
+    """Fleet fuel-access KPIs: where fuel can be bought, and who is stuck.
+
+    ``fuel_ask_planets`` counts planets with a live resting nova_fuel ask
+    right now, using the same test ship brains use to plan refueling.
+    ``stranded_ships`` counts docked ships below their round-trip fuel
+    reserve whose current planet has no such ask (see
+    ``TraderBrain.is_stranded``). ``service_fuel_stock`` and
+    ``industrialist_fuel_stock`` are nova_fuel held by SERVICE actors and by
+    IndustrialistBrain actors respectively, a coarse look at whether fuel is
+    piling up off the market instead of reaching ships.
+    """
+    navigator = get_navigator(sim)
+    navigator.refresh_market_facts(turn=sim.current_turn)
+
+    fuel_ask_planets = sum(
+        1 for planet in sim.planets if navigator.fuel_purchasable_at(planet)
+    )
+
+    stranded_ships = sum(1 for ship in sim.ships if ship.brain.is_stranded())
+    ship_count = len(sim.ships)
+    stranded_ship_share = round(stranded_ships / ship_count, 3) if ship_count else 0.0
+
+    fuel_commodity = sim.commodity_registry.get_commodity("nova_fuel")
+    service_fuel_stock = 0
+    industrialist_fuel_stock = 0
+    if fuel_commodity is not None:
+        for actor in sim.actors:
+            quantity = actor.inventory.get_quantity(fuel_commodity)
+            if actor.actor_type == ActorType.SERVICE:
+                service_fuel_stock += quantity
+            if type(actor.brain).__name__ == "IndustrialistBrain":
+                industrialist_fuel_stock += quantity
+
+    return {
+        "fuel_ask_planets": fuel_ask_planets,
+        "stranded_ships": stranded_ships,
+        "stranded_ship_share": stranded_ship_share,
+        "service_fuel_stock": service_fuel_stock,
+        "industrialist_fuel_stock": industrialist_fuel_stock,
     }
 
 

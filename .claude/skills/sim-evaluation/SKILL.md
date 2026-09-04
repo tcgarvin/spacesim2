@@ -48,6 +48,12 @@ section, and a `verdict`.
   the drive materials plus `nova_fuel`. Shares read from each market's capped
   transaction history, so on very busy markets they cover fewer turns than
   `window_turns`; `markets` volume is the authority on what is trading.
+  `trade` also carries fleet fuel KPIs: `fuel_ask_planets` is the number of
+  planets with a live resting nova_fuel ask right now; `stranded_ships` (and
+  `stranded_ship_share`) counts docked ships below their round-trip fuel
+  reserve with no local ask to buy up from; `service_fuel_stock` and
+  `industrialist_fuel_stock` are nova_fuel held by SERVICE actors and by
+  IndustrialistBrain actors, a coarse check for fuel piling up off-market.
 
 The verdict is a catastrophe floor, not a target: `PASS` means not obviously
 broken. It checks per-drive health floors, that the food market is alive, and
