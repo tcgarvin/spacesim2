@@ -72,8 +72,8 @@ it when planning for a specific ship so planning and consumption agree.
 | Constant | Value | Notes |
 |----------|-------|-------|
 | Base consumption | `ceil(distance/20)` | 1 fuel per 20 distance units |
-| Fuel capacity | 50 units | Maximum fuel a ship can carry |
-| Starting fuel | 30 units | Initial fuel for new ships |
+| Fuel capacity | `BASE_FUEL_CAPACITY` (50) or more | Scales with the galaxy, see below |
+| Starting fuel | `INITIAL_FUEL_FRACTION` (60%) of the tank | Initial fuel for new ships |
 | Fuel efficiency | 0.8-1.2 | Random multiplier per ship |
 | Maintenance cost | 5 fuel | `MAINTENANCE_CHANCE` (10%) per departure |
 | Travel time | `ceil(distance/20)` turns | Independent of fuel |
@@ -95,6 +95,51 @@ it when planning for a specific ship so planning and consumption agree.
 Standing fuel rescue bids are capped at the survival target for the same
 reason: a tank-sized bid reserves most of the ship's money while it rests
 unfilled.
+
+### Capital scaled to the galaxy
+
+Ships are launched by `Simulation._setup_ships` with money and a tank sized
+for the galaxy they will fly in, from `Navigator.mean_pair_distance()`:
+
+- `starting_capital(mean_distance, efficiency)`:
+  `SHIP_CAPITAL_ROUND_TRIPS` (3) average round trips of fuel plus their
+  expected maintenance, valued at `SHIP_CAPITAL_FUEL_PRICE_REFERENCE` (40
+  credits a unit, the price a five-planet galaxy was tuned at), marked up by
+  `SHIP_CAPITAL_RESERVE_FRACTION` for cargo, floored at `SHIP_CAPITAL_FLOOR`
+  (1000). A mean round trip burns about 5 fuel units at 5 planets and about
+  30 at 100, and every plan must fund round-trip fuel before a credit goes
+  to cargo, so a fixed 1000-credit purse grounded most of a 100-planet
+  fleet.
+- `fuel_capacity_for(mean_distance, efficiency)`: an average round trip plus
+  `FUEL_CAPACITY_ROUND_TRIP_HEADROOM`, never below `BASE_FUEL_CAPACITY`. The
+  p90 lane route at 100 planets needs about 66 units round trip; sizing to
+  that would fill most of the 100-unit hold with fuel, so long cross-galaxy
+  hauls stay out of reach by design.
+
+A `Ship` built directly, as tests do, keeps the constant defaults.
+
+### Distress: the exit from bankruptcy
+
+Bankruptcy used to be absorbing. `_pair_economics` needs cash for
+round-trip fuel, a refuel floor and maintenance before any cargo, and
+`_find_reposition_target` plans through the same gate, so a ship whose money
+fell below the floor could neither trade nor move, and had no income.
+
+Two things prevent that:
+
+- The refuel floor is charged only on the reserve the trip does not leave in
+  the tank. Fuel already aboard is not re-charged in cash, so a full-tank
+  ship is not priced out of every pair when fuel spikes.
+- After `DISTRESS_PATIENCE` (5) consecutive docked turns with no cargo, no
+  plan and less money than one short round trip of fuel,
+  `TraderBrain.is_distressed` turns on and `_sellable_quantity` lets the
+  ship sell tank fuel down to `_fuel_survival_target()` instead of holding a
+  full tank it cannot trade around. That converts parked working capital
+  into cash without touching any fuel-safety gate, and selling only to the
+  target keeps the next turn's top-up from re-buying what was just sold.
+  Distress clears as soon as the ship has cash again.
+  `TraderBrain._distress_entries` counts entries for analysis; a fleet-wide
+  rise means capital is mis-sized.
 
 ### Cargo before travel
 

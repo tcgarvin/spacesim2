@@ -192,6 +192,23 @@ class Navigator:
         others = self.planets_by_proximity(planet)
         return self.distance(planet, others[0]) if others else None
 
+    def mean_pair_distance(self) -> float:
+        """Mean shortest lane route over all distinct planet pairs.
+
+        The single number that says how big the galaxy is for a ship: fuel
+        burn, and so the capital a trade ties up, scales with it. Returns
+        0.0 for a galaxy with fewer than two planets.
+        """
+        planets = self._sim.planets
+        count = len(planets)
+        if count < 2:
+            return 0.0
+        self._indices(planets[0], planets[0])  # ensure the matrix is built
+        total = sum(
+            self._distances[i][j] for i in range(count) for j in range(i + 1, count)
+        )
+        return total / (count * (count - 1) / 2)
+
     def planets_by_proximity(self, planet: "Planet") -> List["Planet"]:
         """All other planets sorted nearest-first from ``planet``."""
         cached = self._by_proximity.get(planet)

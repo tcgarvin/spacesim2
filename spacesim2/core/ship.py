@@ -76,6 +76,39 @@ REPOSITION_ORIGIN_CANDIDATES = 12
 MAINTENANCE_CHANCE = 0.1
 MAINTENANCE_FUEL_UNITS = 5
 
+# Consecutive docked turns with no cargo, no plan and less cash than one
+# short round trip's fuel before a ship counts as distressed. A distressed
+# ship may liquidate the working capital parked in its tank, selling fuel
+# down to its survival target instead of holding a full tank it cannot
+# trade around. Below the survival target it would strand, so that is the
+# floor; selling only to the target also keeps the next turn's fuel top-up
+# from re-buying what was just sold.
+DISTRESS_PATIENCE = 5
+
+# Starting capital, scaled to galaxy geometry. Every trade plan must fund
+# round-trip fuel, a refuel floor and expected maintenance before a credit
+# goes to cargo, so a fixed purse silently grounds the fleet as lane routes
+# grow: at 100 planets a mean round trip burns roughly six times the fuel it
+# does at five. Capital is SHIP_CAPITAL_ROUND_TRIPS average round trips of
+# fuel at a reference price, plus a working-capital fraction for cargo.
+SHIP_CAPITAL_ROUND_TRIPS = 3
+# Credits per fuel unit assumed when sizing capital at setup, where no market
+# has traded yet. Calibrated so a five-planet galaxy reproduces the 1000
+# credits the economy was originally tuned with.
+SHIP_CAPITAL_FUEL_PRICE_REFERENCE = 40
+SHIP_CAPITAL_RESERVE_FRACTION = 0.25
+SHIP_CAPITAL_FLOOR = 1000
+
+# Tank size. The baseline holds a mean round trip with room to spare in
+# small galaxies; larger ones scale it so an average round trip still fits
+# with headroom. Sizing to the p90 route instead would fill most of the
+# 100-unit hold with fuel, so long cross-galaxy hauls stay out of reach by
+# design and ships trade their neighbourhood.
+BASE_FUEL_CAPACITY = 50
+FUEL_CAPACITY_ROUND_TRIP_HEADROOM = 1.5
+# Share of the tank a new ship is launched with.
+INITIAL_FUEL_FRACTION = 0.6
+
 
 @dataclass
 class TradePlan:
@@ -226,6 +259,13 @@ class TraderBrain(ShipBrain):
         # again in decide_travel the same turn; the memo answers the second
         # call without re-surveying the galaxy.
         self._plan_search_memo: Optional[tuple[int, Planet, Optional[TradePlan]]] = None
+        # Consecutive turns the ship has been docked, empty, planless and too
+        # poor to fund a short round trip. Past DISTRESS_PATIENCE the ship is
+        # distressed and may sell tank fuel down to its survival target.
+        self._distress_turns = 0
+        # How many times this ship has entered distress. Exposed for analysis;
+        # a rising count across the fleet means capital is mis-sized.
+        self._distress_entries = 0
 
     def _recent_flow_per_turn(
         self, market: "Market", commodity: CommodityDefinition
@@ -333,6 +373,44 @@ class TraderBrain(ShipBrain):
             max(2 * self._fuel_reserve_need(), self._fuel_sell_reserve()),
         )
 
+    @property
+    def is_distressed(self) -> bool:
+        """Whether the ship has been idle and cash-starved long enough to act.
+
+        See DISTRESS_PATIENCE. Distress only widens what the ship may sell;
+        it never relaxes a fuel-safety gate.
+        """
+        return self._distress_turns >= DISTRESS_PATIENCE
+
+    def _short_trip_cash_floor(self) -> int:
+        """Cash needed to fund the shortest round trip's fuel from here.
+
+        Priced at the local fuel market, ignoring the tank: a ship whose
+        whole purse is worth less than one short trip of fuel cannot fund a
+        trade even with a full tank, because cargo must be paid for too.
+        """
+        planet = self.ship.planet
+        fuel_commodity = self._fuel_commodity()
+        if planet is None or fuel_commodity is None:
+            return 0
+        _, ask = planet.market.get_bid_ask_spread(fuel_commodity)
+        price = (
+            ask if ask is not None else self._flow_value(planet.market, fuel_commodity)
+        )
+        if price is None or price <= 0:
+            reference = self._fuel_value_reference()
+            price = math.ceil(reference) if reference else FUEL_BID_FALLBACK_FLOOR
+        return self._fuel_reserve_need() * price
+
+    def _update_distress(self, idle_and_broke: bool) -> None:
+        """Advance or clear the distress counter for this docked turn."""
+        if not idle_and_broke:
+            self._distress_turns = 0
+            return
+        self._distress_turns += 1
+        if self._distress_turns == DISTRESS_PATIENCE:
+            self._distress_entries += 1
+
     def _fuel_value_reference(self) -> Optional[float]:
         """Cheapest believable fuel valuation anywhere in the galaxy.
 
@@ -399,7 +477,14 @@ class TraderBrain(ShipBrain):
             self._fuel_delivery_in_progress()
             or self._local_fuel_bid_is_scarcity_priced()
         ):
-            reserve = max(reserve, self.ship.fuel_capacity)
+            # A distressed ship's tank is the only capital it has left, so it
+            # may sell down to the survival target; see DISTRESS_PATIENCE.
+            floor = (
+                self._fuel_survival_target()
+                if self.is_distressed
+                else self.ship.fuel_capacity
+            )
+            reserve = max(reserve, floor)
         return max(0, quantity - reserve)
 
     def _place_flow_sell_orders(
@@ -676,7 +761,13 @@ class TraderBrain(ShipBrain):
         # re-buy the travel reserve after the trip, expected maintenance, and
         # a 10% operating buffer. A trade that disappoints must never leave
         # the ship both broke and dry; that is the stranding spiral.
-        refuel_floor = self._fuel_reserve_need() * fuel_price
+        # Only the reserve the trip does not leave in the tank has to be
+        # re-bought. Charging the whole reserve in cash on top of fuel the
+        # ship already holds is double counting, and it locked full-tank
+        # ships out of every pair whenever fuel prices spiked.
+        fuel_left_after_trip = max(current_fuel, fuel_round_trip) - fuel_round_trip
+        refuel_shortfall = max(0, self._fuel_reserve_need() - fuel_left_after_trip)
+        refuel_floor = refuel_shortfall * fuel_price
         money_for_trading = int(
             (self.ship.money - fuel_cost - refuel_floor - maintenance_cost) * 0.9
         )
@@ -995,6 +1086,23 @@ class TraderBrain(ShipBrain):
 
         actions = []
         self._selling_locally = False
+
+        # Distress bookkeeping, before anything reads is_distressed. A ship
+        # that is docked, empty of trade goods, planless and poorer than one
+        # short round trip of fuel is locked out of the planner: every pair
+        # fails the cash gate and there is no income without a sale. After
+        # DISTRESS_PATIENCE such turns it may sell tank fuel down to its
+        # survival target and trade its way back.
+        non_fuel_cargo = any(
+            self.ship.cargo.get_quantity(c) > 0
+            for c in self._get_tradeable_commodities()
+            if c.id != "nova_fuel"
+        )
+        self._update_distress(
+            self._current_plan is None
+            and not non_fuel_cargo
+            and self.ship.money < self._short_trip_cash_floor()
+        )
 
         # Fuel below the travel reserve is not trade cargo; see
         # _sellable_quantity.
@@ -1690,3 +1798,46 @@ class Ship:
             destination = self.brain.decide_travel()
             if destination:
                 self.start_journey(destination)
+
+
+def mean_round_trip_fuel(mean_pair_distance: float, fuel_efficiency: float) -> int:
+    """Fuel a ship of ``fuel_efficiency`` burns on an average round trip.
+
+    ``mean_pair_distance`` is the mean shortest lane route between planets,
+    from :meth:`Navigator.mean_pair_distance`.
+    """
+    one_way = math.ceil(
+        Ship.calculate_fuel_needed(mean_pair_distance) / fuel_efficiency
+    )
+    return 2 * one_way
+
+
+def starting_capital(mean_pair_distance: float, fuel_efficiency: float) -> int:
+    """Starting money for a ship launched into a galaxy of this size.
+
+    Sized as SHIP_CAPITAL_ROUND_TRIPS average round trips of fuel plus the
+    maintenance those trips expect, valued at
+    SHIP_CAPITAL_FUEL_PRICE_REFERENCE, marked up by a working-capital
+    fraction for cargo, and floored at the small-galaxy baseline.
+    """
+    fuel_units = mean_round_trip_fuel(mean_pair_distance, fuel_efficiency) + (
+        2 * MAINTENANCE_CHANCE * MAINTENANCE_FUEL_UNITS
+    )
+    budget = (
+        SHIP_CAPITAL_ROUND_TRIPS
+        * fuel_units
+        * SHIP_CAPITAL_FUEL_PRICE_REFERENCE
+        * (1.0 + SHIP_CAPITAL_RESERVE_FRACTION)
+    )
+    return max(SHIP_CAPITAL_FLOOR, int(budget))
+
+
+def fuel_capacity_for(mean_pair_distance: float, fuel_efficiency: float) -> int:
+    """Tank size for a galaxy of this size, never below the baseline."""
+    return max(
+        BASE_FUEL_CAPACITY,
+        math.ceil(
+            FUEL_CAPACITY_ROUND_TRIP_HEADROOM
+            * mean_round_trip_fuel(mean_pair_distance, fuel_efficiency)
+        ),
+    )

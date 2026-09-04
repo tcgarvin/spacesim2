@@ -22,10 +22,16 @@ from spacesim2.core.galaxy import (
     generate_spiral_layout,
 )
 from spacesim2.core.market import Market
+from spacesim2.core.navigation import get_navigator
 from spacesim2.core.planet import Planet
 from spacesim2.core.planet_attributes import PlanetAttributes
 from spacesim2.core.process import ProcessRegistry
-from spacesim2.core.ship import Ship
+from spacesim2.core.ship import (
+    INITIAL_FUEL_FRACTION,
+    Ship,
+    fuel_capacity_for,
+    starting_capital,
+)
 from spacesim2.core.skill import SkillsRegistry
 
 if TYPE_CHECKING:
@@ -443,21 +449,32 @@ class Simulation:
 
         total_ships = num_ships * len(self.planets)
 
+        # Capital and tank scale with the galaxy: a trade in a 100-planet
+        # galaxy burns roughly six times the fuel of one in a five-planet
+        # galaxy, and a ship that cannot fund round-trip fuel is locked out
+        # of the planner entirely. Geometry is fixed after setup, so this is
+        # computed once.
+        mean_distance = get_navigator(self).mean_pair_distance()
+
         for i in range(total_ships):
             efficiency = random.uniform(0.8, 1.2)
 
             planet = random.choice(self.planets)
 
+            fuel_capacity = fuel_capacity_for(mean_distance, efficiency)
             ship = Ship(
                 name=f"Trader-{i + 1}",
                 simulation=self,
                 planet=planet,
+                fuel_capacity=fuel_capacity,
                 fuel_efficiency=efficiency,
-                initial_money=1000,
+                initial_money=starting_capital(mean_distance, efficiency),
             )
 
             nova_fuel = self.commodity_registry["nova_fuel"]
-            ship.cargo.add_commodity(nova_fuel, 30)
+            ship.cargo.add_commodity(
+                nova_fuel, int(fuel_capacity * INITIAL_FUEL_FRACTION)
+            )
 
             self.ships.append(ship)
             planet.add_ship(ship)

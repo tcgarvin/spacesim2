@@ -13,13 +13,22 @@ perf levers live in `docs/performance.md`.
   tank overflow above fuel_capacity, so deliverers fill the tank plus the plan
   quantity before departing.
 
-## Medicine / health-drive variance
+## Medicine / upper tier (post 2026-09-03 fixes)
 
-High run-to-run variance on health (one 800-turn run landed at 0.148 with
-medicine spiking to 139 and stockpiling). Likely lever: widen the gap between
-medicine's cost floor and the ~40 consumer WTP so it distributes instead of
-stockpiling. Scoring probe: `notebooks/chem_score_probe.py`
-(`uv run python notebooks/chem_score_probe.py`, ~70s).
+The WTP ceiling and phantom-bid entry are fixed (`FoodDrive.security`,
+`_output_unit_value`). Left open:
+
+- Producers still outrun consumption: fewer, more capable medicine makers
+  keep stock growing. Entry scoring is inventory-blind; a producer sitting on
+  unsold output still scores positive when the depth price covers cost. A
+  stock-aware discount on output value is the next lever.
+- `ship_supplies` has no consumer. Ships buy maintenance goods only when
+  already stranded, and the `nova_fuel` maintenance tier always succeeds, so
+  the tier is never reached. Give ships a standing supplies buffer.
+- nova_fuel clears at 58-287 for ships while they resell at ~50. Probe the
+  refiner side: is the t50-150 spike a supply gap?
+- Tier 3 goods (electronics, computers, ship parts, prefab housing,
+  advanced medicine) still barely appear by turn 600.
 
 ## Dev-loop improvements (from the retired roadmap)
 
