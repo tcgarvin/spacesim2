@@ -43,6 +43,26 @@ EXIT_CHECK_INTERVAL = 10
 # cost we do, so a lower bid never triggers supplier entry and the cold-start
 # standoff moves one tier up the chain.
 PROCUREMENT_BOOTSTRAP_MARGIN = 1.25
+# Gate for paying that premium on a good that HAS traded before. Once a good
+# has any trade history the bid would otherwise rest at the stale average,
+# which can sit below every potential supplier's entry threshold, so the tier
+# stays dead even though the average says a price exists. The premium is
+# applied again only where the market itself says the good is unobtainable:
+# no resting ask, chronic unmet demand, and essentially no recent turnover.
+# Applying it unconditionally also unblocks the chain but bids up goods that
+# have real supply, so it is inflationary; these gates confine it to a
+# genuinely stalled market.
+PROCUREMENT_STALL_PRESSURE = 1.0
+PROCUREMENT_STALL_VOLUME = 0.5
+# A chosen recipe that cannot execute for this many consecutive turns, with no
+# change in the inventory of anything it needs, is unreachable rather than
+# merely slow: the actor is doing government work every turn while holding a
+# line it can never run. Procuring inputs or building a facility both move
+# inventory, so neither is mistaken for being stuck.
+RECIPE_STUCK_TURNS = 20
+# Turns a recipe abandoned that way is excluded from re-selection, so the
+# actor does not immediately re-pick it from the same ranking.
+RECIPE_COOLDOWN_TURNS = 50
 # Runs of output a recipe must be able to sell into the resting book before
 # its top-of-book bid is believed. Market makers seed illiquid goods with
 # one-unit probes an order of magnitude above fair value; at a horizon of one
@@ -69,6 +89,12 @@ class IndustrialistBrain(ActorBrain):
         self.facility_amortization_horizon: int = random.randint(
             FACILITY_HORIZON_MIN, FACILITY_HORIZON_MAX
         )
+        # Consecutive turns the chosen recipe could not run with no change in
+        # what it needs. See _update_stuck_tracking.
+        self.stuck_turns: int = 0
+        self.stuck_signature: Optional[tuple[tuple[str, int], ...]] = None
+        # process id -> turn the recipe becomes selectable again.
+        self.recipe_cooldown_until: Dict[str, int] = {}
 
     def decide_economic_action(self, actor: "Actor") -> Optional[EconomicCommand]:
         """Decide which economic action to take this turn."""
@@ -78,7 +104,7 @@ class IndustrialistBrain(ActorBrain):
         # 1% chance per turn to re-evaluate the recipe.
         self.turns_since_recipe_evaluation += 1
         if self._should_reevaluate_recipe():
-            self.chosen_recipe_id = self._select_new_recipe(actor, cache)
+            self._adopt_recipe(self._select_new_recipe(actor, cache))
             self.turns_since_recipe_evaluation = 0
         elif (
             self.chosen_recipe_id
@@ -98,11 +124,18 @@ class IndustrialistBrain(ActorBrain):
                     require_entry_margin=False,
                 )
                 if score <= 0:
-                    self.chosen_recipe_id = None
+                    self._adopt_recipe(None)
             self.turns_since_recipe_evaluation = 0
 
+        # Drop a line that cannot be run at all, not just one that is
+        # unprofitable: the exit check above only fires on a negative score,
+        # so a recipe scoring well but permanently missing an input is held
+        # forever while the actor falls through to government work.
+        if self.chosen_recipe_id:
+            self._update_stuck_tracking(actor)
+
         if not self.chosen_recipe_id:
-            self.chosen_recipe_id = self._select_new_recipe(actor, cache)
+            self._adopt_recipe(self._select_new_recipe(actor, cache))
             self.turns_since_recipe_evaluation = 0
 
         registry = actor.sim.commodity_registry
@@ -193,6 +226,82 @@ class IndustrialistBrain(ActorBrain):
         """1% chance per turn to re-evaluate the recipe choice."""
         return random.random() < 0.01
 
+    def _adopt_recipe(self, recipe_id: Optional[str]) -> None:
+        """Switch to ``recipe_id`` and reset the stuck tracker."""
+        self.chosen_recipe_id = recipe_id
+        self.stuck_turns = 0
+        self.stuck_signature = None
+
+    def _requirement_signature(
+        self, actor: "Actor", process: "ProcessDefinition"
+    ) -> tuple[tuple[str, int], ...]:
+        """Inventory of everything ``process`` needs, including a facility build.
+
+        The signature is the progress measure for the stuck check. It covers
+        the recipe's own inputs, tools and facilities, plus the inputs and
+        tools of the build process for any facility the actor still lacks, so
+        an actor slowly assembling bricks for a chemistry lab reads as making
+        progress rather than as stuck.
+        """
+        requirements = list(process.requirements)
+        for facility in process.facilities_required:
+            if actor.inventory.has_quantity(facility, 1):
+                continue
+            build_process_id = self._get_build_process_for_facility(facility)
+            if not build_process_id:
+                continue
+            build_process = actor.sim.process_registry.get_process(build_process_id)
+            if build_process:
+                requirements.extend(build_process.requirements)
+        get_quantity = actor.inventory.get_quantity
+        return tuple(sorted({(c.id, get_quantity(c)) for c, _ in requirements}))
+
+    def _update_stuck_tracking(self, actor: "Actor") -> None:
+        """Abandon the chosen recipe if it has been unrunnable and static.
+
+        Clears ``chosen_recipe_id`` and puts the recipe on cooldown once it
+        has failed ``can_execute`` for ``RECIPE_STUCK_TURNS`` consecutive
+        turns without the inventory of anything it needs moving.
+        """
+        if self.chosen_recipe_id is None:
+            return
+        process = actor.sim.process_registry.get_process(self.chosen_recipe_id)
+        if not process:
+            self._adopt_recipe(None)
+            return
+
+        if actor.can_execute(process):
+            self.stuck_turns = 0
+            self.stuck_signature = None
+            return
+
+        signature = self._requirement_signature(actor, process)
+        if signature != self.stuck_signature:
+            self.stuck_signature = signature
+            self.stuck_turns = 0
+            return
+
+        self.stuck_turns += 1
+        if self.stuck_turns >= RECIPE_STUCK_TURNS:
+            self.recipe_cooldown_until[process.id] = (
+                actor.sim.current_turn + RECIPE_COOLDOWN_TURNS
+            )
+            self._adopt_recipe(None)
+
+    def _recipes_on_cooldown(self, actor: "Actor") -> set[str]:
+        """Recipe ids still excluded after being abandoned as unrunnable."""
+        if not self.recipe_cooldown_until:
+            return set()
+        current_turn = actor.sim.current_turn
+        expired = [
+            pid
+            for pid, until in self.recipe_cooldown_until.items()
+            if until <= current_turn
+        ]
+        for pid in expired:
+            del self.recipe_cooldown_until[pid]
+        return set(self.recipe_cooldown_until)
+
     def _select_new_recipe(
         self, actor: "Actor", cache: Optional[BrainCache] = None
     ) -> Optional[str]:
@@ -211,7 +320,10 @@ class IndustrialistBrain(ActorBrain):
         # actor-turn. Imputed unit costs depend only on fixed market state
         # and this actor's facility ownership and horizon.
         memo: Dict[str, float] = cache.imputed_cost if cache is not None else {}
+        on_cooldown = self._recipes_on_cooldown(actor)
         for process in actor.sim.process_registry.all_processes():
+            if process.id in on_cooldown:
+                continue
             score = self._calculate_recipe_score(actor, market, process, memo)
             if score > 0:
                 recipe_scores.append((process.id, score))
@@ -421,6 +533,18 @@ class IndustrialistBrain(ActorBrain):
         elif market.has_price_signal(commodity):
             # A real trade price exists, possibly stale. Anchor to it.
             price = market.get_avg_price(commodity)
+            if self._market_is_stalled(market, commodity):
+                # The good has traded, but not lately, nothing is offered, and
+                # demand has gone chronically unmet: the average is a fossil.
+                # A bid resting at it leaves every supplier's 1.2x entry
+                # threshold uncleared -- suppliers impute this good's cost from
+                # the same average -- so the tier stays dead at a price that
+                # looks live. Escalate by the same bootstrap margin a
+                # never-traded input gets. (Imputation is not consulted: with a
+                # price signal and no ask it resolves to this average anyway.)
+                # Gated rather than unconditional, because applied to goods
+                # that do have supply this only bids prices up.
+                price = math.ceil(price * PROCUREMENT_BOOTSTRAP_MARGIN)
         else:
             # Never-traded good: get_avg_price would return its fabricated
             # default of 10, which sits below a rational seller's
@@ -449,6 +573,20 @@ class IndustrialistBrain(ActorBrain):
         if affordable <= 0:
             return []
         return [PlaceBuyOrderCommand(commodity, affordable, price)]
+
+    @staticmethod
+    def _market_is_stalled(market: "Market", commodity: "CommodityDefinition") -> bool:
+        """Whether a good with trade history has become unobtainable here.
+
+        Callers have already established there is no resting ask. Stalled
+        means demand for it has gone chronically unmet and recent turnover has
+        stopped, which together separate a dead tier from a good that is
+        merely momentarily unoffered.
+        """
+        return (
+            market.scarcity_pressure_for(commodity) >= PROCUREMENT_STALL_PRESSURE
+            and market.get_30_day_average_volume(commodity) < PROCUREMENT_STALL_VOLUME
+        )
 
     def _sell_command(
         self,

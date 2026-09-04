@@ -4,7 +4,11 @@ import pytest
 
 from spacesim2.core.actor import Actor, ActorType
 from spacesim2.core.actor_brain import GOVERNMENT_WAGE, ActorBrain
-from spacesim2.core.brains.industrialist import IndustrialistBrain
+from spacesim2.core.brains.industrialist import (
+    RECIPE_COOLDOWN_TURNS,
+    RECIPE_STUCK_TURNS,
+    IndustrialistBrain,
+)
 from spacesim2.core.commands import (
     GovernmentWorkCommand,
     PlaceBuyOrderCommand,
@@ -499,11 +503,79 @@ class TestImputedProcurementBids:
         market.get_bid_ask_spread.return_value = (None, None)
         market.has_price_signal.return_value = True
         market.get_avg_price.return_value = 12
+        # A healthy market: demand is being met and the good still turns over.
+        market.scarcity_pressure_for.return_value = 0.0
+        market.get_30_day_average_volume.return_value = 5.0
 
         commands = brain._buy_command(actor, market, refined, 1)
 
         assert len(commands) == 1
         assert commands[0].price == 12
+
+    def test_stalled_traded_input_gets_the_bootstrap_premium(self, brain):
+        """A traded good with no ask, unmet demand and no turnover is bid up.
+
+        The stale average (11) sits below every supplier's 1.2x entry
+        threshold, because suppliers cost the good off the same average. The
+        bid escalates by the bootstrap margin: ceil(11 * 1.25) = 14.
+        """
+        actor = self._actor(money=1000)
+        refined = self._commodity("refined_chemicals")
+
+        market = Mock()
+        market.sell_orders = {}
+        market.get_bid_ask_spread.return_value = (None, None)
+        market.has_price_signal.return_value = True
+        market.get_avg_price.return_value = 11
+        market.scarcity_pressure_for.return_value = 3.0
+        market.get_30_day_average_volume.return_value = 0.0
+
+        commands = brain._buy_command(actor, market, refined, 1)
+
+        assert len(commands) == 1
+        assert commands[0].price == 14
+
+    def test_stalled_premium_needs_both_scarcity_and_no_turnover(self, brain):
+        """Scarcity pressure alone, with the good still trading, is not enough.
+
+        The premium is inflationary where supply exists, so a good that still
+        turns over keeps its average-anchored bid.
+        """
+        actor = self._actor(money=1000)
+        refined = self._commodity("refined_chemicals")
+
+        market = Mock()
+        market.sell_orders = {}
+        market.get_bid_ask_spread.return_value = (None, None)
+        market.has_price_signal.return_value = True
+        market.get_avg_price.return_value = 11
+        market.scarcity_pressure_for.return_value = 3.0
+        market.get_30_day_average_volume.return_value = 4.0
+
+        commands = brain._buy_command(actor, market, refined, 1)
+
+        assert len(commands) == 1
+        assert commands[0].price == 11
+
+    def test_stalled_premium_does_not_apply_when_an_ask_rests(self, brain):
+        """A resting ask is still lifted, however starved the market looks."""
+        actor = self._actor(money=1000)
+        refined = self._commodity("refined_chemicals")
+
+        ask_order = Mock()
+        ask_order.price = 8
+        ask_order.actor = "someone_else"
+        ask_order.timestamp = 0
+        ask_order.cancelled = False
+
+        market = Mock()
+        market.sell_orders = {refined: [ask_order]}
+        market.scarcity_pressure_for.return_value = 3.0
+        market.get_30_day_average_volume.return_value = 0.0
+
+        commands = brain._buy_command(actor, market, refined, 1)
+
+        assert commands[0].price == 8
 
     def test_imputation_falls_through_when_no_price_signal(self, brain):
         """_imputed_unit_cost recurses into the recipe when there is no price signal."""
@@ -843,3 +915,147 @@ class TestBidDepthPricing:
         market.cancel_order(deep_order.order_id)
 
         assert market.get_bid_price_at_depth(commodity, 3) is None
+
+
+class TestStuckRecipeAbandonment:
+    """An industrialist drops a recipe it can never run.
+
+    The exit check only fires on a negative score, so a recipe that scores
+    well but is permanently missing an input was held forever while the actor
+    fell through to government work every turn.
+    """
+
+    @pytest.fixture
+    def brain(self):
+        return IndustrialistBrain()
+
+    @staticmethod
+    def _commodity(cid):
+        c = Mock(spec=CommodityDefinition)
+        c.id = cid
+        c.transportable = True
+        return c
+
+    def _actor(self, quantities, facilities=()):
+        """Actor whose inventory holds ``quantities`` (commodity id -> units)."""
+        actor = Mock(spec=Actor)
+        actor.name = "TestIndustrialist"
+        actor.actor_type = ActorType.REGULAR
+        actor.money = 1000
+        actor.planet = Mock()
+        actor.sim = Mock()
+        actor.sim.current_turn = 100
+        _wire_producer_index(actor.sim)
+        actor.inventory = Mock(spec=Inventory)
+        actor.inventory.get_quantity.side_effect = lambda c: quantities.get(c.id, 0)
+        actor.inventory.has_quantity.side_effect = (
+            lambda c, q=1: quantities.get(c.id, 0) >= q
+        )
+        actor.can_execute.side_effect = lambda p: all(
+            quantities.get(c.id, 0) >= q for c, q in p.requirements
+        )
+        return actor
+
+    def _process(self, pid, inputs, facilities=()):
+        process = Mock(spec=ProcessDefinition)
+        process.id = pid
+        process.inputs = dict(inputs)
+        process.outputs = {}
+        process.tools_required = []
+        process.facilities_required = list(facilities)
+        process.resource_attribute = None
+        process.requirements = [(c, q) for c, q in inputs.items()] + [
+            (f, 1) for f in facilities
+        ]
+        return process
+
+    def test_unrunnable_static_recipe_is_abandoned_and_cooled_down(self, brain):
+        chem = self._commodity("chemicals")
+        quantities = {}
+        actor = self._actor(quantities)
+        process = self._process("make_medicine", {chem: 3})
+        actor.sim.process_registry.get_process.return_value = process
+
+        brain.chosen_recipe_id = "make_medicine"
+        for _ in range(RECIPE_STUCK_TURNS):
+            brain._update_stuck_tracking(actor)
+            assert brain.chosen_recipe_id == "make_medicine"
+
+        brain._update_stuck_tracking(actor)
+
+        assert brain.chosen_recipe_id is None
+        assert brain.recipe_cooldown_until["make_medicine"] == (
+            actor.sim.current_turn + RECIPE_COOLDOWN_TURNS
+        )
+
+    def test_procurement_progress_resets_the_stuck_counter(self, brain):
+        chem = self._commodity("chemicals")
+        quantities = {}
+        actor = self._actor(quantities)
+        process = self._process("make_medicine", {chem: 3})
+        actor.sim.process_registry.get_process.return_value = process
+
+        brain.chosen_recipe_id = "make_medicine"
+        for turn in range(RECIPE_STUCK_TURNS * 3):
+            # One unit trickles in every 10 turns: slow, but not stuck.
+            if turn % 10 == 9:
+                quantities["chemicals"] = quantities.get("chemicals", 0) + 1
+            brain._update_stuck_tracking(actor)
+
+        assert brain.chosen_recipe_id == "make_medicine"
+        assert brain.recipe_cooldown_until == {}
+
+    def test_facility_build_progress_is_not_stuck(self, brain):
+        """Assembling a facility's build inputs counts as progress."""
+        lab = self._commodity("chemistry_lab")
+        lab.transportable = False
+        bricks = self._commodity("simple_building_materials")
+        quantities = {}
+        actor = self._actor(quantities)
+        process = self._process("make_medicine", {}, facilities=[lab])
+        build = self._process("build_chemistry_lab", {bricks: 20})
+
+        def get_process(pid):
+            return {"make_medicine": process, "build_chemistry_lab": build}[pid]
+
+        actor.sim.process_registry.get_process.side_effect = get_process
+        actor.sim.process_registry.all_processes.return_value = [process, build]
+        _wire_producer_index(actor.sim)
+
+        brain.chosen_recipe_id = "make_medicine"
+        for turn in range(RECIPE_STUCK_TURNS * 2):
+            if turn % 5 == 4:
+                quantities["simple_building_materials"] = (
+                    quantities.get("simple_building_materials", 0) + 1
+                )
+            brain._update_stuck_tracking(actor)
+
+        assert brain.chosen_recipe_id == "make_medicine"
+
+    def test_runnable_recipe_is_never_stuck(self, brain):
+        chem = self._commodity("chemicals")
+        actor = self._actor({"chemicals": 5})
+        process = self._process("make_medicine", {chem: 3})
+        actor.sim.process_registry.get_process.return_value = process
+
+        brain.chosen_recipe_id = "make_medicine"
+        for _ in range(RECIPE_STUCK_TURNS * 2):
+            brain._update_stuck_tracking(actor)
+
+        assert brain.chosen_recipe_id == "make_medicine"
+        assert brain.stuck_turns == 0
+
+    def test_cooled_down_recipe_is_excluded_then_selectable_again(self, brain):
+        chem = self._commodity("chemicals")
+        actor = self._actor({})
+        process = self._process("make_medicine", {chem: 3})
+        actor.sim.process_registry.all_processes.return_value = [process]
+        actor.sim.process_registry.get_process.return_value = process
+
+        brain.recipe_cooldown_until["make_medicine"] = actor.sim.current_turn + 10
+        assert brain._recipes_on_cooldown(actor) == {"make_medicine"}
+        assert brain._select_new_recipe(actor) is None
+
+        actor.sim.current_turn += 20
+        assert brain._recipes_on_cooldown(actor) == set()
+        assert brain.recipe_cooldown_until == {}
