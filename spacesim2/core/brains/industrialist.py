@@ -78,6 +78,15 @@ MIN_OUTPUT_DEPTH_UNITS = 3
 # rests to bootstrap a cold-start intermediate would be capped below itself
 # and no supplier would ever enter.
 NEVER_TRADED_VALUE_CAP = 1.5
+# Working buffer the liquidation sweep retains for goods not backed by a
+# drive. Mirrors ColonistBrain.NON_DRIVE_KEEP_LEVELS: an industrialist also
+# falls back on make_clothing and make_simple_tools for its own needs, which
+# consume these. Drive goods derive their keep level from target_units.
+NON_DRIVE_KEEP_LEVELS = {
+    "simple_tools": 2,
+    "wood": 2,
+    "common_metal": 2,
+}
 
 
 class IndustrialistBrain(ActorBrain):
@@ -220,7 +229,87 @@ class IndustrialistBrain(ActorBrain):
             recipe_commands = self._get_recipe_trading_commands(actor, market, cache)
             commands.extend(recipe_commands)
 
+        # Everything else the actor is sitting on. Recipes are abandoned on
+        # loss or when they get stuck, and the stock produced under the old
+        # line would otherwise never be listed again: the recipe sweep only
+        # offers the outputs of the CURRENT recipe. Without this the goods
+        # pile up in producer inventories and the market shows no ask.
+        commands.extend(self._liquidation_commands(actor, market, cache))
+
         return commands
+
+    def _liquidation_commands(
+        self, actor: "Actor", market: "Market", cache: Optional[BrainCache] = None
+    ) -> List[MarketCommand]:
+        """Offer held goods the actor has no remaining use for.
+
+        Runs every turn, with or without a chosen recipe. Retained are the
+        current recipe's inputs, tools and facility build materials, personal
+        drive stock up to each drive's target, and the small working buffer in
+        ``NON_DRIVE_KEEP_LEVELS``. The current recipe's outputs are skipped
+        because ``_get_recipe_trading_commands`` already offers them, and two
+        sell orders for one commodity in one turn would double-count the
+        inventory.
+        """
+        reserved = self._reserved_commodity_ids(actor)
+        keep_levels = self._keep_levels_by_commodity(actor)
+        commands: List[MarketCommand] = []
+        for commodity in actor.sim.commodity_registry.all_commodities():
+            if not commodity.transportable or commodity.id in reserved:
+                continue
+            keep = keep_levels.get(commodity.id, 0)
+            available = actor.inventory.get_available_quantity(commodity)
+            if available <= keep:
+                continue
+            commands.extend(
+                self._sell_at_or_above_cost(
+                    actor, market, commodity, available - keep, cache
+                )
+            )
+        return commands
+
+    def _reserved_commodity_ids(self, actor: "Actor") -> set[str]:
+        """Commodity ids the liquidation sweep must not offer.
+
+        The chosen recipe's inputs, tools and outputs, plus the inputs and
+        tools of the build process for any facility it still needs, so an
+        actor assembling a facility does not sell the bricks it is collecting.
+        """
+        if self.chosen_recipe_id is None:
+            return set()
+        process = actor.sim.process_registry.get_process(self.chosen_recipe_id)
+        if not process:
+            return set()
+
+        reserved = {commodity.id for commodity, _ in process.requirements}
+        reserved.update(commodity.id for commodity in process.outputs)
+        for facility in process.facilities_required:
+            if actor.inventory.has_quantity(facility, 1):
+                continue
+            build_process_id = self._get_build_process_for_facility(facility)
+            if not build_process_id:
+                continue
+            build_process = actor.sim.process_registry.get_process(build_process_id)
+            if not build_process:
+                continue
+            reserved.update(commodity.id for commodity, _ in build_process.requirements)
+        return reserved
+
+    def _keep_levels_by_commodity(self, actor: "Actor") -> Dict[str, int]:
+        """Inventory to retain per commodity id before offering the surplus.
+
+        Drive materials are kept to the drive's target; the rest fall back to
+        ``NON_DRIVE_KEEP_LEVELS``. First drive listing a material wins, which
+        matches the colonist sweep.
+        """
+        levels: Dict[str, int] = {}
+        for drive in actor.drives:
+            target = drive.target_units()
+            for material in drive.materials():
+                levels.setdefault(material.id, target)
+        for commodity_id, keep in NON_DRIVE_KEEP_LEVELS.items():
+            levels.setdefault(commodity_id, keep)
+        return levels
 
     def _should_reevaluate_recipe(self) -> bool:
         """1% chance per turn to re-evaluate the recipe choice."""

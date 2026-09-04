@@ -16,7 +16,13 @@ from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
 from spacesim2.core.galaxy import StarLaneNetwork
 from spacesim2.core.market import Market
 from spacesim2.core.planet import Planet
-from spacesim2.core.ship import FUEL_BID_MARGIN, Ship, TradePlan
+from spacesim2.core.ship import (
+    ACCUMULATION_PATIENCE,
+    DISTRESS_PATIENCE,
+    FUEL_BID_MARGIN,
+    Ship,
+    TradePlan,
+)
 
 
 def _make_world(planet_specs):
@@ -572,3 +578,154 @@ def test_survival_reposition_leaves_fuel_desert():
     )
     ship.brain._nav.refresh_market_facts()
     assert ship.brain.decide_travel() is None
+
+
+# ---------------------------------------------------------------------------
+# Fuel availability is a live ask, not a memory of one
+# ---------------------------------------------------------------------------
+
+
+def _drain_fuel_ask(planet, fuel, supplier, buyer, quantity=20, price=10):
+    """Trade ``quantity`` fuel at ``planet`` so volume is recorded and the ask goes."""
+    planet.market.place_sell_order(supplier, fuel, quantity, price)
+    planet.market.place_buy_order(buyer, fuel, quantity, price)
+    planet.market.match_orders()
+
+
+def test_fuel_not_purchasable_on_recent_volume_without_a_resting_ask():
+    sim, fuel, _, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    supplier = _make_ship(sim, a, fuel_units=200, name="Supplier")
+    buyer = _make_ship(sim, a, money=5000, name="Buyer")
+    nav = _make_ship(sim, b, name="Observer").brain._nav
+
+    _drain_fuel_ask(a, fuel, supplier, buyer)
+    nav.refresh_market_facts()
+
+    # The trade that shows in the volume window is the one that emptied the
+    # book, so it says nothing about what an arriving ship could buy.
+    assert a.market.get_bid_ask_spread(fuel)[1] is None
+    assert nav.fuel_traded_recently(a)
+    assert not nav.fuel_purchasable_at(a)
+
+    # A live ask restores purchasability.
+    a.market.place_sell_order(supplier, fuel, 5, 10)
+    nav.refresh_market_facts()
+    assert nav.fuel_purchasable_at(a)
+
+
+def test_fuel_ask_depth_counts_resting_sell_quantity():
+    sim, fuel, _, (a, _) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    supplier = _make_ship(sim, a, fuel_units=200, name="Supplier")
+    nav = supplier.brain._nav
+
+    assert nav.fuel_ask_depth_at(a) == 0
+    a.market.place_sell_order(supplier, fuel, 3, 10)
+    a.market.place_sell_order(supplier, fuel, 4, 12)
+    nav.refresh_market_facts()
+    assert nav.fuel_ask_depth_at(a) == 7
+
+
+def test_fuel_safe_destination_requires_enough_ask_depth_to_leave_again():
+    sim, fuel, _, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    supplier_a = _make_ship(sim, a, fuel_units=200, name="SupplierA")
+    supplier_b = _make_ship(sim, b, fuel_units=200, name="SupplierB")
+    ship = _make_ship(sim, a, name="Trader")
+    escape_cost = ship.fuel_required(ship.route_distance(a, b))
+    assert escape_cost == 5
+
+    # A sells fuel, so leaving B again costs escape_cost. B's ask is a
+    # single unit: a ship arriving dry could never buy its way out.
+    a.market.place_sell_order(supplier_a, fuel, 50, 10)
+    b.market.place_sell_order(supplier_b, fuel, 1, 10)
+    ship.brain._nav.refresh_market_facts()
+    assert not ship.brain._fuel_safe_destination(b, a, 0)
+    assert not ship.brain._fuel_safe_destination(b, a, escape_cost - 2)
+
+    # A shortfall the local book can actually cover is fine: one unit short
+    # of the escape leg is one unit this market can sell.
+    assert ship.brain._fuel_safe_destination(b, a, escape_cost - 1)
+
+    # Arriving with the escape leg still aboard needs no local depth.
+    assert ship.brain._fuel_safe_destination(b, a, escape_cost)
+
+    # Enough depth to cover the whole shortfall makes B safe when dry.
+    b.market.place_sell_order(supplier_b, fuel, escape_cost, 10)
+    ship.brain._nav.refresh_market_facts()
+    assert ship.brain._fuel_safe_destination(b, a, 0)
+
+
+# ---------------------------------------------------------------------------
+# Fuel upkeep runs whatever the plan state
+# ---------------------------------------------------------------------------
+
+
+def _accumulating_plan(ship, origin, destination, commodity, quantity=10):
+    """Adopt a fresh, unloaded plan on ``ship`` as decide_trade_actions would."""
+    distance = ship.route_distance(origin, destination)
+    plan = TradePlan(
+        origin=origin,
+        destination=destination,
+        commodity=commodity,
+        quantity=quantity,
+        purchase_price_per_unit=10,
+        expected_sell_price_per_unit=30,
+        distance=distance,
+        fuel_needed_one_way=ship.fuel_required(distance),
+        fuel_price_at_origin=10,
+    )
+    ship.brain._current_plan = plan
+    ship.brain._plan_loaded = False
+    ship.brain._plan_turns_left = ACCUMULATION_PATIENCE
+    return plan
+
+
+def test_accumulating_plan_still_posts_a_standing_fuel_bid():
+    sim, fuel, food, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    seller = _make_ship(sim, a, name="Seller")
+    seller.cargo.add_commodity(food, 50)
+    a.market.place_sell_order(seller, food, 50, 10)
+
+    ship = _make_ship(sim, a, fuel_units=2, name="Trader")
+    _accumulating_plan(ship, a, b, food)
+    assert ship.cargo.get_quantity(fuel) < ship.brain._fuel_reserve_need()
+
+    ship.brain.decide_trade_actions()
+
+    # Exactly one fuel bid: the upkeep owns the fuel side of the book, and
+    # the plan's own fuel step stands down rather than double-buying.
+    fuel_buys = [o for o in a.market.buy_orders[fuel] if o.actor is ship]
+    assert len(fuel_buys) == 1
+    assert fuel_buys[0].quantity > 0
+    # The plan is still being worked: its cargo bid went in too.
+    assert [o for o in a.market.buy_orders[food] if o.actor is ship]
+
+
+def test_accumulating_plan_still_tops_up_from_a_local_ask():
+    sim, fuel, food, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    supplier = _make_ship(sim, a, fuel_units=200, name="Supplier")
+    a.market.place_sell_order(supplier, fuel, 100, 10)
+    seller = _make_ship(sim, a, name="Seller")
+    seller.cargo.add_commodity(food, 50)
+    a.market.place_sell_order(seller, food, 50, 10)
+
+    ship = _make_ship(sim, a, fuel_units=2, name="Trader")
+    _accumulating_plan(ship, a, b, food)
+
+    ship.brain.decide_trade_actions()
+
+    fuel_buys = [o for o in a.market.buy_orders[fuel] if o.actor is ship]
+    assert len(fuel_buys) == 1
+    a.market.match_orders()
+    assert ship.cargo.get_quantity(fuel) >= ship.brain._fuel_reserve_need()
+
+
+def test_distress_is_not_blocked_by_a_plan_that_never_loads():
+    sim, _, food, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    ship = _make_ship(sim, a, fuel_units=30, money=100, name="Trader")
+
+    for _ in range(DISTRESS_PATIENCE):
+        assert not ship.brain.is_distressed
+        _accumulating_plan(ship, a, b, food)
+        ship.brain.decide_trade_actions()
+
+    assert ship.brain.is_distressed

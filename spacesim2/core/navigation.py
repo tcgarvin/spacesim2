@@ -114,6 +114,7 @@ class Navigator:
         self._fuel_resolved = False
         # Market-derived facts, cleared by refresh_market_facts.
         self._fuel_purchasable: Dict["Planet", bool] = {}
+        self._fuel_ask_depth: Dict["Planet", int] = {}
         self._nearest_fuel_distance: Dict["Planet", Optional[float]] = {}
         self._fuel_scan: Optional[
             Tuple[List[Tuple["Planet", int]], Optional[int], Optional[float]]
@@ -143,6 +144,7 @@ class Navigator:
             return
         self._facts_turn = turn
         self._fuel_purchasable.clear()
+        self._fuel_ask_depth.clear()
         self._nearest_fuel_distance.clear()
         self._fuel_scan = None
         self._trade_index = None
@@ -303,9 +305,13 @@ class Navigator:
     def fuel_purchasable_at(self, planet: "Planet") -> bool:
         """Whether nova_fuel can be bought at ``planet`` right now.
 
-        True when a standing ask exists, or when the market has a real price
-        signal and recent fuel volume. Asks come and go between turns on an
-        actively supplied market, so recent trades count as availability.
+        True only with a live resting ask. Actors trade before ships each
+        turn, so the book a ship reads already holds this turn's supply: an
+        empty ask side means there is nothing to lift, whatever traded
+        earlier. Recent volume used to count as availability, but the trade
+        that shows up in the window is usually the one that emptied the
+        book, which let ships fly into planets that could not refuel them.
+        Use :meth:`fuel_traded_recently` where the softer signal is wanted.
         """
         cached = self._fuel_purchasable.get(planet)
         if cached is not None:
@@ -314,19 +320,49 @@ class Navigator:
         if fuel is None:
             result = False
         else:
-            market = planet.market
-            _, ask = market.get_bid_ask_spread(fuel)
-            if ask is not None:
-                result = True
-            elif not market.has_price_signal(fuel):
-                result = False
-            else:
-                recent = market.volume_history.get(fuel, [])[
-                    -FUEL_MARKET_RECENCY_TURNS:
-                ]
-                result = any(v > 0 for v in recent)
+            _, ask = planet.market.get_bid_ask_spread(fuel)
+            result = ask is not None and ask > 0
         self._fuel_purchasable[planet] = result
         return result
+
+    def fuel_traded_recently(self, planet: "Planet") -> bool:
+        """Whether fuel changed hands at ``planet`` in the recent window.
+
+        A weaker signal than :meth:`fuel_purchasable_at`: it says a supplier
+        exists here who may answer a standing bid, not that fuel can be
+        lifted this turn. Only last-resort choices, such as picking somewhere
+        to sit out a fuel shortage, may rely on it; plan gates must not.
+        """
+        fuel = self.fuel_commodity()
+        if fuel is None:
+            return False
+        market = planet.market
+        if not market.has_price_signal(fuel):
+            return False
+        recent = market.volume_history.get(fuel, [])[-FUEL_MARKET_RECENCY_TURNS:]
+        return any(v > 0 for v in recent)
+
+    def fuel_ask_depth_at(self, planet: "Planet") -> int:
+        """Units of fuel resting on the ask side at ``planet``.
+
+        How much a ship arriving now could actually buy. Top of book says
+        only that some fuel is for sale; a single unit does not refill a
+        tank. Cached with the other market facts for the turn.
+        """
+        cached = self._fuel_ask_depth.get(planet)
+        if cached is not None:
+            return cached
+        fuel = self.fuel_commodity()
+        if fuel is None:
+            depth = 0
+        else:
+            depth = sum(
+                order.quantity
+                for order in planet.market.sell_orders.get(fuel, [])
+                if not order.cancelled
+            )
+        self._fuel_ask_depth[planet] = depth
+        return depth
 
     def nearest_fuel_source_distance(self, planet: "Planet") -> Optional[float]:
         """Distance from ``planet`` to the nearest other fuel-selling planet.

@@ -96,6 +96,36 @@ Standing fuel rescue bids are capped at the survival target for the same
 reason: a tank-sized bid reserves most of the ship's money while it rests
 unfilled.
 
+Fuel upkeep, top-up or standing bid, runs *before* the plan branches in
+`decide_trade_actions` whenever the tank is under `_fuel_reserve_need()`.
+Every branch below it can return early - an accumulating plan holds the turn
+for up to `ACCUMULATION_PATIENCE` turns - so upkeep placed after them never
+ran for the ships that needed it most: a dry ship with a plan it could not
+fly posted no rescue bid at all. Exactly one path owns the fuel side of the
+book per turn: when upkeep ran, `_execute_trade_plan` is passed
+`fuel_handled=True` and skips its own fuel buy and top-up rather than
+double-bidding. Below the reserve `_sellable_quantity` yields no fuel, so
+the early upkeep cannot self-trade against a same-turn fuel sell.
+
+### Where fuel can actually be bought
+
+`Navigator.fuel_purchasable_at` means a **live resting ask**, nothing else.
+Actors trade before ships each turn, so the book a ship reads already holds
+the turn's supply. Recent volume used to count as availability; on arrival
+that was wrong 97% of the time, because the trade in the window is usually
+the one that emptied the book. Two weaker signals exist for the callers that
+genuinely want them:
+
+- `Navigator.fuel_traded_recently(planet)`: fuel changed hands in
+  `FUEL_MARKET_RECENCY_TURNS`. A supplier exists who might answer a standing
+  bid. Used only by last-resort choices - deciding whether idling here is
+  survivable, and ranking survival-reposition targets - never by a plan gate.
+- `Market.has_price_signal(fuel)`: fuel has ever traded. The bottom tier of
+  `_survival_reposition_target`.
+
+`Navigator.fuel_ask_depth_at(planet)` gives the units resting on the ask
+side, which is what an arriving ship could really buy.
+
 ### Capital scaled to the galaxy
 
 Ships are launched by `Simulation._setup_ships` with money and a tank sized
@@ -130,16 +160,41 @@ Two things prevent that:
 - The refuel floor is charged only on the reserve the trip does not leave in
   the tank. Fuel already aboard is not re-charged in cash, so a full-tank
   ship is not priced out of every pair when fuel spikes.
-- After `DISTRESS_PATIENCE` (5) consecutive docked turns with no cargo, no
-  plan and less money than one short round trip of fuel,
+- After `DISTRESS_PATIENCE` (5) consecutive docked turns with no non-fuel
+  cargo and less money than one short round trip of fuel,
   `TraderBrain.is_distressed` turns on and `_sellable_quantity` lets the
   ship sell tank fuel down to `_fuel_survival_target()` instead of holding a
   full tank it cannot trade around. That converts parked working capital
   into cash without touching any fuel-safety gate, and selling only to the
   target keeps the next turn's top-up from re-buying what was just sold.
-  Distress clears as soon as the ship has cash again.
+  Distress clears as soon as the ship has cash again, or as soon as a bid
+  actually fills and puts trade goods aboard.
   `TraderBrain._distress_entries` counts entries for analysis; a fleet-wide
   rise means capital is mis-sized.
+  Holding a plan does **not** clear the condition. It used to, and since an
+  unfillable plan is re-adopted every turn, the ships most in need of the
+  exit were exactly the ones that could never reach it. Filling cargo, not
+  merely intending to, is what proves a ship is trading again.
+
+### Fuel-safe destinations
+
+`_fuel_safe_destination(destination, return_planet, fuel_after_arrival)`
+gates every departure, in `_pair_economics`, `decide_travel`, the hold-cargo
+comparison and `_find_reposition_target`. A destination is safe when:
+
+1. it has a live fuel ask **and** the shortfall between `fuel_after_arrival`
+   and `_refuel_need_at(destination)` - the leg to the nearest *other* fuel
+   seller, or one lane hop when there is none - is covered by
+   `fuel_ask_depth_at(destination)`; or
+2. `fuel_after_arrival` alone reaches the nearest other fuel seller; or
+3. fuel is purchasable nowhere in the galaxy and `fuel_after_arrival` still
+   covers the return leg to `return_planet`. Grounding the whole fleet
+   would be worse than the risk.
+
+A live ask on its own is not enough. It used to be, and combined with
+`decide_travel` requiring only one-way fuel it let ships land dry in a
+market holding a one-unit ask, where they parked with full purses and empty
+tanks. Depth is the fix; do not weaken it back to top-of-book.
 
 ### Cargo before travel
 

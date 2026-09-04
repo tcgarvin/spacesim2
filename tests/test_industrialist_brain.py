@@ -12,6 +12,7 @@ from spacesim2.core.brains.industrialist import (
 from spacesim2.core.commands import (
     GovernmentWorkCommand,
     PlaceBuyOrderCommand,
+    PlaceSellOrderCommand,
     ProcessCommand,
 )
 from spacesim2.core.commodity import CommodityDefinition, Inventory
@@ -80,6 +81,9 @@ class TestIndustrialistBrain:
         )
         actor.sim = Mock()
         _wire_producer_index(actor.sim)
+        # The liquidation sweep iterates the registry; these tests are about
+        # other behavior, so give it an empty universe by default.
+        actor.sim.commodity_registry.all_commodities.return_value = []
         actor.inventory = Mock(spec=Inventory)
         actor.drives = []
         return actor
@@ -1059,3 +1063,184 @@ class TestStuckRecipeAbandonment:
         actor.sim.current_turn += 20
         assert brain._recipes_on_cooldown(actor) == set()
         assert brain.recipe_cooldown_until == {}
+
+
+class TestIndustrialistLiquidation:
+    """Stock left over from an abandoned recipe is offered back to the market.
+
+    The recipe sweep only lists the outputs of the CURRENT recipe, so without
+    an unconditional sweep an actor that switches or drops a line sits on the
+    goods it already produced forever.
+    """
+
+    @pytest.fixture
+    def brain(self):
+        return IndustrialistBrain()
+
+    @staticmethod
+    def _commodity(cid, transportable=True):
+        commodity = Mock(spec=CommodityDefinition)
+        commodity.id = cid
+        commodity.transportable = transportable
+        return commodity
+
+    @staticmethod
+    def _process(pid, inputs, outputs, tools=(), facilities=()):
+        process = Mock(spec=ProcessDefinition)
+        process.id = pid
+        process.inputs = dict(inputs)
+        process.outputs = dict(outputs)
+        process.tools_required = list(tools)
+        process.facilities_required = list(facilities)
+        process.resource_attribute = None
+        process.requirements = (
+            tuple(inputs.items())
+            + tuple((tool, 1) for tool in tools)
+            + tuple((facility, 1) for facility in facilities)
+        )
+        return process
+
+    @staticmethod
+    def _actor(holdings, commodities):
+        """Actor holding ``holdings`` (commodity id -> quantity), no drives."""
+        actor = Mock(spec=Actor)
+        actor.name = "TestIndustrialist"
+        actor.actor_type = ActorType.REGULAR
+        actor.money = 100
+        actor.drives = []
+        actor.planet = Mock()
+        actor.sim = Mock()
+        actor.sim.current_turn = 0
+        _wire_producer_index(actor.sim)
+        actor.sim.process_registry.all_processes.return_value = []
+        actor.sim.commodity_registry.all_commodities.return_value = list(commodities)
+        actor.sim.commodity_registry.get_commodity.return_value = None
+        actor.inventory = Mock(spec=Inventory)
+        actor.inventory.get_quantity.side_effect = lambda c: holdings.get(c.id, 0)
+        actor.inventory.get_available_quantity.side_effect = lambda c: holdings.get(
+            c.id, 0
+        )
+        actor.inventory.has_quantity.side_effect = (
+            lambda c, q=1: holdings.get(c.id, 0) >= q
+        )
+
+        market = actor.planet.market
+        market.get_actor_orders.return_value = {"buy": [], "sell": []}
+        market.sell_orders = {}
+        market.buy_orders = {}
+        market.get_bid_ask_spread.return_value = (None, None)
+        market.has_price_signal.return_value = False
+        market.get_avg_price.return_value = 10
+        market.get_30_day_average_price.return_value = 10.0
+        market.get_30_day_average_volume.return_value = 0.0
+        market.get_bid_price_at_depth.return_value = None
+        market.scarcity_pressure_for.return_value = 0.0
+        return actor
+
+    @staticmethod
+    def _sell_orders(commands):
+        return [cmd for cmd in commands if isinstance(cmd, PlaceSellOrderCommand)]
+
+    def test_stock_from_an_abandoned_recipe_is_offered(self, brain):
+        """Fuel produced under an old line is listed after switching recipes."""
+        nova_fuel = self._commodity("nova_fuel")
+        ore = self._commodity("common_metal_ore")
+        metal = self._commodity("refined_metal")
+        commodities = [nova_fuel, ore, metal]
+
+        actor = self._actor({"nova_fuel": 40, "common_metal_ore": 3}, commodities)
+        current = self._process("refine_metal", {ore: 3}, {metal: 1})
+        actor.sim.process_registry.get_process.return_value = current
+        brain.chosen_recipe_id = "refine_metal"
+
+        sells = self._sell_orders(brain.decide_market_actions(actor))
+
+        fuel_sells = [s for s in sells if s.commodity_type is nova_fuel]
+        assert len(fuel_sells) == 1
+        assert fuel_sells[0].quantity == 40
+
+    def test_stock_is_offered_with_no_chosen_recipe(self, brain):
+        """The sweep runs even when the actor holds no recipe at all."""
+        nova_fuel = self._commodity("nova_fuel")
+        actor = self._actor({"nova_fuel": 12}, [nova_fuel])
+        actor.sim.process_registry.get_process.return_value = None
+        brain.chosen_recipe_id = None
+
+        sells = self._sell_orders(brain.decide_market_actions(actor))
+
+        assert [(s.commodity_type, s.quantity) for s in sells] == [(nova_fuel, 12)]
+
+    def test_recipe_inputs_tools_and_build_materials_are_kept(self, brain):
+        """Nothing the current recipe or its facility build needs is sold."""
+        ore = self._commodity("common_metal_ore")
+        metal = self._commodity("refined_metal")
+        tools = self._commodity("mining_tools")
+        bricks = self._commodity("simple_building_materials")
+        smelter = self._commodity("smelting_facility", transportable=False)
+        nova_fuel = self._commodity("nova_fuel")
+        commodities = [ore, metal, tools, bricks, nova_fuel]
+
+        holdings = {
+            "common_metal_ore": 9,
+            "mining_tools": 5,
+            "simple_building_materials": 7,
+            "nova_fuel": 4,
+        }
+        actor = self._actor(holdings, commodities)
+
+        build = self._process(
+            "build_smelting_facility", {bricks: 10}, {smelter: 1}, tools=[tools]
+        )
+        current = self._process(
+            "refine_metal",
+            {ore: 3},
+            {metal: 1},
+            tools=[tools],
+            facilities=[smelter],
+        )
+
+        def get_process(process_id):
+            if process_id == "refine_metal":
+                return current
+            if process_id == "build_smelting_facility":
+                return build
+            return None
+
+        actor.sim.process_registry.get_process.side_effect = get_process
+        actor.sim.process_registry.all_processes.return_value = [build, current]
+        brain.chosen_recipe_id = "refine_metal"
+
+        sells = self._sell_orders(brain.decide_market_actions(actor))
+        sold = {s.commodity_type for s in sells}
+
+        assert ore not in sold
+        assert tools not in sold
+        assert bricks not in sold
+        assert nova_fuel in sold
+
+    def test_current_recipe_output_is_offered_once(self, brain):
+        """The sweep does not duplicate the recipe sweep's own sell order."""
+        ore = self._commodity("common_metal_ore")
+        metal = self._commodity("refined_metal")
+        actor = self._actor({"refined_metal": 6}, [ore, metal])
+        current = self._process("refine_metal", {ore: 3}, {metal: 1})
+        actor.sim.process_registry.get_process.return_value = current
+        brain.chosen_recipe_id = "refine_metal"
+
+        sells = self._sell_orders(brain.decide_market_actions(actor))
+
+        metal_sells = [s for s in sells if s.commodity_type is metal]
+        assert len(metal_sells) == 1
+        assert metal_sells[0].quantity == 6
+
+    def test_drive_stock_is_kept_to_the_drive_target(self, brain):
+        """Personal-need goods are retained up to the drive's target."""
+        food = self._commodity("food")
+        actor = self._actor({"food": 10}, [food])
+        actor.drives = [_StubDrive("food", [food], target=6)]
+        actor.sim.process_registry.get_process.return_value = None
+        brain.chosen_recipe_id = None
+
+        sells = self._sell_orders(brain.decide_market_actions(actor))
+
+        assert [(s.commodity_type, s.quantity) for s in sells] == [(food, 4)]
