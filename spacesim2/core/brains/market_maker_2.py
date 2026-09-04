@@ -1,9 +1,9 @@
-import random
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Literal, Optional
 
 from spacesim2.core.actor import Actor
 from spacesim2.core.actor_brain import ActorBrain
+from spacesim2.core.brains import dealer
 from spacesim2.core.commands import (
     CancelOrderCommand,
     EconomicCommand,
@@ -15,7 +15,7 @@ from spacesim2.core.commands import (
 from spacesim2.core.commodity import CommodityDefinition
 
 if TYPE_CHECKING:
-    from spacesim2.core.market import Market, Transaction
+    from spacesim2.core.market import Market
 
 # ---- Maker internal state ----------------------------------------------------
 
@@ -97,7 +97,7 @@ class MarketMakerBrain(ActorBrain):
     def __init__(self) -> None:
         super().__init__()
         # Base spread percentage, randomized per maker.
-        self.spread_percentage: float = random.uniform(0.10, 0.30)
+        self.spread_percentage: float = dealer.draw_spread()
 
         # Per-commodity state, keyed by commodity name.
         self._state: Dict[str, MarketMakerState] = {}
@@ -159,38 +159,11 @@ class MarketMakerBrain(ActorBrain):
 
     def _consume_new_transactions(
         self, actor: Actor, market: "Market"
-    ) -> Dict[str, Dict[str, List[int]]]:
-        """Group the actor's new fills since the last tick by commodity and side.
-
-        Returns ``{commodity_name: {"buy_prices": [...], "sell_prices": [...]}}``
-        with the prices at which we bought and sold.
-        """
-        history: List[Transaction] = market.get_actor_transaction_history(actor) or []
-
-        # History was reset.
-        if self._last_transaction_index > len(history):
-            self._last_transaction_index = 0
-
-        new_transactions = history[self._last_transaction_index :]
-        self._last_transaction_index = len(history)
-
-        grouped: Dict[str, Dict[str, List[int]]] = {}
-        for txn in new_transactions:
-            if txn.buyer is actor:
-                side = "buy"
-            elif txn.seller is actor:
-                side = "sell"
-            else:
-                continue  # not our fill
-
-            commodity_name = getattr(
-                txn.commodity_type, "name", str(txn.commodity_type)
-            )
-            bucket = grouped.setdefault(
-                commodity_name, {"buy_prices": [], "sell_prices": []}
-            )
-            bucket["buy_prices" if side == "buy" else "sell_prices"].append(txn.price)
-
+    ) -> Dict[str, dealer.CommodityFills]:
+        """Group the actor's new fills since the last tick by commodity and side."""
+        self._last_transaction_index, grouped = dealer.ingest_fills(
+            actor, market, self._last_transaction_index
+        )
         return grouped
 
     def _apply_fills_to_state(
@@ -198,11 +171,11 @@ class MarketMakerBrain(ActorBrain):
         actor: Actor,
         commodity: "CommodityDefinition",
         state: MarketMakerState,
-        fills_by_commodity: Dict[str, Dict[str, List[int]]],
+        fills_by_commodity: Dict[str, dealer.CommodityFills],
     ) -> None:
         """Tighten discovery bracket and handle mode transitions or reversion."""
-        commodity_name = getattr(commodity, "name", str(commodity))
-        price_lists = fills_by_commodity.get(commodity_name, None)
+        commodity_name = dealer.commodity_key(commodity)
+        fills = fills_by_commodity.get(commodity_name)
 
         if actor.planet is None:
             return
@@ -213,10 +186,10 @@ class MarketMakerBrain(ActorBrain):
             state.phase = "MAKER"
 
         if state.phase == "DISCOVERY":
-            if price_lists:
+            if fills:
                 # We bought: sellers exist at or below max(buy_fills).
-                if price_lists["buy_prices"]:
-                    max_bid_fill = max(price_lists["buy_prices"])
+                if fills.buy_prices:
+                    max_bid_fill = max(fills.buy_prices)
                     state.upper_bound = (
                         max_bid_fill
                         if state.upper_bound is None
@@ -226,8 +199,8 @@ class MarketMakerBrain(ActorBrain):
                     state.trades_seen += 1
 
                 # We sold: buyers exist at or above min(sell_fills).
-                if price_lists["sell_prices"]:
-                    min_ask_fill = min(price_lists["sell_prices"])
+                if fills.sell_prices:
+                    min_ask_fill = min(fills.sell_prices)
                     state.lower_bound = max(state.lower_bound, min_ask_fill)
                     state.last_ask_filled_price = min_ask_fill
                     state.trades_seen += 1
@@ -264,10 +237,7 @@ class MarketMakerBrain(ActorBrain):
             state.last_sigma = sigma  # for spike detection
 
         else:  # MAKER
-            any_fill = bool(
-                price_lists
-                and (price_lists["buy_prices"] or price_lists["sell_prices"])
-            )
+            any_fill = bool(fills)
             state.quiet_ticks = 0 if any_fill else (state.quiet_ticks + 1)
 
             # Revert to discovery if quiet too long or volatility spikes.
@@ -294,7 +264,7 @@ class MarketMakerBrain(ActorBrain):
 
     def _ensure_state_for(self, commodity: "CommodityDefinition") -> MarketMakerState:
         """Return the state for this commodity, creating it if needed."""
-        commodity_name = getattr(commodity, "name", str(commodity))
+        commodity_name = dealer.commodity_key(commodity)
         if commodity_name not in self._state:
             self._state[commodity_name] = MarketMakerState(
                 phase="DISCOVERY",
@@ -420,23 +390,30 @@ class MarketMakerBrain(ActorBrain):
         )
 
         current_inventory = actor.inventory.get_quantity(commodity)
-        target_inventory = self._target_inventory(market, commodity)
-        quoted_midpoint = self._apply_inventory_skew(
-            midpoint, current_inventory, target_inventory
+        target_inventory = dealer.flow_stock_target(market, commodity)
+        quoted_midpoint = dealer.skew_midpoint(
+            midpoint,
+            current_inventory,
+            target_inventory,
+            self.INVENTORY_SKEW_CAP,
+            self.MIN_PRICE,
         )
 
         # Evenly spaced ladders.
         levels = self.LADDER_LEVELS
         step = max(1, half_spread // levels)
 
-        bid_prices = [
-            max(self.MIN_PRICE, quoted_midpoint - half_spread - i * step)
-            for i in range(levels)
-        ]
-        ask_prices = [
-            max(self.MIN_ASK_PRICE, quoted_midpoint + half_spread + i * step)
-            for i in range(levels)
-        ]
+        bid_prices = dealer.ladder_prices(
+            quoted_midpoint, half_spread, levels, step, self.MIN_PRICE, ascending=False
+        )
+        ask_prices = dealer.ladder_prices(
+            quoted_midpoint,
+            half_spread,
+            levels,
+            step,
+            self.MIN_ASK_PRICE,
+            ascending=True,
+        )
 
         # Exposure cap versus cash-only net worth.
         cash_net_worth = max(1, actor.money)
@@ -445,7 +422,7 @@ class MarketMakerBrain(ActorBrain):
         # Sell: spread inventory across asks, front-loaded near the touch.
         if current_inventory > 0:
             remaining_inventory = current_inventory
-            weights = [levels - i for i in range(levels)]
+            weights = dealer.front_loaded_weights(levels)
             weight_sum = sum(weights)
 
             for level_index, price in enumerate(ask_prices):
@@ -466,7 +443,7 @@ class MarketMakerBrain(ActorBrain):
         cash_budget = int(per_market_budget)
         if cash_budget > 0 and max_notional_per_commodity > 0:
             remaining_funds = min(cash_budget, int(max_notional_per_commodity))
-            weights = [levels - i for i in range(levels)]
+            weights = dealer.front_loaded_weights(levels)
             weight_sum = sum(weights)
 
             for level_index, price in enumerate(bid_prices):
@@ -484,29 +461,3 @@ class MarketMakerBrain(ActorBrain):
                     remaining_funds -= quantity * price
 
         return commands
-
-    # -------- Shared helpers --------------------------------------------------
-
-    def _target_inventory(
-        self, market: "Market", commodity: "CommodityDefinition"
-    ) -> int:
-        """Desired inventory: 30 days of average flow, or a neutral target when
-        history is thin."""
-        if market.has_history(commodity):
-            average_volume = market.get_30_day_average_volume(commodity) or 0
-            average_volume = max(1, int(average_volume))
-            return average_volume * 30 + 1
-        return 25  # neutral target; not a price default
-
-    def _apply_inventory_skew(
-        self, midpoint: int, current_qty: int, target_qty: int
-    ) -> int:
-        """Skew the quoted midpoint down when over-inventoried, up when under."""
-        if target_qty <= 0:
-            return midpoint
-        ratio = current_qty / target_qty  # 1.0 == on-target
-        raw_skew = -0.5 * (ratio - 1.0)  # gentle slope
-        clamped_skew = max(
-            -self.INVENTORY_SKEW_CAP, min(self.INVENTORY_SKEW_CAP, raw_skew)
-        )
-        return max(self.MIN_PRICE, int(round(midpoint * (1.0 + clamped_skew))))
