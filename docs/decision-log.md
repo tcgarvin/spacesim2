@@ -43,7 +43,11 @@ Four read-only probes, one per suspect, found four separate causes:
    the imputed make cost, so `make_chemicals` scores exactly zero against
    the 1.2x entry margin and the tiers above it can never execute. Forty
    of fifty local industrialists idled on a positive-scoring recipe they
-   could not run. Decision: see the commit that followed this entry.
+   could not run. Decision: procurement bids escalate by the bootstrap
+   premium when there is no ask, scarcity pressure is high and recent
+   volume is near zero; a recipe that fails to execute for 20 turns with
+   no movement in its inputs is dropped and put on a 50-turn cooldown.
+   Starved planets 3.3 to 0.3 per run, deprivation 20% to 6%, prices flat.
 
 Also landed: the summary verdict gained turn-gated per-drive thresholds,
 a `markets` liveness section and a `trade` section for ship-delivered
