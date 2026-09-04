@@ -42,11 +42,10 @@ class Actor:
         initial_skills: Optional[Dict[str, float]] = None,
     ) -> None:
         self.name = name
-        # Service actors (e.g. market makers) get more initial money
-        if actor_type == ActorType.SERVICE and initial_money == 50:
-            self.money = 200
-        else:
-            self.money = initial_money
+        # No implicit capital injection by actor type: every actor starts with
+        # exactly what the caller passed. Market makers are sized explicitly at
+        # setup; spaceport operators bootstrap on the government wage.
+        self.money = initial_money
         self.reserved_money = 0  # Money reserved for market orders
         self.planet = planet
         self.inventory = Inventory()

@@ -51,24 +51,25 @@ def test_planet_add_actor() -> None:
 
 
 def test_simulation_setup() -> None:
-    """Default setup_simple builds 2 planets with 4 regulars and 1 maker each."""
+    """Default setup_simple: 2 planets, 4 regulars, 1 maker, 2 operators each."""
     sim = Simulation()
     sim.setup_simple()
 
     assert len(sim.planets) == 2
 
-    assert len(sim.actors) == 10  # (4 regular + 1 market maker) * 2 planets
+    # (4 regular + 1 market maker + 2 spaceport operators) * 2 planets
+    assert len(sim.actors) == 14
 
     regular_count = 0
-    market_maker_count = 0
+    service_count = 0
     for actor in sim.actors:
         if actor.actor_type == ActorType.REGULAR:
             regular_count += 1
         elif actor.actor_type == ActorType.SERVICE:
-            market_maker_count += 1
+            service_count += 1
 
     assert regular_count == 8
-    assert market_maker_count == 2
+    assert service_count == 6
 
     planet1_actors = 0
     planet2_actors = 0
@@ -79,8 +80,8 @@ def test_simulation_setup() -> None:
         elif actor.planet.name == sim.planets[1].name:
             planet2_actors += 1
 
-    assert planet1_actors == 5
-    assert planet2_actors == 5
+    assert planet1_actors == 7
+    assert planet2_actors == 7
 
     assert sim.planets[0].market is not None
     assert sim.planets[1].market is not None

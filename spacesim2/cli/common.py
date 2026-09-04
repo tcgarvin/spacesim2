@@ -11,6 +11,7 @@ def create_and_setup_simulation(
     planets: int,
     actors: int,
     makers: int,
+    operators: int = 2,
     ships: int = 1,
     arms: int = DEFAULT_ARMS,
     lane_density: float = DEFAULT_LANE_DENSITY,
@@ -20,6 +21,7 @@ def create_and_setup_simulation(
     Args:
         actors: Regular actors per planet.
         makers: Market makers per planet.
+        operators: Spaceport operators per planet.
         arms: Spiral arms in the galaxy layout.
         lane_density: Fraction of optional local star lanes kept, 0..1.
     """
@@ -28,6 +30,7 @@ def create_and_setup_simulation(
         num_planets=planets,
         num_regular_actors=actors,
         num_market_makers=makers,
+        num_spaceport_operators=operators,
         num_ships=ships,
         arms=arms,
         lane_density=lane_density,

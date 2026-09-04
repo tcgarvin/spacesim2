@@ -15,6 +15,7 @@ uv run spacesim2 run --quiet         # Suppress all output
 uv run spacesim2 run --no-export     # Quick run without data export
 uv run spacesim2 run --log-actors all  # Detailed per-actor logging (also: N, or an actor name)
 uv run spacesim2 run --planets 5     # Smaller galaxy (default is 100 planets)
+uv run spacesim2 run --operators 2   # Spaceport operators per planet (default 2)
 uv run spacesim2 run --arms 4 --lane-density 0.3  # Spiral arm count / extra star lanes beyond the spanning tree
 
 # Development

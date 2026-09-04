@@ -74,7 +74,7 @@ class MarketMakerBrain(ActorBrain):
     # is split evenly across every market served (see decide_market_actions),
     # so illiquid commodities get a real, bounded allocation instead of being
     # starved by whichever markets are iterated first.
-    BUY_CAPITAL_FRACTION: float = 0.70
+    BUY_CAPITAL_FRACTION: float = dealer.DEFAULT_BUY_CAPITAL_FRACTION
     VOLATILITY_WIDENER: float = 0.5  # widen spread by (1 + VOL * sigma/mid)
     INVENTORY_SKEW_CAP: float = 0.50  # cap skew at ±50% of mid
     MAX_NOTIONAL_FRACTION: float = 0.60  # cap exposure vs. cash-only net worth

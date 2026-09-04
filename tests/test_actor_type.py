@@ -10,11 +10,13 @@ from spacesim2.core.actor import ActorType
 from spacesim2.core.brains.colonist import ColonistBrain
 from spacesim2.core.brains.industrialist import IndustrialistBrain
 from spacesim2.core.brains.market_maker_2 import MarketMakerBrain
+from spacesim2.core.brains.spaceport_operator import SpaceportOperatorBrain
 from spacesim2.core.simulation import Simulation
 
 # Brain class -> expected ActorType. Add new brains here as they're introduced.
 _EXPECTED_ACTOR_TYPE: dict[type, ActorType] = {
     MarketMakerBrain: ActorType.SERVICE,
+    SpaceportOperatorBrain: ActorType.SERVICE,
     ColonistBrain: ActorType.REGULAR,
     IndustrialistBrain: ActorType.REGULAR,
 }

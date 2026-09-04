@@ -6,7 +6,10 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
 
 from spacesim2.core.commodity import CommodityDefinition, Inventory
 from spacesim2.core.navigation import (
+    DELIVERER_WORST_FUEL_EFFICIENCY,  # noqa: F401  re-exported for callers
     FLOW_RECENCY_TURNS,
+    FUEL_BID_FALLBACK_FLOOR,
+    FUEL_BID_MARGIN,
     Navigator,
     get_navigator,
 )
@@ -17,19 +20,10 @@ if TYPE_CHECKING:
     from spacesim2.core.market import Market
     from spacesim2.core.simulation import Simulation
 
-# Margin over delivered cost for a stranded ship's standing fuel bid. Above
-# the 15% TraderBrain arbitrage threshold so a fuel-delivery TradePlan passes
-# ``is_profitable()`` for any deliverer.
-FUEL_BID_MARGIN = 0.30
-
-# Fuel price for standing bids when no ask exists anywhere in the galaxy and
-# the local market has never traded fuel. Its avg-price default of 10 is
-# fabricated and cannot be trusted.
-FUEL_BID_FALLBACK_FLOOR = 15
-
-# Ships are created with fuel_efficiency in [0.8, 1.2]. When estimating an
-# unknown deliverer's burn, assume the worst so the bid stays enticing.
-DELIVERER_WORST_FUEL_EFFICIENCY = 0.8
+# FUEL_BID_MARGIN, FUEL_BID_FALLBACK_FLOOR and DELIVERER_WORST_FUEL_EFFICIENCY
+# live in core/navigation.py, next to the delivery-bid pricing they
+# parameterize, and are re-exported here because ships and their tests have
+# always read them from this module.
 
 # A docked ship fills its tank only while the local ask is within this
 # multiple of the galaxy fuel reference price. Above it, it buys only the
@@ -644,51 +638,17 @@ class TraderBrain(ShipBrain):
     def _fuel_bid_price(self, planet: Planet, quantity: int) -> int:
         """Price for a standing fuel bid that makes delivery profitable.
 
-        Anchors on the cheapest ask anywhere else in the galaxy plus the
-        deliverer's round-trip burn at worst-case efficiency, amortized over
-        ``quantity``, marked up by FUEL_BID_MARGIN so the delivery clears the
-        15% arbitrage threshold. If no ask exists anywhere, falls back to a
-        reference price escalated by local scarcity pressure, which grows
-        each turn the bid goes unfilled.
+        Delegates to :meth:`Navigator.fuel_delivery_bid_price`, which spaceport
+        operators use for the same purpose.
         """
-        fuel_commodity = self._fuel_commodity()
-        if fuel_commodity is None:
-            return FUEL_BID_FALLBACK_FLOOR
-
-        best_delivered_cost: Optional[float] = None
-        for source, ask in self._nav.fuel_ask_planets():
-            if source is planet:
-                continue
-            distance = self._nav.distance(source, planet)
-            leg_fuel = math.ceil(
-                Ship.calculate_fuel_needed(distance) / DELIVERER_WORST_FUEL_EFFICIENCY
-            )
-            delivered_cost = ask + (2 * leg_fuel * ask) / max(quantity, 1)
-            if best_delivered_cost is None or delivered_cost < best_delivered_cost:
-                best_delivered_cost = delivered_cost
-
-        if best_delivered_cost is not None:
-            return max(1, math.ceil(best_delivered_cost * (1.0 + FUEL_BID_MARGIN)))
-
-        # No ask anywhere: fall back to what a local producer would need.
-        return self._local_fuel_reference_price(planet)
+        return self._nav.fuel_delivery_bid_price(planet, quantity)
 
     def _local_fuel_reference_price(self, planet: Planet) -> int:
         """Scarcity-escalated price a local fuel producer would plausibly take.
 
-        Anchors on a real local signal if one exists, never the fabricated
-        default avg of 10, and escalates with scarcity pressure, which grows
-        each turn demand goes unmet.
+        Delegates to :meth:`Navigator.local_fuel_reference_price`.
         """
-        fuel_commodity = self._fuel_commodity()
-        if fuel_commodity is None:
-            return FUEL_BID_FALLBACK_FLOOR
-        market = planet.market
-        reference = float(FUEL_BID_FALLBACK_FLOOR)
-        if market.has_price_signal(fuel_commodity):
-            reference = max(reference, float(market.get_avg_price(fuel_commodity)))
-        escalated = reference * (1.0 + market.scarcity_pressure_for(fuel_commodity))
-        return max(1, math.ceil(escalated))
+        return self._nav.local_fuel_reference_price(planet)
 
     def _post_standing_fuel_bid(self) -> Optional[str]:
         """Post a standing buy order for fuel priced to entice a supply run.

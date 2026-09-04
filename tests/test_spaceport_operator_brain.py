@@ -1,0 +1,400 @@
+"""Tests for SpaceportOperatorBrain and the navigator fuel-price move.
+
+The operator is the standing fuel counterparty on a planet: it lifts cheap
+local asks, rests delivery-viable bids where there is no ask, and resells at
+its own cost basis plus a spread, gated by the condition of its spaceport.
+These tests pin each of those rules, the self-trade guard, the setup wiring,
+and that the delivery-bid price moved to the navigator without changing.
+"""
+
+import math
+
+from spacesim2.core.actor import Actor, ActorType
+from spacesim2.core.brains import dealer
+from spacesim2.core.brains.spaceport_operator import (
+    CONDITION_ASK_FLOOR,
+    INVENTORY_SKEW_CAP,
+    SpaceportOperatorBrain,
+)
+from spacesim2.core.commands import PlaceBuyOrderCommand, PlaceSellOrderCommand
+from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
+from spacesim2.core.drives.facility_upkeep_drive import FacilityUpkeepDrive
+from spacesim2.core.facility import FacilityDefinition, FailureType, UpkeepSpec
+from spacesim2.core.galaxy import StarLaneNetwork
+from spacesim2.core.market import Market
+from spacesim2.core.navigation import get_navigator
+from spacesim2.core.planet import Planet
+from spacesim2.core.ship import FUEL_BUNKER_PREMIUM, Ship, fuel_capacity_for
+from spacesim2.core.simulation import Simulation
+
+_COMMODITIES = [
+    ("nova_fuel", "NovaFuel"),
+    ("spaceport", "Spaceport"),
+    ("simple_building_materials", "Simple Building Materials"),
+    ("common_metal", "Common Metal"),
+]
+
+_FACILITY = FacilityDefinition(
+    id="spaceport",
+    upkeep=UpkeepSpec(
+        event_probability=0.01,
+        failures=(
+            FailureType(
+                name="structural",
+                weight=0.6,
+                material_id="simple_building_materials",
+                quantity=3,
+            ),
+            FailureType(
+                name="mechanical",
+                weight=0.25,
+                material_id="common_metal",
+                quantity=1,
+            ),
+        ),
+    ),
+)
+
+
+def _make_world(planet_specs=(("A", 0, 0), ("B", 200, 0))):
+    """Build a registry, planets joined by lanes, and a mock simulation."""
+    registry = CommodityRegistry()
+    for commodity_id, name in _COMMODITIES:
+        registry.add_commodity(
+            CommodityDefinition(
+                id=commodity_id,
+                name=name,
+                transportable=commodity_id != "spaceport",
+                description=name,
+            )
+        )
+    planets = [Planet(name, Market(), x, y) for name, x, y in planet_specs]
+    for planet in planets:
+        planet.market.commodity_registry = registry
+    sim = type(
+        "MockSim",
+        (object,),
+        {
+            "commodity_registry": registry,
+            "planets": planets,
+            "star_lanes": StarLaneNetwork.complete(planets),
+            "current_turn": 0,
+        },
+    )()
+    return sim, registry, planets
+
+
+def _make_operator(sim, planet, money=5000, fuel_units=0):
+    """An operator actor on ``planet``, with a spaceport and an upkeep drive."""
+    registry = sim.commodity_registry
+    drive = FacilityUpkeepDrive(registry, _FACILITY)
+    actor = Actor(
+        name="Operator",
+        sim=sim,
+        actor_type=ActorType.SERVICE,
+        drives=[drive],
+        brain=SpaceportOperatorBrain(),
+        planet=planet,
+        initial_money=money,
+    )
+    actor.inventory.add_commodity(registry.get_commodity("spaceport"), 1)
+    if fuel_units:
+        actor.inventory.add_commodity(registry.get_commodity("nova_fuel"), fuel_units)
+    planet.add_actor(actor)
+    return actor, drive
+
+
+def _seller(sim, planet, commodity, quantity, price, money=0):
+    """A bare actor resting an ask, so the operator has something to lift."""
+    actor = Actor(
+        name=f"Seller-{commodity.id}",
+        sim=sim,
+        actor_type=ActorType.REGULAR,
+        drives=[],
+        brain=SpaceportOperatorBrain(),
+        planet=planet,
+        initial_money=money,
+    )
+    actor.inventory.add_commodity(commodity, quantity)
+    planet.add_actor(actor)
+    planet.market.place_sell_order(actor, commodity, quantity, price)
+    return actor
+
+
+def _quote(sim, actor):
+    """Refresh galaxy fuel facts, then ask the brain for this turn's orders."""
+    get_navigator(sim).refresh_market_facts()
+    return actor.brain.decide_market_actions(actor)
+
+
+def _orders(commands, command_class, commodity_id):
+    return [
+        c
+        for c in commands
+        if isinstance(c, command_class) and c.commodity_type.id == commodity_id
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Fuel bid
+# ---------------------------------------------------------------------------
+
+
+def test_lifts_a_cheap_local_ask_up_to_the_stock_target():
+    sim, registry, (planet, _) = _make_world()
+    fuel = registry.get_commodity("nova_fuel")
+    _seller(sim, planet, fuel, 500, 20)
+    actor, _ = _make_operator(sim, planet, money=5000)
+
+    commands = _quote(sim, actor)
+    bids = _orders(commands, PlaceBuyOrderCommand, "nova_fuel")
+
+    assert len(bids) == 1
+    navigator = get_navigator(sim)
+    target = fuel_capacity_for(navigator.mean_pair_distance(), 1.0)
+    budget = int(5000 * SpaceportOperatorBrain.BUY_CAPITAL_FRACTION)
+    assert bids[0].price == 20  # the ask is lifted at its own price
+    assert bids[0].quantity == min(target, budget // 20)
+
+
+def test_skips_the_bid_when_the_local_ask_is_scarcity_priced():
+    """Above the ships' bunkering ceiling the operator could not resell."""
+    sim, registry, (planet, other) = _make_world()
+    fuel = registry.get_commodity("nova_fuel")
+    # A cheap ask elsewhere sets the galaxy reference; the local one is a spike.
+    _seller(sim, other, fuel, 100, 10)
+    _seller(sim, planet, fuel, 100, 500)
+    actor, _ = _make_operator(sim, planet, money=5000)
+
+    commands = _quote(sim, actor)
+
+    assert math.ceil(10 * FUEL_BUNKER_PREMIUM) < 500
+    assert _orders(commands, PlaceBuyOrderCommand, "nova_fuel") == []
+
+
+def test_rests_a_delivery_priced_bid_when_there_is_no_ask():
+    sim, registry, (planet, _) = _make_world()
+    actor, _ = _make_operator(sim, planet, money=5000)
+    navigator = get_navigator(sim)
+    target = fuel_capacity_for(navigator.mean_pair_distance(), 1.0)
+
+    commands = _quote(sim, actor)
+    bids = _orders(commands, PlaceBuyOrderCommand, "nova_fuel")
+
+    assert len(bids) == 1
+    # Skewed up while stock is empty, so the bid still attracts a delivery.
+    expected = dealer.skew_midpoint(
+        navigator.fuel_delivery_bid_price(planet, target), 0, target, INVENTORY_SKEW_CAP
+    )
+    assert bids[0].price == expected
+    assert expected > navigator.fuel_delivery_bid_price(planet, target)
+    assert bids[0].quantity == target
+
+
+# ---------------------------------------------------------------------------
+# Fuel ask
+# ---------------------------------------------------------------------------
+
+
+def test_ask_prices_off_cost_basis_and_scales_quantity_with_condition():
+    sim, registry, (planet, _) = _make_world()
+    fuel = registry.get_commodity("nova_fuel")
+    market = planet.market
+    actor, drive = _make_operator(sim, planet, money=5000)
+
+    # Real fills: the operator buys 40 units at 20 from a resting ask.
+    _seller(sim, planet, fuel, 40, 20)
+    market.place_buy_order(actor, fuel, 40, 20)
+    market.match_orders()
+    assert actor.inventory.get_quantity(fuel) == 40
+
+    drive.metrics.health = 0.5
+    commands = _quote(sim, actor)
+    asks = _orders(commands, PlaceSellOrderCommand, "nova_fuel")
+
+    assert len(asks) == 1
+    basis = 20.0
+    spread = actor.brain.spread
+    assert asks[0].price == max(math.ceil(basis) + 1, math.ceil(basis * (1.0 + spread)))
+    assert asks[0].quantity == 20  # floor(40 * 0.5)
+
+
+def test_no_ask_below_the_condition_floor():
+    sim, registry, (planet, _) = _make_world()
+    actor, drive = _make_operator(sim, planet, money=200, fuel_units=30)
+    actor.brain._fuel_units = 30
+    actor.brain._fuel_total_cost = 600.0
+
+    drive.metrics.health = CONDITION_ASK_FLOOR - 0.01
+    commands = _quote(sim, actor)
+
+    assert _orders(commands, PlaceSellOrderCommand, "nova_fuel") == []
+
+
+# ---------------------------------------------------------------------------
+# Upkeep and the self-trade guard
+# ---------------------------------------------------------------------------
+
+
+def test_upkeep_is_bought_before_fuel_and_targets_the_last_unmet_material():
+    sim, registry, (planet, _) = _make_world()
+    metal = registry.get_commodity("common_metal")
+    materials = registry.get_commodity("simple_building_materials")
+    actor, drive = _make_operator(sim, planet, money=300)
+    # The last event the port could not cover called for common_metal.
+    drive.last_unmet = _FACILITY.upkeep.failures[1]
+
+    commands = _quote(sim, actor)
+    buys = [c for c in commands if isinstance(c, PlaceBuyOrderCommand)]
+    ids = [c.commodity_type.id for c in buys]
+
+    assert ids.index(materials.id) < ids.index("nova_fuel")
+    assert ids.index(metal.id) < ids.index("nova_fuel")
+    building_buy = _orders(commands, PlaceBuyOrderCommand, materials.id)[0]
+    assert building_buy.quantity == drive.target_units()
+    assert _orders(commands, PlaceBuyOrderCommand, metal.id)[0].quantity == 1
+
+
+def test_self_trade_guard_drops_a_bid_at_or_above_our_own_ask():
+    sim, registry, (planet, _) = _make_world()
+    actor, _ = _make_operator(sim, planet, money=5000, fuel_units=10)
+    # A cost basis of 1 puts the ask at 2, far below the delivery-viable bid.
+    actor.brain._fuel_units = 10
+    actor.brain._fuel_total_cost = 10.0
+
+    commands = _quote(sim, actor)
+    asks = _orders(commands, PlaceSellOrderCommand, "nova_fuel")
+
+    assert len(asks) == 1
+    assert asks[0].price == 2
+    assert _orders(commands, PlaceBuyOrderCommand, "nova_fuel") == []
+
+
+def test_no_spaceport_means_no_quotes():
+    sim, registry, (planet, _) = _make_world()
+    actor, _ = _make_operator(sim, planet, money=5000)
+    actor.inventory.remove_commodity(registry.get_commodity("spaceport"), 1)
+
+    commands = _quote(sim, actor)
+
+    assert commands == []
+    assert "no spaceport" in actor.last_action
+
+
+# ---------------------------------------------------------------------------
+# Setup and smoke
+# ---------------------------------------------------------------------------
+
+
+def test_setup_creates_two_operators_per_planet_with_a_spaceport():
+    sim = Simulation()
+    sim.setup_simple(
+        num_planets=2, num_regular_actors=4, num_market_makers=1, num_ships=1
+    )
+    spaceport = sim.commodity_registry.get_commodity("spaceport")
+
+    operators = [a for a in sim.actors if isinstance(a.brain, SpaceportOperatorBrain)]
+    assert len(operators) == 4
+    for planet in sim.planets:
+        on_planet = [a for a in operators if a.planet is planet]
+        assert len(on_planet) == 2
+
+    for operator in operators:
+        assert operator.actor_type == ActorType.SERVICE
+        assert operator.money == 50, "operators get no capital injection"
+        assert operator.inventory.get_quantity(spaceport) == 1
+        names = [d.metrics.get_name() for d in operator.drives]
+        assert names == ["facility_upkeep"]
+
+
+def test_sixty_turn_smoke_leaves_an_operator_in_the_fuel_market():
+    sim = Simulation()
+    sim.setup_simple(
+        num_planets=3, num_regular_actors=10, num_market_makers=1, num_ships=2
+    )
+    for _ in range(60):
+        sim.run_turn()
+
+    fuel = sim.commodity_registry.get_commodity("nova_fuel")
+    operators = [a for a in sim.actors if isinstance(a.brain, SpaceportOperatorBrain)]
+    assert operators
+
+    engaged = 0
+    for operator in operators:
+        assert operator.planet is not None
+        orders = operator.planet.market.get_actor_orders(operator)
+        has_order = any(
+            order.commodity_type.id == "nova_fuel"
+            for order in orders["buy"] + orders["sell"]
+        )
+        if operator.inventory.get_quantity(fuel) > 0 or has_order:
+            engaged += 1
+    assert engaged >= 1
+
+
+# ---------------------------------------------------------------------------
+# The navigator move
+# ---------------------------------------------------------------------------
+
+
+def _legacy_fuel_bid_price(navigator, planet, quantity):
+    """The pre-move TraderBrain formula, inlined so the move can be checked."""
+    from spacesim2.core.navigation import (
+        DELIVERER_WORST_FUEL_EFFICIENCY,
+        FUEL_BID_MARGIN,
+    )
+
+    best = None
+    for source, ask in navigator.fuel_ask_planets():
+        if source is planet:
+            continue
+        leg_fuel = math.ceil(
+            Ship.calculate_fuel_needed(navigator.distance(source, planet))
+            / DELIVERER_WORST_FUEL_EFFICIENCY
+        )
+        delivered = ask + (2 * leg_fuel * ask) / max(quantity, 1)
+        if best is None or delivered < best:
+            best = delivered
+    if best is None:
+        return navigator.local_fuel_reference_price(planet)
+    return max(1, math.ceil(best * (1.0 + FUEL_BID_MARGIN)))
+
+
+def test_navigator_delivery_price_matches_the_old_trader_formula():
+    sim, registry, (planet, other) = _make_world()
+    fuel = registry.get_commodity("nova_fuel")
+    _seller(sim, other, fuel, 100, 24)
+    navigator = get_navigator(sim)
+    navigator.refresh_market_facts()
+
+    for quantity in (1, 7, 50, 400):
+        assert navigator.fuel_delivery_bid_price(
+            planet, quantity
+        ) == _legacy_fuel_bid_price(navigator, planet, quantity)
+
+
+def test_navigator_local_reference_price_with_no_ask_anywhere():
+    sim, _, (planet, _) = _make_world()
+    navigator = get_navigator(sim)
+    navigator.refresh_market_facts()
+
+    assert navigator.fuel_delivery_bid_price(
+        planet, 10
+    ) == navigator.local_fuel_reference_price(planet)
+
+
+def test_trader_brain_delegates_fuel_pricing_to_the_navigator():
+    sim, registry, (planet, other) = _make_world()
+    fuel = registry.get_commodity("nova_fuel")
+    _seller(sim, other, fuel, 100, 30)
+    ship = Ship("Delegate", sim, planet, initial_money=1000)
+    planet.add_ship(ship)
+    navigator = get_navigator(sim)
+    navigator.refresh_market_facts()
+
+    assert ship.brain._fuel_bid_price(planet, 25) == navigator.fuel_delivery_bid_price(
+        planet, 25
+    )
+    assert ship.brain._local_fuel_reference_price(
+        planet
+    ) == navigator.local_fuel_reference_price(planet)

@@ -4,12 +4,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from spacesim2.core.actor import Actor, ActorType
-from spacesim2.core.brains import ColonistBrain, IndustrialistBrain, MarketMakerBrain
+from spacesim2.core.brains import (
+    ColonistBrain,
+    IndustrialistBrain,
+    MarketMakerBrain,
+    SpaceportOperatorBrain,
+)
 from spacesim2.core.commodity import CommodityRegistry
 from spacesim2.core.data_logger import DataLogger
 from spacesim2.core.drives import (
     ActorDrive,
     ClothingDrive,
+    FacilityUpkeepDrive,
     FoodDrive,
     HealthDrive,
     ShelterDrive,
@@ -299,6 +305,7 @@ class Simulation:
         num_planets: int = 2,
         num_regular_actors: int = 4,
         num_market_makers: int = 1,
+        num_spaceport_operators: int = 2,
         num_ships: int = 2,
         arms: int = DEFAULT_ARMS,
         lane_density: float = DEFAULT_LANE_DENSITY,
@@ -311,6 +318,7 @@ class Simulation:
         Args:
             num_regular_actors: Regular actors per planet.
             num_market_makers: Market makers per planet.
+            num_spaceport_operators: Spaceport operators per planet.
             num_ships: Ships per planet.
             arms: Spiral arm count.
             lane_density: Fraction of optional local lanes kept beyond the
@@ -346,6 +354,7 @@ class Simulation:
                 planet=planet,
                 num_regular_actors=num_regular_actors,
                 num_market_makers=num_market_makers,
+                num_spaceport_operators=num_spaceport_operators,
                 actor_name_prefix=name,
             )
 
@@ -370,9 +379,10 @@ class Simulation:
         planet: Planet,
         num_regular_actors: int,
         num_market_makers: int,
+        num_spaceport_operators: int,
         actor_name_prefix: str,
     ) -> None:
-        """Create a planet's regular actors and market makers."""
+        """Create a planet's regular actors and its service actors."""
         # Regular actors split evenly between colonists and industrialists.
         num_colonists = num_regular_actors // 2
         num_industrialists = num_regular_actors - num_colonists
@@ -424,6 +434,48 @@ class Simulation:
                 initial_money=market_maker_capital,
                 initial_skills=initial_skills,
             )
+            self.actors.append(actor)
+            planet.add_actor(actor)
+
+        self._setup_spaceport_operators(
+            planet=planet,
+            count=num_spaceport_operators,
+            all_skills=all_skills,
+            actor_name_prefix=actor_name_prefix,
+        )
+
+    def _setup_spaceport_operators(
+        self,
+        planet: Planet,
+        count: int,
+        all_skills: List[str],
+        actor_name_prefix: str,
+    ) -> None:
+        """Create a planet's spaceport operators, each with a pre-built port.
+
+        Level 1 spaceports are pre-built rather than constructed: ships need
+        fuel from turn 1 and building materials take roughly fifty turns to
+        exist anywhere. Operators get no capital injection; they bootstrap on
+        the government wage, so their stock builds slowly and compounds from
+        ship sales. See docs/spaceport-design.md.
+        """
+        spaceport = self.commodity_registry.get_commodity("spaceport")
+        facility = self.facility_registry.get_facility("spaceport")
+        if spaceport is None or facility is None:
+            return
+
+        for i in range(1, count + 1):
+            actor = Actor(
+                name=f"{actor_name_prefix}SpaceportOperator-{i}",
+                sim=self,
+                planet=planet,
+                drives=[FacilityUpkeepDrive(self.commodity_registry, facility)],
+                actor_type=ActorType.SERVICE,
+                brain=SpaceportOperatorBrain(),
+                initial_money=50,
+                initial_skills={skill_id: 1.0 for skill_id in all_skills},
+            )
+            actor.inventory.add_commodity(spaceport, 1)
             self.actors.append(actor)
             planet.add_actor(actor)
 

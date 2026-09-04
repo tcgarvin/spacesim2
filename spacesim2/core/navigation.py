@@ -26,6 +26,7 @@ Use :func:`get_navigator` to obtain the per-simulation shared instance.
 from __future__ import annotations
 
 import heapq
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, FrozenSet, List, Optional, Tuple
 from weakref import WeakKeyDictionary
@@ -51,6 +52,20 @@ FLOW_RECENCY_TURNS = 10
 # them, so galaxies with <= 16 other planets are surveyed exhaustively.
 DESTINATION_TOP_K = 8
 DESTINATION_NEAREST_M = 8
+
+# Margin over delivered cost for a standing fuel bid that means to attract a
+# delivery. Above the 15% TraderBrain arbitrage threshold so a fuel-delivery
+# TradePlan passes ``is_profitable()`` for any deliverer.
+FUEL_BID_MARGIN = 0.30
+
+# Fuel price for standing bids when no ask exists anywhere in the galaxy and
+# the local market has never traded fuel. The market's avg-price default of
+# 10 is fabricated and cannot be trusted.
+FUEL_BID_FALLBACK_FLOOR = 15
+
+# Ships are created with fuel_efficiency in [0.8, 1.2]. When estimating an
+# unknown deliverer's burn, assume the worst so the bid stays enticing.
+DELIVERER_WORST_FUEL_EFFICIENCY = 0.8
 
 
 @dataclass
@@ -463,6 +478,80 @@ class Navigator:
             result = tuple(chosen)
         index.candidate_memo[memo_key] = result
         return result
+
+    # ------------------------------------------------------------------
+    # Fuel pricing (market-derived)
+    # ------------------------------------------------------------------
+
+    def fuel_delivery_bid_price(self, planet: "Planet", quantity: int) -> int:
+        """Price for a standing fuel bid at ``planet`` that makes delivery pay.
+
+        Anchors on the cheapest ask anywhere else in the galaxy plus the
+        deliverer's round-trip burn at worst-case efficiency, amortized over
+        ``quantity``, marked up by :data:`FUEL_BID_MARGIN` so the delivery
+        clears the arbitrage threshold a trader applies. With no ask anywhere,
+        falls back to :meth:`local_fuel_reference_price`.
+
+        Lives on the navigator rather than on a ship because it is a fact
+        about the galaxy's fuel geography, and both a stranded ship and a
+        spaceport operator need the same number.
+
+        Args:
+            planet: Where the bid would rest, i.e. the delivery destination.
+            quantity: Units bid for; the round trip is amortized over it, so
+                a bigger bid tolerates a lower price per unit.
+
+        Returns:
+            A price of at least 1.
+        """
+        # Imported here, not at module scope: ship.py imports this module, so
+        # a top-level import would be circular. Only the shared burn formula
+        # is wanted, and it is a staticmethod.
+        from spacesim2.core.ship import Ship
+
+        if self.fuel_commodity() is None:
+            return FUEL_BID_FALLBACK_FLOOR
+
+        best_delivered_cost: Optional[float] = None
+        for source, ask in self.fuel_ask_planets():
+            if source is planet:
+                continue
+            distance = self.distance(source, planet)
+            leg_fuel = math.ceil(
+                Ship.calculate_fuel_needed(distance) / DELIVERER_WORST_FUEL_EFFICIENCY
+            )
+            delivered_cost = ask + (2 * leg_fuel * ask) / max(quantity, 1)
+            if best_delivered_cost is None or delivered_cost < best_delivered_cost:
+                best_delivered_cost = delivered_cost
+
+        if best_delivered_cost is not None:
+            return max(1, math.ceil(best_delivered_cost * (1.0 + FUEL_BID_MARGIN)))
+
+        # No ask anywhere: fall back to what a local producer would need.
+        return self.local_fuel_reference_price(planet)
+
+    def local_fuel_reference_price(self, planet: "Planet") -> int:
+        """Scarcity-escalated price a local fuel producer would plausibly take.
+
+        Anchors on a real local signal when one exists, never the fabricated
+        default average, and escalates with the market's scarcity pressure,
+        which grows each turn local demand goes unmet.
+
+        Args:
+            planet: The market to read.
+
+        Returns:
+            A price of at least 1.
+        """
+        fuel_commodity = self.fuel_commodity()
+        if fuel_commodity is None:
+            return FUEL_BID_FALLBACK_FLOOR
+        market = planet.market
+        reference = float(FUEL_BID_FALLBACK_FLOOR)
+        if market.has_price_signal(fuel_commodity):
+            reference = max(reference, float(market.get_avg_price(fuel_commodity)))
+        escalated = reference * (1.0 + market.scarcity_pressure_for(fuel_commodity))
+        return max(1, math.ceil(escalated))
 
     # ------------------------------------------------------------------
     # Internals

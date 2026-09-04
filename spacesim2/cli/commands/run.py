@@ -60,6 +60,12 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
         "--makers", type=int, default=2, help="Number of market makers per planet"
     )
     parser.add_argument(
+        "--operators",
+        type=int,
+        default=2,
+        help="Number of spaceport operators per planet",
+    )
+    parser.add_argument(
         "--ships", type=int, default=1, help="Number of ships per planet"
     )
     parser.add_argument(
@@ -153,6 +159,7 @@ def execute(args: argparse.Namespace) -> int:
         planets=args.planets,
         actors=args.actors,
         makers=args.makers,
+        operators=args.operators,
         ships=args.ships,
         arms=args.arms,
         lane_density=args.lane_density,

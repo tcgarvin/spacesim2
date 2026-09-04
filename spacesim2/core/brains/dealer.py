@@ -28,6 +28,11 @@ MAX_SPREAD_PERCENTAGE: float = 0.30
 DEFAULT_NEUTRAL_STOCK: int = 25
 DEFAULT_STOCK_DAYS: int = 30
 
+# Fraction of a dealer's wallet that may be committed to the buy side in
+# aggregate. A dealer whose whole purse rests in bids nobody fills has no cash
+# left for anything else, so every service brain caps its buying here.
+DEFAULT_BUY_CAPITAL_FRACTION: float = 0.70
+
 # Default randomness source for draw_spread. A module-level instance rather than
 # the `random` module so callers can pass their own Random for deterministic
 # tests.
