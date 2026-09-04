@@ -4,6 +4,53 @@ Append-only record of closed decisions, postmortems, and landed campaigns.
 Newest first. Open work lives in `TODO.md`; current reference docs live
 alongside this file.
 
+## 2026-09-03 - Medicine stockpile and fleet lockout: four root causes
+
+Landed on main. Medicine sat in producer inventories (16k units on 16
+planets) while a quarter to a third of actors were health-deprived, and
+ship-delivered volume fell to zero by turn 400 on the star-lane galaxy.
+Four read-only probes, one per suspect, found four separate causes:
+
+1. Consumer WTP ceiling. `_value_of_money` discounted the food numeraire by
+   the pantry buffer. Actors keep a six-day pantry by policy against a
+   seven-day target, so the buffer sat near 0.3 forever and no good could
+   be worth more than ~2.7x the food price (~20). Medicine costs ~29 to
+   make. Deprived actors were solvent (median 1,248 credits) and bidding.
+   Decision: `FoodDrive.security` adds the days of food an actor could buy
+   to the pantry before the same log-normalization; lambda uses it,
+   marginal welfare still uses the physical pantry. Deprivation 26% to
+   3-5% in isolation.
+2. Depth-blind recipe scoring. Output was valued at the top-of-book bid,
+   so one-unit market-maker probes at 130-170 read as demand and 156 of
+   1,600 actors made medicine against 18 units/turn of consumption.
+   Decision: `_output_unit_value` values by liquidity tier: top bid when
+   recent volume covers the run, else the bid level whose depth absorbs a
+   few runs, else the recent average, and for never-traded goods the bid
+   capped at 1.5x imputed cost so cold-start procurement bids still open a
+   tier. Producers 330 to 124 at 16 planets.
+3. Fleet lockout. `_pair_economics` needs cash for round-trip fuel plus a
+   full refuel reserve at origin prices. Ship capital was a constant 1000
+   tuned when a trip cost ~90; with longer lane routes and fuel spikes the
+   floor passed the stake, every pair returned None, repositioning used
+   the same path, and there is no income but cargo, so bankruptcy was
+   absorbing. Decision: capital and tank sized from the mean lane round
+   trip at setup; the refuel floor charges only the reserve the trip does
+   not leave in the tank; a distressed ship may sell tank fuel down to the
+   survival target. Rejected: relaxing the round-trip fuel gate, which an
+   A/B showed makes deaths worse and pins ships in maintenance.
+4. Chain standoff on starved planets. Once a good has any trade history,
+   procurement bids rest at the average, which on a cold planet equals
+   the imputed make cost, so `make_chemicals` scores exactly zero against
+   the 1.2x entry margin and the tiers above it can never execute. Forty
+   of fifty local industrialists idled on a positive-scoring recipe they
+   could not run. Decision: see the commit that followed this entry.
+
+Also landed: the summary verdict gained turn-gated per-drive thresholds,
+a `markets` liveness section and a `trade` section for ship-delivered
+volume, since none of the above would have failed the old food-only gate.
+The health KPI `mean_health` is a possession indicator (fraction holding
+any medicine), not a graded score.
+
 ## 2026-09-02 - Live UI: simulation moved off the render thread
 
 Landed on branch `spiral-galaxy-star-lanes`. At 100 planets `run_turn` ran
