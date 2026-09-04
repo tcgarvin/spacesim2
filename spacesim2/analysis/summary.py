@@ -81,6 +81,7 @@ def compute_summary(sim: Simulation) -> Dict[str, object]:
     Numeric values are rounded for compact, stable output.
     """
     regular_actors = [a for a in sim.actors if a.actor_type == ActorType.REGULAR]
+    service_actors = [a for a in sim.actors if a.actor_type == ActorType.SERVICE]
 
     drives = _summarize_drives(regular_actors)
     prices = _summarize_prices(sim)
@@ -90,9 +91,7 @@ def compute_summary(sim: Simulation) -> Dict[str, object]:
         "turns": sim.current_turn,
         "planets": len(sim.planets),
         "regular_actors": len(regular_actors),
-        "market_makers": sum(
-            1 for a in sim.actors if a.actor_type == ActorType.MARKET_MAKER
-        ),
+        "service_actors": _summarize_service_actors(service_actors),
         "ships": len(sim.ships),
         "money": _summarize_money(regular_actors),
         "drives": drives,
@@ -103,6 +102,15 @@ def compute_summary(sim: Simulation) -> Dict[str, object]:
     }
     summary["verdict"] = _build_verdict(drives, prices, markets, sim.current_turn)
     return summary
+
+
+def _summarize_service_actors(service_actors: List) -> Dict[str, int]:
+    """Count service actors by brain class name (e.g. {"MarketMakerBrain": 100})."""
+    counts: Dict[str, int] = {}
+    for actor in service_actors:
+        brain_name = type(actor.brain).__name__
+        counts[brain_name] = counts.get(brain_name, 0) + 1
+    return counts
 
 
 def _summarize_money(regular_actors: List) -> Dict[str, float]:

@@ -29,7 +29,7 @@ def test_planet_wellbeing_in_unit_range_and_excludes_market_makers() -> None:
         # must not influence the value.
         scores = []
         for actor in planet.actors:
-            if actor.actor_type == ActorType.MARKET_MAKER or not actor.drives:
+            if actor.actor_type == ActorType.SERVICE or not actor.drives:
                 continue
             scores.append(
                 sum(d.metrics.get_score() for d in actor.drives) / len(actor.drives)

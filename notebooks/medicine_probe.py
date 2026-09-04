@@ -56,7 +56,7 @@ for turn, world, ships in history:
 
 # ---------------------------------------------- 1. who holds it, by type
 def actor_kind(a):
-    if a.actor_type == ActorType.MARKET_MAKER:
+    if a.actor_type == ActorType.SERVICE:
         return "market_maker"
     return "industrialist" if isinstance(a.brain, IndustrialistBrain) else "colonist"
 
@@ -97,8 +97,8 @@ for planet in sim.planets:
     sells = [o for o in mkt.sell_orders.get(med, []) if not o.cancelled]
     bid = max((o.price for o in buys), default=0)
     ask = min((o.price for o in sells), default=0)
-    regulars = [a for a in planet.actors if a.actor_type != ActorType.MARKET_MAKER]
-    mms = [a for a in planet.actors if a.actor_type == ActorType.MARKET_MAKER]
+    regulars = [a for a in planet.actors if a.actor_type != ActorType.SERVICE]
+    mms = [a for a in planet.actors if a.actor_type == ActorType.SERVICE]
     stock = sum(a.inventory.get_quantity(med) for a in planet.actors)
     holders = sum(1 for a in regulars if a.inventory.get_quantity(med) > 0)
     mm_stock = sum(a.inventory.get_quantity(med) for a in mms)
@@ -134,14 +134,14 @@ for r in sorted(planet_rows, key=lambda r: -r[8]):
 p("\n--- deprived actors (health debt > 0.3): what are they doing? ---")
 deprived = []
 for a in sim.actors:
-    if a.actor_type == ActorType.MARKET_MAKER:
+    if a.actor_type == ActorType.SERVICE:
         continue
     for d in a.drives:
         if d.metrics.get_name() == "health" and d.metrics.debt > 0.3:
             deprived.append((a, d))
 
 p(
-    f"count deprived: {len(deprived)} of {sum(1 for a in sim.actors if a.actor_type != ActorType.MARKET_MAKER)}"
+    f"count deprived: {len(deprived)} of {sum(1 for a in sim.actors if a.actor_type != ActorType.SERVICE)}"
 )
 if deprived:
     monies = sorted(a.money for a, _ in deprived)
@@ -234,7 +234,7 @@ for rid, n in sorted(recipe_counts.items(), key=lambda kv: -kv[1])[:14]:
     p(f"  {rid:>28} {n:>5}")
 
 # ----------------------------------------------------- 5. consumption math
-n_regular = sum(1 for a in sim.actors if a.actor_type != ActorType.MARKET_MAKER)
+n_regular = sum(1 for a in sim.actors if a.actor_type != ActorType.SERVICE)
 p(
     f"\nexpected medicine consumption: {n_regular} actors * 1/90 per turn = "
     f"{n_regular / 90:.1f} units/turn = {n_regular / 90 * TURNS:.0f} over the run"

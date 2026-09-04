@@ -213,8 +213,8 @@ def main():
     rows = []
     for planet in sim.planets:
         mkt = planet.market
-        regulars = [a for a in planet.actors if a.actor_type != ActorType.MARKET_MAKER]
-        mms = [a for a in planet.actors if a.actor_type == ActorType.MARKET_MAKER]
+        regulars = [a for a in planet.actors if a.actor_type != ActorType.SERVICE]
+        mms = [a for a in planet.actors if a.actor_type == ActorType.SERVICE]
         buys = [o for o in mkt.buy_orders.get(med, []) if not o.cancelled]
         sells = [o for o in mkt.sell_orders.get(med, []) if not o.cancelled]
         bid = max((o.price for o in buys), default=0)
@@ -302,7 +302,7 @@ def main():
             )
         )
 
-        regulars = [a for a in planet.actors if a.actor_type != ActorType.MARKET_MAKER]
+        regulars = [a for a in planet.actors if a.actor_type != ActorType.SERVICE]
         inds = [a for a in regulars if isinstance(a.brain, IndustrialistBrain)]
         cols = [a for a in regulars if not isinstance(a.brain, IndustrialistBrain)]
         p(f"  population: {len(inds)} industrialists, {len(cols)} colonists")
@@ -347,7 +347,7 @@ def main():
             )
 
         # Market maker medicine behavior.
-        mms = [a for a in planet.actors if a.actor_type == ActorType.MARKET_MAKER]
+        mms = [a for a in planet.actors if a.actor_type == ActorType.SERVICE]
         for mm in mms:
             orders = mkt.get_actor_orders(mm)
             mb = [
@@ -370,7 +370,7 @@ def main():
         for o in buys:
             k = (
                 "market_maker"
-                if o.actor.actor_type == ActorType.MARKET_MAKER
+                if o.actor.actor_type == ActorType.SERVICE
                 else (
                     "industrialist"
                     if isinstance(o.actor.brain, IndustrialistBrain)

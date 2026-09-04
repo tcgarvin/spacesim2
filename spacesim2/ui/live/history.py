@@ -39,7 +39,7 @@ def _global_wellbeing(sim: Simulation, wellbeing_by_name: Mapping[str, float]) -
     weighted = 0.0
     population = 0
     for planet in sim.planets:
-        count = sum(1 for a in planet.actors if a.actor_type != ActorType.MARKET_MAKER)
+        count = sum(1 for a in planet.actors if a.actor_type != ActorType.SERVICE)
         weighted += wellbeing_by_name.get(planet.name, 0.0) * count
         population += count
     if population == 0:

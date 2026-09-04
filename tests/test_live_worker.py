@@ -46,7 +46,7 @@ def test_startup_frame_matches_galaxy_without_extra_history_point() -> None:
     assert {p.name for p in frame.planets} == {p.name for p in sim.planets}
     assert {s.name for s in frame.ships} == {s.name for s in sim.ships}
     assert frame.vitals.population == sum(
-        1 for p in sim.planets for a in p.actors if a.actor_type.name != "MARKET_MAKER"
+        1 for p in sim.planets for a in p.actors if a.actor_type.name != "SERVICE"
     )
     assert frame.planet_details == {} and frame.ship_details == {}
     # The recorder's own baseline is the only turn-0 sample.

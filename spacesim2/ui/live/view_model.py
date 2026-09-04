@@ -135,7 +135,7 @@ def planet_wellbeing(planet: Planet) -> float:
     """
     scores: List[float] = []
     for actor in planet.actors:
-        if actor.actor_type == ActorType.MARKET_MAKER:
+        if actor.actor_type == ActorType.SERVICE:
             continue
         if not actor.drives:
             continue
@@ -158,7 +158,7 @@ def planet_wellbeing_by_name(sim: Simulation) -> Dict[str, float]:
 
 
 def _regular_population(planet: Planet) -> int:
-    return sum(1 for a in planet.actors if a.actor_type != ActorType.MARKET_MAKER)
+    return sum(1 for a in planet.actors if a.actor_type != ActorType.SERVICE)
 
 
 def _drive_stats(planet: Planet) -> Tuple[DriveStat, ...]:
@@ -169,7 +169,7 @@ def _drive_stats(planet: Planet) -> Tuple[DriveStat, ...]:
     """
     scores_by_name: dict[str, List[float]] = {}
     for actor in planet.actors:
-        if actor.actor_type == ActorType.MARKET_MAKER:
+        if actor.actor_type == ActorType.SERVICE:
             continue
         for drive in actor.drives:
             score = max(0.0, min(1.0, drive.metrics.get_score()))
@@ -219,7 +219,7 @@ def planet_detail(
 ) -> PlanetDetail:
     """Build the drill-down snapshot the planet overlay renders each frame."""
     total_wealth = sum(
-        a.money for a in planet.actors if a.actor_type != ActorType.MARKET_MAKER
+        a.money for a in planet.actors if a.actor_type != ActorType.SERVICE
     )
     return PlanetDetail(
         name=planet.name,

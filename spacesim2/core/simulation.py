@@ -409,17 +409,12 @@ class Simulation:
         for i in range(num_market_makers):
             initial_skills = {skill_id: 1.0 for skill_id in all_skills}
 
-            drives = [
-                Drive(commodity_registry=self.commodity_registry)
-                for Drive in (FoodDrive, ClothingDrive, ShelterDrive, HealthDrive)
-            ]
-
             actor = Actor(
                 name=f"{actor_name_prefix}MarketMaker-{i + 1}",
                 sim=self,
                 planet=planet,
                 drives=[],
-                actor_type=ActorType.MARKET_MAKER,
+                actor_type=ActorType.SERVICE,
                 brain=MarketMakerBrain(),
                 initial_money=market_maker_capital,
                 initial_skills=initial_skills,

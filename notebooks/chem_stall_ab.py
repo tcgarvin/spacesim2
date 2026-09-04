@@ -43,8 +43,7 @@ def run(label):
     inds = [
         a
         for a in sim.actors
-        if a.actor_type != ActorType.MARKET_MAKER
-        and isinstance(a.brain, IndustrialistBrain)
+        if a.actor_type != ActorType.SERVICE and isinstance(a.brain, IndustrialistBrain)
     ]
     chosen = Counter(a.brain.chosen_recipe_id for a in inds)
     blocked = sum(
@@ -75,7 +74,7 @@ def run(label):
     depr = []
     starved = 0
     for planet in sim.planets:
-        regs = [a for a in planet.actors if a.actor_type != ActorType.MARKET_MAKER]
+        regs = [a for a in planet.actors if a.actor_type != ActorType.SERVICE]
         d = 0
         for a in regs:
             for dr in a.drives:

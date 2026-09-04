@@ -20,7 +20,7 @@ class ActorType(enum.Enum):
     """Types of actors in the simulation."""
 
     REGULAR = "regular"
-    MARKET_MAKER = "market_maker"
+    SERVICE = "service"
 
 
 class Actor:
@@ -42,8 +42,8 @@ class Actor:
         initial_skills: Optional[Dict[str, float]] = None,
     ) -> None:
         self.name = name
-        # Market makers get more initial money
-        if actor_type == ActorType.MARKET_MAKER and initial_money == 50:
+        # Service actors (e.g. market makers) get more initial money
+        if actor_type == ActorType.SERVICE and initial_money == 50:
             self.money = 200
         else:
             self.money = initial_money

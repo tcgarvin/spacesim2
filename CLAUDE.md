@@ -97,6 +97,7 @@ committing on the default branch" behavior.
 | Simulation design | `docs/sim-design.md` | Game mechanics and rules |
 | Turn flow & testing | `docs/dev-guide-simulation.md` | Debugging AI, market mechanics, testing |
 | Ship trading AI | `docs/dev-guide-ships.md` | Ship brains, fuel and trade logic |
+| Spaceport operators | `docs/spaceport-design.md` | Service-actor design (proposal) |
 | Notebook analysis | `notebooks/README.md` | Marimo notebooks |
 | Needs/drives system | `docs/needs.md` | Actor consumption |
 | Skills system | `docs/skills.md` | Actor skill levels, production |

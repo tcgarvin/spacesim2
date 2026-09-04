@@ -64,7 +64,7 @@ def test_simulation_setup() -> None:
     for actor in sim.actors:
         if actor.actor_type == ActorType.REGULAR:
             regular_count += 1
-        elif actor.actor_type == ActorType.MARKET_MAKER:
+        elif actor.actor_type == ActorType.SERVICE:
             market_maker_count += 1
 
     assert regular_count == 8

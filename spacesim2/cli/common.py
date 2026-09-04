@@ -56,7 +56,7 @@ def configure_actor_logging(sim: Simulation, spec: str = "1") -> int:
         return len(sim.actors) + len(sim.ships)
 
     if spec.isdigit():
-        eligible = [a for a in sim.actors if a.actor_type != ActorType.MARKET_MAKER]
+        eligible = [a for a in sim.actors if a.actor_type != ActorType.SERVICE]
         sample = random.sample(eligible, min(int(spec), len(eligible)))
         for actor in sample:
             sim.data_logger.add_actor_to_log(actor)
