@@ -14,6 +14,7 @@ from spacesim2.core.drives import (
     HealthDrive,
     ShelterDrive,
 )
+from spacesim2.core.facility import FacilityRegistry
 from spacesim2.core.galaxy import (
     DEFAULT_ARMS,
     DEFAULT_LANE_DENSITY,
@@ -131,12 +132,16 @@ class Simulation:
         commodities_path = data_dir / "commodities.yaml"
         processes_path = data_dir / "processes.yaml"
         skills_path = data_dir / "skills.yaml"
+        facilities_path = data_dir / "facilities.yaml"
 
         self.commodity_registry = CommodityRegistry()
         self.commodity_registry.load_from_file(commodities_path)
 
         self.process_registry = ProcessRegistry(self.commodity_registry)
         self.process_registry.load_from_file(processes_path)
+
+        self.facility_registry = FacilityRegistry(self.commodity_registry)
+        self.facility_registry.load_from_file(facilities_path)
 
         self.skills_registry = SkillsRegistry()
         self.skills_registry.load_from_file(skills_path)

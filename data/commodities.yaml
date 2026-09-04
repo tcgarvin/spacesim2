@@ -188,6 +188,11 @@
   transportable: false
   description: State-of-the-art automated manufacturing facility for producing advanced goods.
 
+- id: spaceport
+  name: Spaceport
+  transportable: false
+  description: Ground spaceport with fuel storage and landing pads.
+
 # --- Tier 3 Advanced Goods ---
 
 - id: advanced_building_materials
