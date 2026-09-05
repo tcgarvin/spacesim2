@@ -31,6 +31,7 @@ class TestShip(unittest.TestCase):
                 "commodity_registry": self.commodity_registry,
                 "planets": planets,
                 "star_lanes": StarLaneNetwork.complete(planets),
+                "current_turn": 0,
             },
         )()
 
@@ -55,9 +56,13 @@ class TestShip(unittest.TestCase):
         self.assertEqual(fuel_needed, 3)  # 50 / 20 = 2.5, rounded up to 3
 
     def test_journey_start_and_progress(self):
+        self.assertEqual(self.ship.last_departure_turn, 0)
+        self.mock_sim.current_turn = 7
         self.assertTrue(self.ship.start_journey(self.mars))
         self.assertEqual(self.ship.status, ShipStatus.TRAVELING)
         self.assertEqual(self.ship.destination, self.mars)
+        self.assertEqual(self.ship.last_departure_turn, 7)
+        self.assertEqual(self.ship.departure_turns, [7])
 
         fuel_consumed = 3  # 50 / 20 = 2.5, rounded up to 3
         self.assertEqual(self.ship.cargo.get_quantity(self.fuel), 50 - fuel_consumed)
@@ -85,6 +90,10 @@ class TestShip(unittest.TestCase):
 
         # Maintenance can still be flagged at random, so either status is accepted.
         self.assertIn(ship2.status, [ShipStatus.DOCKED, ShipStatus.NEEDS_MAINTENANCE])
+
+        # A failed departure must not be recorded as activity.
+        self.assertEqual(ship2.last_departure_turn, 0)
+        self.assertEqual(ship2.departure_turns, [])
 
 
 if __name__ == "__main__":

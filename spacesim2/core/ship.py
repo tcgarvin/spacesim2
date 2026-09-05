@@ -1558,6 +1558,14 @@ class Ship:
         self.last_action = "None"
         self.status = ShipStatus.DOCKED
         self.simulation = simulation
+        # Turn this ship last began a journey; 0 until its first departure.
+        # Activity KPIs use this to spot ships that sit docked indefinitely
+        # even when they are not "stranded" by the fuel-ask definition.
+        self.last_departure_turn = 0
+        # Every turn a journey actually started, oldest first. Uncapped: the
+        # summary KPI only ever looks at a short recent window, and the list
+        # is small relative to a run's other per-actor bookkeeping.
+        self.departure_turns: List[int] = []
         self.food_consumed_this_turn = (
             True  # Ships don't eat, but needed for compatibility
         )
@@ -1791,6 +1799,8 @@ class Ship:
         self.status = ShipStatus.TRAVELING
         self.destination = destination
         self.route = route
+        self.last_departure_turn = self.simulation.current_turn
+        self.departure_turns.append(self.simulation.current_turn)
 
         hops = len(route) - 1
         self.last_action = (

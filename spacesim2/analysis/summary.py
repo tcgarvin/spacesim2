@@ -13,9 +13,9 @@ from __future__ import annotations
 import statistics
 from typing import Dict, List, Sequence
 
-from spacesim2.core.actor import ActorType
+from spacesim2.core.actor import Actor, ActorType
 from spacesim2.core.navigation import get_navigator
-from spacesim2.core.ship import Ship
+from spacesim2.core.ship import Ship, ShipStatus
 from spacesim2.core.simulation import Simulation
 
 # Verdict thresholds are catastrophe floors, not targets: a healthy run sits
@@ -300,6 +300,18 @@ def _summarize_fleet_fuel(sim: Simulation) -> Dict[str, object]:
     ``industrialist_fuel_stock`` are nova_fuel held by SERVICE actors and by
     IndustrialistBrain actors respectively, a coarse look at whether fuel is
     piling up off the market instead of reaching ships.
+
+    ``stranded_ships`` is definition-dependent: once spaceport operators keep
+    a fuel ask on most planets, a docked ship with no local ask is rare even
+    if it never actually departs. ``idle_ships`` is a definition-independent
+    activity floor: docked ships that have not departed in the last
+    `_ACTIVITY_WINDOW_TURNS` turns (or never have). ``departures_window``
+    counts journeys started fleet-wide in that window, and
+    ``fuel_sold_by_service_window`` / ``fuel_sold_by_service_price`` track
+    nova_fuel actually sold by SERVICE actors (spaceport operators) in the
+    same window, volume-weighted by price. Like `ship_delivered_units`, the
+    fuel-sold figures read from each market's capped transaction history, so
+    on a very busy market they can cover fewer turns than the window.
     """
     navigator = get_navigator(sim)
     navigator.refresh_market_facts(turn=sim.current_turn)
@@ -312,6 +324,17 @@ def _summarize_fleet_fuel(sim: Simulation) -> Dict[str, object]:
     ship_count = len(sim.ships)
     stranded_ship_share = round(stranded_ships / ship_count, 3) if ship_count else 0.0
 
+    cutoff = sim.current_turn - _ACTIVITY_WINDOW_TURNS
+    idle_ships = sum(
+        1
+        for ship in sim.ships
+        if ship.status == ShipStatus.DOCKED and ship.last_departure_turn < cutoff
+    )
+    idle_ship_share = round(idle_ships / ship_count, 3) if ship_count else 0.0
+    departures_window = sum(
+        sum(1 for turn in ship.departure_turns if turn >= cutoff) for ship in sim.ships
+    )
+
     fuel_commodity = sim.commodity_registry.get_commodity("nova_fuel")
     service_fuel_stock = 0
     industrialist_fuel_stock = 0
@@ -323,12 +346,34 @@ def _summarize_fleet_fuel(sim: Simulation) -> Dict[str, object]:
             if type(actor.brain).__name__ == "IndustrialistBrain":
                 industrialist_fuel_stock += quantity
 
+    fuel_sold_units = 0
+    fuel_sold_value = 0
+    if fuel_commodity is not None:
+        for planet in sim.planets:
+            for tx in planet.market.transaction_history:
+                if tx.turn < cutoff or tx.commodity_type is not fuel_commodity:
+                    continue
+                if (
+                    isinstance(tx.seller, Actor)
+                    and tx.seller.actor_type == ActorType.SERVICE
+                ):
+                    fuel_sold_units += tx.quantity
+                    fuel_sold_value += tx.quantity * tx.price
+    fuel_sold_by_service_price = (
+        round(fuel_sold_value / fuel_sold_units, 1) if fuel_sold_units else 0.0
+    )
+
     return {
         "fuel_ask_planets": fuel_ask_planets,
         "stranded_ships": stranded_ships,
         "stranded_ship_share": stranded_ship_share,
+        "idle_ships": idle_ships,
+        "idle_ship_share": idle_ship_share,
+        "departures_window": departures_window,
         "service_fuel_stock": service_fuel_stock,
         "industrialist_fuel_stock": industrialist_fuel_stock,
+        "fuel_sold_by_service_window": fuel_sold_units,
+        "fuel_sold_by_service_price": fuel_sold_by_service_price,
     }
 
 

@@ -54,6 +54,14 @@ section, and a `verdict`.
   reserve with no local ask to buy up from; `service_fuel_stock` and
   `industrialist_fuel_stock` are nova_fuel held by SERVICE actors and by
   IndustrialistBrain actors, a coarse check for fuel piling up off-market.
+  `stranded_ships` is definition-dependent (a fuel ask on nearly every planet
+  can hide a ship that simply never departs), so `idle_ships` /
+  `idle_ship_share` give a definition-independent floor: docked ships with no
+  departure in the last `window_turns`. `departures_window` is journeys
+  started fleet-wide in that window. `fuel_sold_by_service_window` and
+  `fuel_sold_by_service_price` are nova_fuel units SERVICE actors actually
+  sold in the window and their volume-weighted price, from the same capped
+  transaction history as `ship_delivered_units`.
 
 The verdict is a catastrophe floor, not a target: `PASS` means not obviously
 broken. It checks per-drive health floors, that the food market is alive, and
