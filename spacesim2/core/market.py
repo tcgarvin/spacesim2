@@ -856,6 +856,27 @@ class Market:
             self._bid_levels_cache[commodity_type] = cached
         return list(cached)
 
+    def get_ask_levels(
+        self, commodity_type: "CommodityDefinition"
+    ) -> List[Tuple[int, int]]:
+        """Resting sell orders as (price, quantity) pairs, cheapest first.
+
+        The mirror of :meth:`get_bid_levels`, for buyers. Top of ask says only
+        that *something* is for sale: a one-unit lowball ask is not a cost
+        basis for a hold-sized purchase, so a planner sizing a load has to
+        walk the levels the way a seller walks the bids.
+
+        Uncached, unlike the bid side, because it is read once per origin
+        commodity per planning ship-turn rather than once per candidate pair.
+        """
+        levels = [
+            (o.price, o.quantity)
+            for o in self.sell_orders.get(commodity_type, [])
+            if not o.cancelled
+        ]
+        levels.sort(key=lambda level: level[0])
+        return levels
+
     def get_bid_price_at_depth(
         self, commodity_type: "CommodityDefinition", quantity: int
     ) -> Optional[int]:

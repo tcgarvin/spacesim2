@@ -315,11 +315,14 @@ def test_deliverer_keeps_escape_fuel_when_selling():
         destination=b,
         commodity=fuel,
         quantity=34,
+        bid_price_per_unit=10,
         purchase_price_per_unit=10,
         expected_sell_price_per_unit=18,
         distance=60.0,
         fuel_needed_one_way=3,
         fuel_price_at_origin=10,
+        fuel_units_from_tank=3,
+        fuel_price_from_tank=10,
     )
     deliverer.brain.decide_trade_actions()
 
@@ -707,11 +710,14 @@ def _accumulating_plan(ship, origin, destination, commodity, quantity=10):
         destination=destination,
         commodity=commodity,
         quantity=quantity,
+        bid_price_per_unit=10,
         purchase_price_per_unit=10,
         expected_sell_price_per_unit=30,
         distance=distance,
         fuel_needed_one_way=ship.fuel_required(distance),
         fuel_price_at_origin=10,
+        fuel_units_from_tank=0,
+        fuel_price_from_tank=10,
     )
     ship.brain._current_plan = plan
     ship.brain._plan_loaded = False

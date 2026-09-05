@@ -18,8 +18,29 @@ A ship brain subclasses `ShipBrain` and implements:
 Evaluate the whole cycle before buying: buy at origin, travel, sell at
 destination. `TraderBrain` is the reference implementation.
 
-- Charge round-trip fuel to every plan.
+- Charge the **outbound leg's** fuel to the plan's margin; the return leg is
+  capital the next trade spends. Charging both legs to one haul killed real
+  spreads whose quantity was flow-capped to a handful of units. The round
+  trip is still *funded*: the cash gate in `_pair_economics` withholds
+  round-trip fuel plus the refuel floor before a credit reaches cargo, and
+  that gate is load-bearing against fleet insolvency. Do not relax it.
+- Value the outbound burn honestly: units already in the tank at the galaxy
+  fuel reference (`_fuel_value_reference`), units that must be bought at the
+  local ask, however spiked. The ship still *buys* the whole round-trip
+  shortfall. Rationing the purchase to this leg at scarcity prices, gated on
+  the destination still being fuel-safe, was tried and rejected: it grounded
+  the fleet (stranded 3 -> 14, departures 68 -> 22 over one 200-turn
+  30-planet run), because a fuel-safe destination is a market with depth
+  *now* and by arrival it usually has none.
 - Execute only plans with margin at or above `TradePlan.MIN_MARGIN` (15%).
+- Separate the **bid** from the **cost basis**. `TradePlan.bid_price_per_unit`
+  is what the ship posts, `max(best ask, flow price)`, deliberately high so
+  the order also wins units out of the turn's flow.
+  `TradePlan.purchase_price_per_unit` is what the cargo is expected to cost:
+  the resting asks walked for the planned quantity (`Market.get_ask_levels`),
+  any remainder at the bid. The evaluation price, not the bid, filters the
+  destination's bids and flow; using the bid inflated the cost basis of every
+  plan that had a real cheap ask behind it.
 - Cap quantity at the destination's visible bid depth above cost and
   project revenue by walking the bid book (`Market.get_bid_levels`).
   Top-of-book times quantity overestimates on thin books.
@@ -109,6 +130,27 @@ book per turn: when upkeep ran, `_execute_trade_plan` is passed
 `fuel_handled=True` and skips its own fuel buy and top-up rather than
 double-bidding. Below the reserve `_sellable_quantity` yields no fuel, so
 the early upkeep cannot self-trade against a same-turn fuel sell.
+
+### Fuel as cargo
+
+Tank fuel is normally not trade goods: only overflow above a full tank is,
+or `_fuel_survival_target()` downward while a ship is distressed. Otherwise a
+topped-up ship sells its tank at the local bid and re-buys at the ask every
+other turn, bleeding the spread.
+
+The exception is an explicit fuel run. `_fuel_delivery_in_progress` is true
+at **both ends** of a `nova_fuel` `TradePlan`, and `_sellable_quantity` then
+counts everything above `_fuel_sell_reserve()` - the travel reserve for the
+trip. The origin end matters as much as the destination: a plan counts its
+load through `_sellable_quantity`, so while only overflow counted at the
+origin, a fuel plan never reached `_plan_loaded` and timed out after
+`ACCUMULATION_PATIENCE` every single time. Fuel arbitrage was structurally
+dead, on maps where a third to a half of planets have no fuel ask at all.
+
+Counting as load is not permission to sell here: the plan lifecycle in
+`decide_trade_actions` marks such a ship loaded and routes it to the plan's
+destination, and `decide_travel` still gates the departure on the one-way
+burn plus `_fuel_safe_destination`.
 
 ### Where fuel can actually be bought
 
@@ -260,16 +302,19 @@ class TradePlan:
     destination: Planet
     commodity: CommodityDefinition
     quantity: int
-    purchase_price_per_unit: int
+    bid_price_per_unit: int       # what the ship posts
+    purchase_price_per_unit: int  # what the cargo is expected to cost
     expected_sell_price_per_unit: int
     distance: float
     fuel_needed_one_way: int
-    fuel_price_at_origin: int
+    fuel_price_at_origin: int     # local ask: what fuel bought here costs
+    fuel_units_from_tank: int     # of the outbound burn, units already aboard
+    fuel_price_from_tank: int     # galaxy fuel reference
     expected_maintenance_cost: int = 0
 
     # Computed properties:
-    # - fuel_needed_round_trip
-    # - total_fuel_cost
+    # - fuel_needed_round_trip    # what the cash gate funds
+    # - total_fuel_cost           # the OUTBOUND leg only, mixed-priced
     # - total_purchase_cost
     # - expected_revenue
     # - expected_profit
