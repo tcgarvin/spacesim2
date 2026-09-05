@@ -4,6 +4,26 @@ Append-only record of closed decisions, postmortems, and landed campaigns.
 Newest first. Open work lives in `TODO.md`; current reference docs live
 alongside this file.
 
+## 2026-09-05 - Idle ships round 2: fuel geography, distress exit, no self-trades
+
+Done (fb694f9, 903360e, 5cf3eee, 6a4b0be, 5e04fc8). After round 1 the
+livelock was gone (local-sale streaks median 68 turns to 2) but half the
+fleet still idled by turn 450, now on fuel geography and cash. A cash
+ledger showed cargo trading is net positive fleet-wide while fuel bought
+above 1.3x the galaxy reference ate three quarters of all fuel spend; the
+cash gate was a symptom (median gated ship held 24 credits) and stays.
+Changes: the arrival escape reserve is a floor and is never waived on
+destination ask depth that may be gone by landing; the survival top-up on
+a spiked market buys only the escape leg to the nearest safe seller;
+repositioning counts fuel the ship can buy here and funds it through the
+same commitment hold-cargo trips use; distressed ships accept any haul
+that clears the return-leg fuel and exit distress only above the cash
+floor; an actor never trades with itself (maker discovery ladders met at
+2, food industrialists sold their pantry and bid it back). Single 300-turn
+pairs per change: stranded 37 to 24, idle 61 to 32. Multi-run A/B in
+`tmp/ab_out/`. Left open: an absolute per-unit margin floor (a third of
+deliveries realize negative margin, fiber worst) would be a new tunable.
+
 ## 2026-09-05 - Idle ships: local-sale veto expires, one-way fuel in margins
 
 Done (8ff2118, 398948e, b096ff3). With operators selling fuel on most
