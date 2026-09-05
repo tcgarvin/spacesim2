@@ -254,3 +254,37 @@ def test_fuel_outside_a_fuel_plan_is_still_not_trade_cargo():
     # overflow above the tank would be, and there is none.
     assert trader.brain._current_plan is None
     assert trader.brain._sellable_quantity(fuel) == 0
+
+
+# ---------------------------------------------------------------------------
+# A ship never prices an entry off its own ask
+# ---------------------------------------------------------------------------
+
+
+def test_own_ask_is_not_an_acquisition_opportunity():
+    """The ship's own resting ask is not something it can buy from."""
+    sim, _fuel, food, (a, _b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    trader = _make_ship(sim, a, money=5000, name="Trader")
+    trader.cargo.add_commodity(food, 10)
+    a.market.place_sell_order(trader, food, 10, 12)
+
+    # The only ask in the book is ours, and nothing has traded here, so there
+    # is nothing to acquire - not a cost basis of 12.
+    assert trader.brain._origin_acquisition(a, food) is None
+
+
+def test_acquisition_walks_past_its_own_ask_to_the_real_one():
+    """Own asks drop out of the walk; a stranger's ask still sets the entry."""
+    sim, _fuel, food, (a, _b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    seller = _make_ship(sim, a, name="Seller")
+    seller.cargo.add_commodity(food, 40)
+    a.market.place_sell_order(seller, food, 40, 20)
+
+    trader = _make_ship(sim, a, money=5000, name="Trader")
+    trader.cargo.add_commodity(food, 10)
+    a.market.place_sell_order(trader, food, 10, 5)  # our own, cheaper, ask
+
+    acquisition = trader.brain._origin_acquisition(a, food)
+    assert acquisition is not None
+    assert acquisition.entry_price == 20
+    assert acquisition.ask_levels == [(20, 40)]

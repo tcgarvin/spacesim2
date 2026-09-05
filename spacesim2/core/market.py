@@ -857,7 +857,9 @@ class Market:
         return list(cached)
 
     def get_ask_levels(
-        self, commodity_type: "CommodityDefinition"
+        self,
+        commodity_type: "CommodityDefinition",
+        exclude_actor: Optional[MarketParticipant] = None,
     ) -> List[Tuple[int, int]]:
         """Resting sell orders as (price, quantity) pairs, cheapest first.
 
@@ -866,13 +868,18 @@ class Market:
         basis for a hold-sized purchase, so a planner sizing a load has to
         walk the levels the way a seller walks the bids.
 
+        ``exclude_actor`` drops that participant's own asks. Matching has no
+        buyer-is-seller guard, so a planner that prices a purchase off a book
+        containing its own asks bids at or above them and buys its own cargo
+        back. Buyers must pass themselves.
+
         Uncached, unlike the bid side, because it is read once per origin
         commodity per planning ship-turn rather than once per candidate pair.
         """
         levels = [
             (o.price, o.quantity)
             for o in self.sell_orders.get(commodity_type, [])
-            if not o.cancelled
+            if not o.cancelled and o.actor is not exclude_actor
         ]
         levels.sort(key=lambda level: level[0])
         return levels
