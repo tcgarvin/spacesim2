@@ -412,23 +412,28 @@ class TraderBrain(ShipBrain):
         callers that have to *fund* a trip ask the same question the gate
         that approves it asks, instead of guessing.
 
-        Two ways out of a destination, whichever is cheaper: buy fuel there,
-        which needs the ship to cover only what the resting asks cannot
-        supply, or arrive already holding the leg to the nearest planet that
-        sells fuel. A live ask on its own is not enough: a one-unit ask is a
-        market a ship lands in and never leaves, which is how ships ended up
-        parked with empty tanks and full purses. When fuel is purchasable
-        nowhere in the galaxy yet, grounding the fleet would be worse than
-        the risk, so the requirement falls back to the return leg to
-        ``return_planet``.
+        The requirement is the escape leg: fuel enough, on arrival, to reach
+        the nearest *other* planet that sells fuel. It is a hard floor, and
+        depth in the destination's own ask book never lowers it. Ask depth
+        used to waive the reserve outright, and that is what stranded the
+        fleet: approval reads the book several turns before the ship lands,
+        the depth is gone by arrival in a sixth of cases, and the ship
+        touches down dry on a planet with no seller. Standing rescue bids
+        almost never fill, so there is no way back out. Depth is a transient
+        market fact; the escape leg is a property of the galaxy.
+
+        Only when fuel is purchasable nowhere else in the galaxy is there no
+        escape leg to demand. Grounding the whole fleet would then be worse
+        than the risk, so the requirement falls back to the return leg to
+        ``return_planet``, which the destination's own ask depth may still
+        offset.
         """
         escape_fuel = self._min_escape_fuel(destination)
-        if escape_fuel is None:
-            requirement = self.ship.fuel_required(
-                self._nav.distance(destination, return_planet)
-            )
-        else:
-            requirement = escape_fuel
+        if escape_fuel is not None:
+            return escape_fuel
+        requirement = self.ship.fuel_required(
+            self._nav.distance(destination, return_planet)
+        )
         if self._fuel_purchasable_at(destination):
             depth = self._nav.fuel_ask_depth_at(destination)
             unsupplied = self._refuel_need_at(destination) - depth
@@ -452,7 +457,11 @@ class TraderBrain(ShipBrain):
         by this number and a top-up that buys up to it agree with the gate by
         construction. Committing to the bare leg was what left ships holding
         cargo forever: they bought one leg's worth, and the gate then refused
-        them for the arrival reserve they had never funded.
+        them for the arrival reserve they had never funded. Since the arrival
+        reserve is now an unconditional escape leg, hold-cargo trips, plan
+        departures and empty repositions all fund the same number, and
+        :meth:`_opportunistic_fuel_topup` buys up to it via
+        ``_committed_fuel_need``.
         """
         origin = self.ship.planet
         if origin is None:
@@ -1857,6 +1866,13 @@ class TraderBrain(ShipBrain):
         rescue bid, unlike on a never-traded fuel desert. Returns None when
         no such planet is in range; then staying put and posting a standing
         bid is all that is left.
+
+        Candidates that also clear :meth:`_fuel_safe_destination` sort ahead
+        of ones that do not, so a hop that leaves an escape route always
+        beats an equally plausible hop that does not. The unsafe ones are
+        still offered rather than dropped: a ship already below the escape
+        floor cannot meet it, and sitting on a fuel desert is worse than a
+        hop to a planet that at least has a fuel producer.
         """
         current = self.ship.planet
         if current is None:
@@ -1864,12 +1880,13 @@ class TraderBrain(ShipBrain):
         fuel_commodity = self._fuel_commodity()
         if fuel_commodity is None:
             return None
-        best: Optional[tuple[int, float, Planet]] = None
+        best: Optional[tuple[int, int, float, Planet]] = None
         for planet in self.ship.simulation.planets:
             if planet is current:
                 continue
             distance = self._nav.distance(current, planet)
-            if fuel_available < self.ship.fuel_required(distance):
+            leg = self.ship.fuel_required(distance)
+            if fuel_available < leg:
                 continue
             if self._fuel_purchasable_at(planet):
                 tier = 0
@@ -1879,9 +1896,15 @@ class TraderBrain(ShipBrain):
                 tier = 2
             else:
                 continue
-            if best is None or (tier, distance) < (best[0], best[1]):
-                best = (tier, distance, planet)
-        return best[2] if best is not None else None
+            unsafe = (
+                0
+                if self._fuel_safe_destination(planet, current, fuel_available - leg)
+                else 1
+            )
+            key = (unsafe, tier, distance)
+            if best is None or key < (best[0], best[1], best[2]):
+                best = (unsafe, tier, distance, planet)
+        return best[3] if best is not None else None
 
     def _find_reposition_target(
         self, fuel_available: int, fuel_commodity: "CommodityDefinition"
