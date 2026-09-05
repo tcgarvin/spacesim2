@@ -684,14 +684,23 @@ class IndustrialistBrain(ActorBrain):
         commodity: "CommodityDefinition",
         cache: Optional[BrainCache] = None,
     ) -> List[MarketCommand]:
-        """Sell all available units of ``commodity``, floored at replacement cost.
+        """Sell the surplus of ``commodity``, floored at replacement cost.
+
+        Retains the same keep level the liquidation sweep uses, so a producer
+        does not list the stock its own drives are about to bid for. A
+        make_food industrialist otherwise offered every unit it produced while
+        ``_drive_buy_commands`` bid for food it was short of, and the two
+        orders crossed against each other.
 
         Skips non-transportable goods; facilities are not tradable.
         """
         if not commodity.transportable:
             return []
         available = actor.inventory.get_available_quantity(commodity)
-        return self._sell_at_or_above_cost(actor, market, commodity, available, cache)
+        keep = self._keep_levels_by_commodity(actor).get(commodity.id, 0)
+        return self._sell_at_or_above_cost(
+            actor, market, commodity, available - keep, cache
+        )
 
     def _get_recipe_trading_commands(
         self, actor: "Actor", market: "Market", cache: Optional[BrainCache] = None

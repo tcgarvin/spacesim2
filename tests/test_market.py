@@ -180,3 +180,86 @@ def test_has_price_signal(commodity_registry, food_commodity) -> None:
     market.price_history[food_commodity] = [9]
     market.set_current_turn(2)
     assert market.has_price_signal(food_commodity) is True
+
+
+def test_self_crossing_pair_does_not_execute(
+    commodity_registry, food_commodity, mock_sim
+) -> None:
+    """An actor never fills its own ask, even when its bid is the best."""
+    market = Market()
+    market.commodity_registry = commodity_registry
+
+    trader = get_actor("Trader", mock_sim, initial_money=100)
+    trader.inventory.add_commodity(food_commodity, 5)
+
+    market.place_buy_order(trader, food_commodity, 5, 10)
+    market.place_sell_order(trader, food_commodity, 5, 8)
+
+    market.match_orders()
+
+    assert market.transaction_history == []
+    # Both orders survive untouched and stay available to third parties.
+    assert market.buy_orders[food_commodity][0].quantity == 5
+    assert market.sell_orders[food_commodity][0].quantity == 5
+    assert trader.inventory.get_quantity(food_commodity) == 5
+
+
+def test_third_party_still_fills_at_the_self_crossing_price(
+    commodity_registry, food_commodity, mock_sim
+) -> None:
+    """Stepping over a self-cross must not cost a third party its fill.
+
+    The self-crossing actor holds both the best bid and the best ask. A
+    second seller quoting the same ask price must still trade with that bid,
+    and a second buyer bidding the same price must still lift the first
+    actor's ask.
+    """
+    market = Market()
+    market.commodity_registry = commodity_registry
+
+    trader = get_actor("Trader", mock_sim, initial_money=100)
+    trader.inventory.add_commodity(food_commodity, 5)
+    other_seller = get_actor("OtherSeller", mock_sim)
+    other_seller.inventory.add_commodity(food_commodity, 5)
+    other_buyer = get_actor("OtherBuyer", mock_sim, initial_money=100)
+
+    market.place_buy_order(trader, food_commodity, 5, 10)
+    market.place_sell_order(trader, food_commodity, 5, 8)
+    market.place_sell_order(other_seller, food_commodity, 5, 8)
+    market.place_buy_order(other_buyer, food_commodity, 5, 10)
+
+    market.match_orders()
+
+    pairs = {(tx.buyer.name, tx.seller.name) for tx in market.transaction_history}
+    assert pairs == {("Trader", "OtherSeller"), ("OtherBuyer", "Trader")}
+    assert all(tx.buyer is not tx.seller for tx in market.transaction_history)
+    assert sum(tx.quantity for tx in market.transaction_history) == 10
+
+
+def test_self_cross_does_not_block_a_cheaper_own_ask_for_a_later_bidder(
+    commodity_registry, food_commodity, mock_sim
+) -> None:
+    """An ask stepped over for its owner's bid stays available to the next bid."""
+    market = Market()
+    market.commodity_registry = commodity_registry
+
+    trader = get_actor("Trader", mock_sim, initial_money=100)
+    trader.inventory.add_commodity(food_commodity, 3)
+    other_seller = get_actor("OtherSeller", mock_sim)
+    other_seller.inventory.add_commodity(food_commodity, 3)
+    later_buyer = get_actor("LaterBuyer", mock_sim, initial_money=100)
+
+    # Trader's bid is best and crosses its own cheap ask; the only other ask
+    # is above its bid, so the matcher would otherwise stop at the self-cross.
+    market.place_buy_order(trader, food_commodity, 3, 6)
+    market.place_sell_order(trader, food_commodity, 3, 4)
+    market.place_sell_order(other_seller, food_commodity, 3, 9)
+    market.place_buy_order(later_buyer, food_commodity, 3, 5)
+
+    market.match_orders()
+
+    assert len(market.transaction_history) == 1
+    tx = market.transaction_history[0]
+    assert tx.buyer is later_buyer
+    assert tx.seller is trader
+    assert tx.price == 4

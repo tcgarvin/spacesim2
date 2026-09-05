@@ -316,22 +316,12 @@ class MarketMakerBrain(ActorBrain):
         upper_bound = state.upper_bound
         has_inventory = actor.inventory.get_quantity(commodity) > 0
 
-        # Probe bid, 1 unit.
-        if per_tick_probe_budget >= max(self.MIN_PRICE, lower_bound):
-            next_bid = (
-                state.last_bid_quote
-                if state.last_bid_quote is not None
-                else lower_bound
-            )
-            if state.last_bid_quote is not None:
-                # Previous bid did not fill: double.
-                next_bid = min(upper_bound, max(lower_bound, state.last_bid_quote * 2))
-            state.last_bid_quote = next_bid
-
-            if per_tick_probe_budget >= next_bid:
-                commands.append(PlaceBuyOrderCommand(commodity, 1, next_bid))
-
-        # Probe ask, 1 unit, only with inventory.
+        # Probe ask, 1 unit, only with inventory. Priced before the bid so
+        # the bid can be held strictly below it. The two probes walk toward
+        # each other -- the bid doubles up from lower_bound, the ask halves
+        # down toward lower_bound + 1 -- so without the clamp they meet (at 2
+        # from a lower_bound of 1) and the maker fills its own ask.
+        next_ask: Optional[int] = None
         if has_inventory:
             next_ask = (
                 state.last_ask_quote
@@ -345,6 +335,24 @@ class MarketMakerBrain(ActorBrain):
                 )
             state.last_ask_quote = next_ask
             commands.append(PlaceSellOrderCommand(commodity, 1, next_ask))
+
+        # Probe bid, 1 unit, always strictly under our own ask.
+        if per_tick_probe_budget >= max(self.MIN_PRICE, lower_bound):
+            next_bid = (
+                state.last_bid_quote
+                if state.last_bid_quote is not None
+                else lower_bound
+            )
+            if state.last_bid_quote is not None:
+                # Previous bid did not fill: double.
+                next_bid = min(upper_bound, max(lower_bound, state.last_bid_quote * 2))
+            if next_ask is not None:
+                next_bid = min(next_bid, next_ask - 1)
+
+            if next_bid >= self.MIN_PRICE:
+                state.last_bid_quote = next_bid
+                if per_tick_probe_budget >= next_bid:
+                    commands.append(PlaceBuyOrderCommand(commodity, 1, next_bid))
 
         return commands
 

@@ -575,78 +575,122 @@ class Market:
         buy_index = 0
         sell_index = 0
 
+        # Orders stepped over because they would have crossed against their
+        # own actor. An order is only ever set aside for the duration of the
+        # counterparty it collided with, then put back at the front of its
+        # book: deferred entries were popped in price-time order and are
+        # therefore at least as aggressive as everything still resting, so
+        # prepending restores the exact sort order. Nothing a third party
+        # could have filled is skipped -- the deferred order is available
+        # again to the very next order on the other side.
+        deferred_buys: List[Order] = []
+        deferred_sells: List[Order] = []
+
         while buy_index < len(buy_orders) and sell_index < len(sell_orders):
             buy_order = buy_orders[buy_index]
             sell_order = sell_orders[sell_index]
 
-            if buy_order.price >= sell_order.price:
-                quantity = min(buy_order.quantity, sell_order.quantity)
+            if buy_order.price < sell_order.price:
+                if not deferred_sells:
+                    break
+                # Asks set aside for this bid are cheaper than the one that
+                # stopped us, so a later, lower bid may still cross them.
+                # Retire this bid and reinstate them for the next one.
+                deferred_buys.append(buy_order)
+                buy_index += 1
+                sell_orders = deferred_sells + sell_orders[sell_index:]
+                sell_index = 0
+                deferred_sells = []
+                continue
 
-                # Trades clear at the ask.
-                transaction_price = sell_order.price
-
-                self._execute_transaction(
-                    buyer=buy_order.actor,
-                    seller=sell_order.actor,
-                    commodity_type=commodity_type,
-                    quantity=quantity,
-                    price=transaction_price,
-                    buy_order=buy_order,
-                    sell_order=sell_order,
-                )
-
-                buy_order.quantity -= quantity
-                sell_order.quantity -= quantity
-
-                self.last_traded_prices[commodity_type].append(transaction_price)
-
-                if len(self.last_traded_prices[commodity_type]) > 10:
-                    self.last_traded_prices[commodity_type] = self.last_traded_prices[
-                        commodity_type
-                    ][-10:]
-
-                if buy_order.quantity <= 0:
-                    self._record_order_event("filled", buy_order)
-
-                    if buy_order.order_id in self.orders_by_id:
-                        del self.orders_by_id[buy_order.order_id]
-
-                    buyer = buy_order.actor
-                    if (
-                        buyer in self.actor_orders
-                        and buy_order.order_id in self.actor_orders[buyer]["buy"]
-                    ):
-                        self.actor_orders[buyer]["buy"].remove(buy_order.order_id)
-
-                    if buy_order.order_id in buyer.active_orders:
-                        del buyer.active_orders[buy_order.order_id]
-
+            if buy_order.actor is sell_order.actor:
+                # An actor must never trade with itself: it churns its own
+                # money and pollutes the flow price and volume that ship
+                # planners read. Step over this ask and try the next one at
+                # the same or a worse price for this bid.
+                deferred_sells.append(sell_order)
+                sell_index += 1
+                if sell_index >= len(sell_orders):
+                    # Every crossing ask belonged to this bidder. Retire the
+                    # bid and restore the asks for the next bidder.
+                    deferred_buys.append(buy_order)
                     buy_index += 1
+                    sell_orders = list(deferred_sells)
+                    sell_index = 0
+                    deferred_sells = []
+                continue
 
-                if sell_order.quantity <= 0:
-                    self._record_order_event("filled", sell_order)
+            quantity = min(buy_order.quantity, sell_order.quantity)
 
-                    if sell_order.order_id in self.orders_by_id:
-                        del self.orders_by_id[sell_order.order_id]
+            # Trades clear at the ask.
+            transaction_price = sell_order.price
 
-                    seller = sell_order.actor
-                    if (
-                        seller in self.actor_orders
-                        and sell_order.order_id in self.actor_orders[seller]["sell"]
-                    ):
-                        self.actor_orders[seller]["sell"].remove(sell_order.order_id)
+            self._execute_transaction(
+                buyer=buy_order.actor,
+                seller=sell_order.actor,
+                commodity_type=commodity_type,
+                quantity=quantity,
+                price=transaction_price,
+                buy_order=buy_order,
+                sell_order=sell_order,
+            )
 
-                    if sell_order.order_id in seller.active_orders:
-                        del seller.active_orders[sell_order.order_id]
+            buy_order.quantity -= quantity
+            sell_order.quantity -= quantity
 
-                    sell_index += 1
-            else:
-                break
+            self.last_traded_prices[commodity_type].append(transaction_price)
+
+            if len(self.last_traded_prices[commodity_type]) > 10:
+                self.last_traded_prices[commodity_type] = self.last_traded_prices[
+                    commodity_type
+                ][-10:]
+
+            if buy_order.quantity <= 0:
+                self._record_order_event("filled", buy_order)
+
+                if buy_order.order_id in self.orders_by_id:
+                    del self.orders_by_id[buy_order.order_id]
+
+                buyer = buy_order.actor
+                if (
+                    buyer in self.actor_orders
+                    and buy_order.order_id in self.actor_orders[buyer]["buy"]
+                ):
+                    self.actor_orders[buyer]["buy"].remove(buy_order.order_id)
+
+                if buy_order.order_id in buyer.active_orders:
+                    del buyer.active_orders[buy_order.order_id]
+
+                buy_index += 1
+
+            if sell_order.quantity <= 0:
+                self._record_order_event("filled", sell_order)
+
+                if sell_order.order_id in self.orders_by_id:
+                    del self.orders_by_id[sell_order.order_id]
+
+                seller = sell_order.actor
+                if (
+                    seller in self.actor_orders
+                    and sell_order.order_id in self.actor_orders[seller]["sell"]
+                ):
+                    self.actor_orders[seller]["sell"].remove(sell_order.order_id)
+
+                if sell_order.order_id in seller.active_orders:
+                    del seller.active_orders[sell_order.order_id]
+
+                sell_index += 1
+
+            if buy_order.quantity <= 0 and deferred_sells:
+                # This bid is done; its own asks rejoin the book.
+                sell_orders = deferred_sells + sell_orders[sell_index:]
+                sell_index = 0
+                deferred_sells = []
 
         # The rebuilt books come from the cancel-filtered sorted lists, so
         # they hold no dead orders and the lazy-delete counters reset.
-        self.buy_orders[commodity_type] = buy_orders[buy_index:]
-        self.sell_orders[commodity_type] = sell_orders[sell_index:]
+        self.buy_orders[commodity_type] = deferred_buys + buy_orders[buy_index:]
+        self.sell_orders[commodity_type] = deferred_sells + sell_orders[sell_index:]
         self._dead_buy_counts[commodity_type] = 0
         self._dead_sell_counts[commodity_type] = 0
         self._quote_cache.pop(commodity_type, None)

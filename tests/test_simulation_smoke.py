@@ -7,6 +7,8 @@ The simulation is stochastic and has no run-level seed, so assertions use
 tolerances, not exact values. Keep the run short so the suite stays fast.
 """
 
+from typing import Dict, List, Tuple
+
 import pytest
 
 from spacesim2.analysis.summary import (
@@ -18,12 +20,47 @@ from spacesim2.cli.common import create_and_setup_simulation
 
 
 @pytest.fixture(scope="module")
-def smoke_summary() -> dict:
-    """Run a small simulation and return its KPI summary."""
+def smoke_run() -> dict:
+    """Run a small simulation once; return its KPI summary and a self-trade tally.
+
+    Self-trades are tallied as the run proceeds rather than read off the final
+    books, because each market retains only its last few hundred transactions.
+    """
     sim = create_and_setup_simulation(planets=2, actors=40, makers=1, ships=1)
+    highest_seen: Dict[int, int] = {}
+    self_trades: List[Tuple[str, str, int]] = []
     for _ in range(120):
         sim.run_turn()
-    return compute_summary(sim)
+        for planet in sim.planets:
+            market = planet.market
+            cursor = highest_seen.get(id(market), 0)
+            for tx in reversed(market.transaction_history):
+                if tx.transaction_id <= cursor:
+                    break
+                if tx.buyer is tx.seller:
+                    self_trades.append((tx.buyer.name, tx.commodity_type.id, tx.price))
+            if market.transaction_history:
+                highest_seen[id(market)] = market.transaction_history[-1].transaction_id
+    return {"summary": compute_summary(sim), "self_trades": self_trades}
+
+
+@pytest.fixture(scope="module")
+def smoke_summary(smoke_run: dict) -> dict:
+    """The KPI summary of the shared smoke run."""
+    summary: dict = smoke_run["summary"]
+    return summary
+
+
+def test_no_self_trades(smoke_run: dict) -> None:
+    """No participant ever trades with itself.
+
+    A self-trade churns an actor's own money and prints a fabricated price and
+    volume into the series ship planners read, so the count must be zero. The
+    matcher refuses same-actor fills, and the brains are quoted so they never
+    ask for one; this catches a regression in either.
+    """
+    self_trades = smoke_run["self_trades"]
+    assert not self_trades, f"{len(self_trades)} self-trades, e.g. {self_trades[:5]}"
 
 
 def test_summary_has_expected_shape(smoke_summary: dict) -> None:
