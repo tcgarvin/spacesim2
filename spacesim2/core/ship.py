@@ -246,8 +246,21 @@ class TraderBrain(ShipBrain):
         # but unable to depart, before the plan is abandoned.
         self._plan_turns_left = 0
         # Set while this turn's local sell orders are pending so decide_travel
-        # does not depart and strand them in the book.
+        # does not depart and strand them in the book. It lasts one turn: see
+        # _refresh_local_sale_staleness.
         self._selling_locally = False
+        # Local-sale bookkeeping. The units listed here last turn and the
+        # planet they were listed at, so this turn can tell whether the asks
+        # filled. _local_sale_stale means they went a full turn untouched.
+        self._local_sale_quantity = 0
+        self._local_sale_planet: Optional[Planet] = None
+        self._local_sale_stale = False
+        # Fuel the destination the ship is holding cargo for needs, and the
+        # planet that judgement was made at. Fuel for a committed profitable
+        # trip is not speculative bunkering, so the top-up buys it even at a
+        # scarcity price.
+        self._committed_fuel_need = 0
+        self._committed_fuel_planet: Optional[Planet] = None
         # Shared per-simulation geometry and fuel-reachability cache.
         self._nav: Navigator = get_navigator(ship.simulation)
         # Memo of the last full plan search: (turn, planet, result). The
@@ -530,6 +543,41 @@ class TraderBrain(ShipBrain):
             reserve = max(reserve, floor)
         return max(0, quantity - reserve)
 
+    def _total_sellable_quantity(self) -> int:
+        """Units of trade cargo the ship could list right now, all goods."""
+        return sum(
+            self._sellable_quantity(c) for c in self._get_tradeable_commodities()
+        )
+
+    def _refresh_local_sale_staleness(self) -> None:
+        """Judge whether last turn's local asks went a full turn unfilled.
+
+        Call once per docked turn, after resting orders are cancelled and
+        before new ones are placed, so the cargo counted here is the whole
+        hold rather than the part not tied up in an order.
+
+        The one-turn sell veto exists so a ship does not depart and abort the
+        sale it just placed. Left unqualified it became permanent: the ask
+        rested at a price nobody took, the ship never departed, and it could
+        not replan while holding cargo. A sale that survived a full turn with
+        nothing filled is stale, and the veto no longer applies to it. Any
+        fill, a move to another planet, or an empty hold clears the flag.
+        """
+        held = self._total_sellable_quantity()
+        if (
+            self._local_sale_planet is not self.ship.planet
+            or self._local_sale_quantity <= 0
+        ):
+            self._local_sale_stale = False
+            self._local_sale_quantity = 0
+            self._local_sale_planet = None
+            return
+        self._local_sale_stale = held >= self._local_sale_quantity
+        if not self._local_sale_stale:
+            # Something filled: the book is working, start the clock over.
+            self._local_sale_quantity = 0
+            self._local_sale_planet = None
+
     def _place_flow_sell_orders(
         self, market: "Market", commodity: CommodityDefinition, quantity: int
     ) -> List[str]:
@@ -579,7 +627,8 @@ class TraderBrain(ShipBrain):
         When the local ask is within FUEL_BUNKER_PREMIUM of the galaxy's
         typical believable fuel price, the median over planets, bunker
         toward a full tank. When it is priced well above that median, buy
-        only up to the survival target; filling tanks at spike prices
+        only up to the survival target, raised to cover the destination the
+        ship has committed its cargo to; filling tanks at spike prices
         bankrupts ships.
 
         ``pending_fuel`` and ``reserved_cargo`` account for buy orders
@@ -612,28 +661,38 @@ class TraderBrain(ShipBrain):
             reference * FUEL_BUNKER_PREMIUM
         )
 
-        survival_target = self._fuel_survival_target()
-        survival_units = min(
-            max(0, survival_target - current_fuel),
+        # Fuel the ship must have to fly the destination it is holding cargo
+        # for is as non-negotiable as the survival minimum: the hold-or-sell
+        # comparison already proved that trip profitable at this ask, so it
+        # is not speculative bunkering and the premium gate does not apply.
+        committed_need = (
+            self._committed_fuel_need if self._committed_fuel_planet is planet else 0
+        )
+        required_target = min(
+            ship.fuel_capacity,
+            max(self._fuel_survival_target(), committed_need),
+        )
+        required_units = min(
+            max(0, required_target - current_fuel),
             cargo_room,
             int(ship.money * 0.9) // fuel_ask,
         )
-        survival_units = max(0, survival_units)
+        required_units = max(0, required_units)
 
         bunker_units = 0
         if bunkering:
             bunker_budget = (
                 int(ship.money * FUEL_BUNKER_BUDGET_FRACTION)
-                - survival_units * fuel_ask
+                - required_units * fuel_ask
             )
             bunker_units = min(
-                ship.fuel_capacity - current_fuel - survival_units,
-                cargo_room - survival_units,
+                ship.fuel_capacity - current_fuel - required_units,
+                cargo_room - required_units,
                 max(0, bunker_budget) // fuel_ask,
             )
             bunker_units = max(0, bunker_units)
 
-        quantity = survival_units + bunker_units
+        quantity = required_units + bunker_units
         if quantity <= 0:
             return None
 
@@ -1136,6 +1195,8 @@ class TraderBrain(ShipBrain):
 
         actions = []
         self._selling_locally = False
+        # Now that the hold is whole again, judge last turn's local asks.
+        self._refresh_local_sale_staleness()
 
         # Distress bookkeeping, before anything reads is_distressed. A ship
         # that is docked, empty of trade goods and poorer than one short
@@ -1229,10 +1290,33 @@ class TraderBrain(ShipBrain):
 
         # Cargo: sell here or travel. A loaded plan's cargo flies to
         # plan.destination instead.
+        listed_locally = 0
         if has_trade_cargo and not self._plan_loaded:
             should_sell_here = True
+            committed_fuel_need = 0
             current_planet = self.ship.planet
-            fuel_available = self.ship.cargo.get_quantity(fuel_commodity)
+            fuel_in_tank = self.ship.cargo.get_quantity(fuel_commodity)
+
+            # Reachability is about the fuel the ship can have when it leaves,
+            # not only what is in the tank. Ships run near the survival
+            # target, a handful of units, so judging destinations on tank fuel
+            # alone rejected almost every one of them and the cargo was
+            # dumped into a local book that had no buyer.
+            _, local_fuel_ask = market.get_bid_ask_spread(fuel_commodity)
+            buyable_fuel = 0
+            if self._fuel_purchasable_at(current_planet) and local_fuel_ask:
+                cargo_room = (
+                    self.ship.cargo_capacity - self.ship.cargo.get_total_quantity()
+                )
+                buyable_fuel = max(
+                    0,
+                    min(
+                        cargo_room,
+                        int(self.ship.money * 0.9) // local_fuel_ask,
+                        self.ship.fuel_capacity - fuel_in_tank,
+                    ),
+                )
+            fuel_available = fuel_in_tank + buyable_fuel
 
             for commodity in self._get_tradeable_commodities():
                 quantity = self._sellable_quantity(commodity)
@@ -1279,15 +1363,31 @@ class TraderBrain(ShipBrain):
                     # destination revenue minus the fuel to get there, against
                     # revenue here. A bare unit-price comparison holds tiny
                     # cargoes forever for trips whose fuel cost decide_travel
-                    # never approves.
+                    # never approves. Fuel already in the tank is charged at
+                    # the local clearing price, fuel that has to be bought at
+                    # the price it would actually cost.
                     origin_fuel_price = market.get_avg_price(fuel_commodity) or 10
-                    dest_net = dest_price * quantity - fuel_needed * origin_fuel_price
+                    from_tank = min(fuel_needed, fuel_in_tank)
+                    to_buy = fuel_needed - from_tank
+                    fuel_cost = from_tank * origin_fuel_price + to_buy * (
+                        local_fuel_ask or origin_fuel_price
+                    )
+                    dest_net = dest_price * quantity - fuel_cost
                     if dest_net > local_price * quantity * 1.15:
                         should_sell_here = False
+                        # The trip this cargo is being held for is profitable
+                        # at the local fuel ask, so the top-up below must
+                        # actually buy the fuel it needs.
+                        committed_fuel_need = fuel_needed
                         break
 
                 if not should_sell_here:
                     break
+
+            self._committed_fuel_need = committed_fuel_need
+            self._committed_fuel_planet = (
+                current_planet if committed_fuel_need > 0 else None
+            )
 
             if should_sell_here:
                 for commodity in self._get_tradeable_commodities():
@@ -1298,22 +1398,42 @@ class TraderBrain(ShipBrain):
                         )
                         if sell_actions:
                             actions.extend(sell_actions)
-                            self._selling_locally = True
+                            listed_locally += quantity
+                            # Hold the ship here only while the sale is fresh.
+                            # A sale that already sat a full turn unfilled has
+                            # earned no more patience.
+                            if not self._local_sale_stale:
+                                self._selling_locally = True
                             if commodity.id == "nova_fuel":
                                 placed_fuel_sell = True
+                if listed_locally > 0:
+                    self._local_sale_quantity = listed_locally
+                    self._local_sale_planet = current_planet
             else:
                 # decide_travel will fly it there.
                 actions.append("Holding cargo for better price elsewhere")
 
-        if not has_trade_cargo:
-            # No cargo: adopt the best trade plan.
+        # No cargo, or cargo listed locally that nobody has taken for a full
+        # turn: look for a plan. Without the second case a ship holding an
+        # unsellable load could never replan, which is the other half of the
+        # idle livelock. Plan sizing already treats the held cargo as
+        # occupied hold space (see _pair_economics).
+        if not has_trade_cargo or (listed_locally > 0 and self._local_sale_stale):
+            if not has_trade_cargo:
+                self._committed_fuel_need = 0
+                self._committed_fuel_planet = None
+            # Adopt the best trade plan.
             plan = self._find_best_trade_plan()
             if plan:
                 self._current_plan = plan
                 self._plan_loaded = False
                 self._plan_turns_left = ACCUMULATION_PATIENCE
                 self._execute_trade_plan(
-                    plan, fuel_handled=fuel_upkeep_ran, prior_actions=actions
+                    plan,
+                    # A fuel ask of ours is resting: bidding for fuel now
+                    # would buy from ourselves.
+                    fuel_handled=fuel_upkeep_ran or placed_fuel_sell,
+                    prior_actions=actions,
                 )
                 return  # _execute_trade_plan sets last_action
             self._current_plan = None
@@ -1346,7 +1466,9 @@ class TraderBrain(ShipBrain):
 
         # We committed to selling here this turn. Departing would strand the
         # fresh sell orders in the book, or with cancel-on-depart abort the
-        # sale decide_trade_actions just chose.
+        # sale decide_trade_actions just chose. This holds for one turn only:
+        # once the asks have sat a full turn unfilled, decide_trade_actions
+        # stops setting the flag and the destination logic below runs.
         if self._selling_locally:
             return None
 
