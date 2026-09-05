@@ -424,10 +424,11 @@ def test_maintenance_standing_bid_when_no_asks():
 
 
 def test_topup_rations_fuel_at_spike_prices():
-    """A scarcity-priced local ask is not lifted for a full tank.
+    """A scarcity-priced local ask buys the way out and nothing more.
 
-    Above the bunker ceiling only the survival target is bought. Filling a
-    whole tank at spike prices bankrupts ships.
+    Above the bunker ceiling the ship buys only the escape target: the leg
+    to the nearest fuel seller plus that planet's own arrival floor. Filling
+    a tank, or even a full survival target, at spike prices bankrupts ships.
     """
     sim, fuel, _, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
     # Cheap fuel at B sets the galaxy reference near 10.
@@ -438,13 +439,93 @@ def test_topup_rations_fuel_at_spike_prices():
     a.market.place_sell_order(local_supplier, fuel, 100, 60)
 
     ship = _make_ship(sim, a, fuel_units=0, money=5000, name="Trader")
+    escape_target = ship.brain._fuel_escape_target()
+    assert escape_target is not None
+    assert escape_target < ship.brain._fuel_survival_target()
+
     ship.brain.decide_trade_actions()
 
     buys = [o for o in a.market.buy_orders[fuel] if o.actor is ship]
     assert len(buys) == 1
-    # Only the survival target, well below tank capacity.
-    assert buys[0].quantity == ship.brain._fuel_survival_target()
+    assert buys[0].quantity == escape_target
     assert buys[0].quantity < ship.fuel_capacity // 2
+
+    # The rationed tank still clears the departure gate for the escape hop.
+    a.market.match_orders()
+    assert ship.cargo.get_quantity(fuel) >= ship.brain._departure_fuel_requirement(b)
+
+
+def test_topup_buys_the_full_survival_target_within_the_premium():
+    """At or below the bunker ceiling the survival target is not rationed.
+
+    Rationing exists to stop spike spending; a fairly priced market should
+    leave the ship as fuelled as it ever was.
+    """
+    sim, fuel, _, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    remote_supplier = _make_ship(sim, b, fuel_units=200, name="RemoteSupplier")
+    b.market.place_sell_order(remote_supplier, fuel, 100, 10)
+    local_supplier = _make_ship(sim, a, fuel_units=200, name="LocalSupplier")
+    # Within FUEL_BUNKER_PREMIUM of the reference near 10.
+    a.market.place_sell_order(local_supplier, fuel, 100, 13)
+
+    ship = _make_ship(sim, a, fuel_units=0, money=400, name="Trader")
+    survival_target = ship.brain._fuel_survival_target()
+    escape_target = ship.brain._fuel_escape_target()
+    assert escape_target is not None and escape_target < survival_target
+
+    ship.brain.decide_trade_actions()
+
+    buys = [o for o in a.market.buy_orders[fuel] if o.actor is ship]
+    assert len(buys) == 1
+    assert buys[0].quantity >= survival_target
+
+
+def test_topup_falls_back_to_survival_target_without_a_safe_escape():
+    """With nowhere to escape to, the ship overpays rather than dying.
+
+    Other planets have a cheap price signal, so the reference is low and the
+    local ask reads as a spike, but none of them has a live ask, so there is
+    no escape hop to fund. Overpaying beats stranding.
+    """
+    sim, fuel, _, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    # A cheap history at B, but no resting ask: reference is low, and fuel is
+    # purchasable nowhere but A.
+    b.market.price_history[fuel] = [10] * 30
+    local_supplier = _make_ship(sim, a, fuel_units=200, name="LocalSupplier")
+    a.market.place_sell_order(local_supplier, fuel, 100, 60)
+
+    ship = _make_ship(sim, a, fuel_units=0, money=5000, name="Trader")
+    assert ship.brain._fuel_escape_target() is None
+
+    ship.brain.decide_trade_actions()
+
+    buys = [o for o in a.market.buy_orders[fuel] if o.actor is ship]
+    assert len(buys) == 1
+    assert buys[0].quantity == ship.brain._fuel_survival_target()
+
+
+def test_committed_destination_fuel_is_still_bought_at_a_spike():
+    """Fuel for a trip the ship already committed cargo to escapes rationing.
+
+    The hold-or-sell comparison proved that trip profitable at this ask, so
+    the escape-leg ration must not strand the cargo.
+    """
+    sim, fuel, _, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    remote_supplier = _make_ship(sim, b, fuel_units=200, name="RemoteSupplier")
+    b.market.place_sell_order(remote_supplier, fuel, 100, 10)
+    local_supplier = _make_ship(sim, a, fuel_units=200, name="LocalSupplier")
+    a.market.place_sell_order(local_supplier, fuel, 100, 60)
+
+    ship = _make_ship(sim, a, fuel_units=0, money=5000, name="Trader")
+    committed = ship.fuel_capacity
+    ship.brain._committed_fuel_need = committed
+    assert committed > ship.brain._fuel_survival_target()
+
+    assert ship.brain._opportunistic_fuel_topup() is not None
+
+    buys = [o for o in a.market.buy_orders[fuel] if o.actor is ship]
+    assert len(buys) == 1
+    assert buys[0].quantity == min(committed, 5000 * 9 // 10 // 60)
 
 
 def test_topup_bunkers_at_cheap_prices():
@@ -487,7 +568,7 @@ def test_topup_bunkers_near_the_median_despite_a_cheap_outlier():
     assert len(buys) == 1
     assert buys[0].quantity == ship.fuel_capacity
 
-    # An ask far above the median still only buys the survival target.
+    # An ask far above the median only buys the escape target.
     home.market.cancel_order(buys[0].order_id)
     for order in list(home.market.sell_orders[fuel]):
         home.market.cancel_order(order.order_id)
@@ -498,7 +579,7 @@ def test_topup_bunkers_near_the_median_despite_a_cheap_outlier():
 
     buys = [o for o in home.market.buy_orders[fuel] if o.actor is ship]
     assert len(buys) == 1
-    assert buys[0].quantity == ship.brain._fuel_survival_target()
+    assert buys[0].quantity == ship.brain._fuel_escape_target()
 
 
 def test_plan_quantity_capped_by_destination_bid_depth():

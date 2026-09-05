@@ -535,6 +535,38 @@ class TraderBrain(ShipBrain):
             max(2 * self._fuel_reserve_need(), self._fuel_sell_reserve()),
         )
 
+    def _fuel_escape_target(self) -> Optional[int]:
+        """Tank level that buys a way off this planet and no more, or None.
+
+        The rationed alternative to :meth:`_fuel_survival_target` when the
+        local ask is spiked: the leg to the nearest planet that sells fuel
+        plus that planet's own arrival floor, so the ship is not merely
+        moved to a second trap. It is exactly the number
+        :meth:`_departure_fuel_requirement` would demand for that hop, which
+        is the number the departure gate checks, so a ship that funds this
+        can actually leave.
+
+        Returns None when there is no such hop the arrival floor approves
+        (typically because the requirement exceeds the tank). Callers must
+        then buy the full survival target: overpaying beats dying in place.
+
+        Only the nearest fuel seller is considered. Fuel burn is monotone in
+        distance, so a farther seller costs strictly more leg fuel, and the
+        point of rationing is to spend as little as possible at a spiked ask.
+        """
+        origin = self.ship.planet
+        if origin is None:
+            return None
+        for candidate in self._nav.planets_by_proximity(origin):
+            if not self._fuel_purchasable_at(candidate):
+                continue
+            target = self._departure_fuel_requirement(candidate)
+            leg = self.ship.fuel_required(self._nav.distance(origin, candidate))
+            if self._fuel_safe_destination(candidate, origin, target - leg):
+                return target
+            return None
+        return None
+
     @property
     def is_distressed(self) -> bool:
         """Whether the ship has been idle and cash-starved long enough to act.
@@ -766,6 +798,25 @@ class TraderBrain(ShipBrain):
         ship has committed its cargo to; filling tanks at spike prices
         bankrupts ships.
 
+        Above the premium the survival portion is rationed further, to
+        :meth:`_fuel_escape_target`: enough to reach the nearest planet that
+        sells fuel and still clear its arrival floor, rather than two round
+        trips' worth. The survival top-up was the last unguarded fuel
+        purchase in the ship, spending ``money * 0.9`` at any ask; measured
+        over 300 turns it was where insolvent ships lost their capital,
+        paying 88 credits a unit against a reference near 54, with spiked
+        buys alone exceeding their starting purse. Buying the way out and
+        refuelling properly at the next market costs strictly less than
+        stockpiling here at spike prices.
+
+        Two guards keep this from grounding the fleet the way rationing
+        *plan* fuel to one leg did. Committed-destination fuel is exempt, so
+        a ship with a profitable trip still funds the whole trip. And the
+        escape hop must clear :meth:`_fuel_safe_destination` with the
+        rationed tank; if no hop does, the full survival target is bought
+        anyway, since overpaying beats stranding. A ship that would rather
+        wait for a cheaper price still has :meth:`_post_standing_fuel_bid`.
+
         ``pending_fuel`` and ``reserved_cargo`` account for buy orders
         already placed this turn, whose goods arrive at end-of-turn matching,
         so a top-up never crowds out the plan's cargo space or spends money
@@ -800,9 +851,14 @@ class TraderBrain(ShipBrain):
         # for is as non-negotiable as the survival minimum: the hold-or-sell
         # comparison already proved that trip profitable at this ask, so it
         # is not speculative bunkering and the premium gate does not apply.
+        survival_target = self._fuel_survival_target()
+        if not bunkering:
+            escape_target = self._fuel_escape_target()
+            if escape_target is not None:
+                survival_target = min(survival_target, escape_target)
         required_target = min(
             ship.fuel_capacity,
-            max(self._fuel_survival_target(), self._committed_fuel_need),
+            max(survival_target, self._committed_fuel_need),
         )
         required_units = min(
             max(0, required_target - current_fuel),
