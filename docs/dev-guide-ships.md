@@ -244,19 +244,29 @@ that purchase against the plan the origin backs, and
 `_reposition_intent` so the next docked turn funds it through
 `_committed_fuel_need`, the same mechanism a held cargo uses. A destination is safe when:
 
-1. it has a live fuel ask **and** the shortfall between `fuel_after_arrival`
-   and `_refuel_need_at(destination)` - the leg to the nearest *other* fuel
-   seller, or one lane hop when there is none - is covered by
-   `fuel_ask_depth_at(destination)`; or
-2. `fuel_after_arrival` alone reaches the nearest other fuel seller; or
-3. fuel is purchasable nowhere in the galaxy and `fuel_after_arrival` still
-   covers the return leg to `return_planet`. Grounding the whole fleet
-   would be worse than the risk.
+1. `fuel_after_arrival` reaches the nearest *other* fuel seller - the escape
+   leg, computed by `_arrival_fuel_requirement`; or
+2. the destination is a **working fuel market**, which waives the escape leg
+   entirely. That takes two independent signals: a live resting ask now
+   (`_fuel_purchasable_at`) **and** fuel traded there recently
+   (`Navigator.fuel_traded_recently`); or
+3. fuel is purchasable nowhere else in the galaxy and `fuel_after_arrival`
+   still covers the return leg to `return_planet`, less any shortfall the
+   destination's own ask depth covers. Grounding the whole fleet would be
+   worse than the risk.
 
-A live ask on its own is not enough. It used to be, and combined with
-`decide_travel` requiring only one-way fuel it let ships land dry in a
-market holding a one-unit ask, where they parked with full purses and empty
-tanks. Depth is the fix; do not weaken it back to top-of-book.
+Both halves of the waiver are load-bearing, and both failure modes are on
+the record. Recency with no resting ask was the original stranding bug: it
+said fuel was available on arrival when 97% of the time nothing was for
+sale. Ask depth alone failed the other way: the book is read several turns
+before the ship lands, and in a sixth of episodes the depth approved at
+departure was gone by arrival. Do not weaken either half back to one signal.
+
+Requiring the escape leg *unconditionally*, as the gate briefly did, is also
+wrong: it self-ratchets. A ship holding exactly its escape leg can never
+spend it, because the hop to the fuel seller then demands that seller's own
+escape leg on arrival, and ships sat for hundreds of turns three units from
+a live fuel market.
 
 ### Cargo before travel
 
