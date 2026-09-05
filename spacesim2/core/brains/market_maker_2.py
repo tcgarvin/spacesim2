@@ -294,7 +294,9 @@ class MarketMakerBrain(ActorBrain):
 
         The bid starts at lower_bound and doubles while unfilled, capped by
         upper_bound. The ask starts at upper_bound, or lower_bound+1, and
-        halves while unfilled, floored at lower_bound+1.
+        halves while unfilled, floored at lower_bound+1. The posted bid is
+        additionally held under our own ask, but the ladder itself is not:
+        see the comment on ``last_bid_quote`` below.
         """
         commands: List["MarketCommand"] = []
         # The probe budget is this market's share of the buy pool. It must
@@ -346,13 +348,21 @@ class MarketMakerBrain(ActorBrain):
             if state.last_bid_quote is not None:
                 # Previous bid did not fill: double.
                 next_bid = min(upper_bound, max(lower_bound, state.last_bid_quote * 2))
-            if next_ask is not None:
-                next_bid = min(next_bid, next_ask - 1)
 
             if next_bid >= self.MIN_PRICE:
+                # Remember the ladder rung, not the price actually posted.
+                # While the maker held inventory its own halving ask clamped
+                # the bid, and persisting the clamped value pinned the ladder
+                # at lower_bound: doubling lower_bound was clamped straight
+                # back to it, every turn, so the bid could never escalate for
+                # exactly the commodities the maker was trying to two-side.
                 state.last_bid_quote = next_bid
-                if per_tick_probe_budget >= next_bid:
-                    commands.append(PlaceBuyOrderCommand(commodity, 1, next_bid))
+                placed_bid = next_bid
+                if next_ask is not None:
+                    # Never cross our own ask: the maker would fill itself.
+                    placed_bid = min(placed_bid, next_ask - 1)
+                if placed_bid >= self.MIN_PRICE and per_tick_probe_budget >= placed_bid:
+                    commands.append(PlaceBuyOrderCommand(commodity, 1, placed_bid))
 
         return commands
 
