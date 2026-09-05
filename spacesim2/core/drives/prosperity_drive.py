@@ -26,10 +26,13 @@ DEBT_DECAY_FACTOR = 0.8
 URGENCY = 1.0
 
 # Purchases are gated on every need drive being this healthy. The buffer is
-# log-normalized, so 0.3 is about 4.5 days of food against a 6-unit pantry
-# target and roughly half the target coverage for the slower needs.
+# log-normalized against each drive's own target and cap: 0.2 is three
+# units of food (half the 6-unit pantry target; a full pantry after the
+# daily meal scores 0.32) and any one unit of clothing, shelter, or
+# medicine, each of which scores 0.5. A floor above 0.32 would demand a
+# full pantry; a floor above 0.5 would demand two units of every slow good.
 GATE_MAX_DEBT = 0.25
-GATE_MIN_BUFFER = 0.3
+GATE_MIN_BUFFER = 0.2
 
 # Coverage is an exponential moving average of "event served", updated on
 # event turns only. The half-life is expressed in turns and converted to

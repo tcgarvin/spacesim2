@@ -49,10 +49,10 @@ regardless of welfare, so needs draw from the budget first.
 ### Gate
 
 A prosperity drive places no buy orders unless the actor's basic needs are
-met: every need drive has `debt < 0.25` and `buffer >= 0.3`. The buffer is
-log-normalized, so 0.3 is about 4.5 days of food against the 6-unit pantry
-target, and roughly half the target coverage for the slower needs. A
-homeless actor does not shop for processed food. The gate controls purchasing only.
+met: every need drive has `debt < 0.25` and `buffer >= 0.2`. The buffer is
+log-normalized against each drive's own target, so 0.2 is three units of
+food (half the 6-unit pantry target) and any one unit of clothing, shelter,
+or medicine. A homeless actor does not shop for processed food. The gate controls purchasing only.
 Consumption events still fire and use stock on hand, and metrics still
 update, so losing the gate shows up as falling coverage rather than a frozen
 number.

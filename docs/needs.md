@@ -56,7 +56,7 @@ per category on every regular actor. Design in `docs/prosperity-design.md`.
 - Miss penalty 0.1, below every need, and `ActorBrain._drives_by_priority`
   ranks prosperity drives behind all needs regardless of welfare.
 - Gate: `can_purchase()` is true only while every need drive has
-  `debt < 0.25` and `buffer >= 0.3` (`needs_are_met`). Consumption from stock
+  `debt < 0.25` and `buffer >= 0.2` (`needs_are_met`). Consumption from stock
   and metric updates continue while gated.
 - Taste: `Actor.tastes` is fixed at creation, weight 1.0 per category and
   3.0 on one favorite. It multiplies the event rate and the target stock.

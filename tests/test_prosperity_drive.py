@@ -126,15 +126,29 @@ class TestGate:
     def test_full_food_pantry_passes_buffer_floor(self, registry):
         """An actor holding the food target passes the gate on food.
 
-        Narrow margin: tick() consumes one of the six units before computing
-        buffer, so this is log_norm_ratio(5, 7.0, 30.0) ~= 0.324 against the
-        0.30 gate floor.
+        tick() consumes one of the six units before computing buffer, so this
+        is log_norm_ratio(5, 7.0, 30.0) ~= 0.324 against the 0.20 gate floor.
         """
         actor = _actor_with_needs(registry)
         food = actor.drives[0]
         actor.inventory.add_commodity(food.food_commodity, food.target_units())
         food.tick(actor)
         assert food.metrics.buffer >= GATE_MIN_BUFFER
+
+    def test_half_pantry_passes_and_two_units_fail_buffer_floor(self, registry):
+        """The food floor is half the pantry target: 3 units pass, 2 do not.
+
+        tick() eats one unit first, so 4 held -> 3 counted (0.214 >= 0.2)
+        and 3 held -> 2 counted (0.151 < 0.2).
+        """
+        actor = _actor_with_needs(registry)
+        food = actor.drives[0]
+        actor.inventory.add_commodity(food.food_commodity, 4)
+        food.tick(actor)
+        assert food.metrics.buffer >= GATE_MIN_BUFFER
+        actor.inventory.remove_commodity(food.food_commodity, 1)
+        food.tick(actor)
+        assert food.metrics.buffer < GATE_MIN_BUFFER
 
 
 class TestTick:
