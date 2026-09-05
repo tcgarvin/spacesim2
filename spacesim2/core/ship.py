@@ -446,15 +446,32 @@ class TraderBrain(ShipBrain):
         callers that have to *fund* a trip ask the same question the gate
         that approves it asks, instead of guessing.
 
-        The requirement is the escape leg: fuel enough, on arrival, to reach
-        the nearest *other* planet that sells fuel. It is a hard floor, and
-        depth in the destination's own ask book never lowers it. Ask depth
-        used to waive the reserve outright, and that is what stranded the
-        fleet: approval reads the book several turns before the ship lands,
-        the depth is gone by arrival in a sixth of cases, and the ship
-        touches down dry on a planet with no seller. Standing rescue bids
-        almost never fill, so there is no way back out. Depth is a transient
-        market fact; the escape leg is a property of the galaxy.
+        The requirement is normally the escape leg: fuel enough, on arrival,
+        to reach the nearest *other* planet that sells fuel.
+
+        Demanding that leg unconditionally is self-ratcheting. A ship funded
+        to exactly its escape leg can never spend it, because the hop to the
+        fuel seller demands *that* seller's own escape leg on arrival. Ships
+        sat for hundreds of turns with money in hand and a live fuel market
+        three units away, vetoed by a floor they were already sitting on.
+
+        So the escape leg is waived when the destination is itself a working
+        fuel market, and that takes two independent signals:
+
+        * a live resting nova_fuel ask right now
+          (:meth:`_fuel_purchasable_at`), and
+        * fuel actually changing hands there recently
+          (:meth:`Navigator.fuel_traded_recently`).
+
+        Neither alone is trustworthy, and both failures are on the record.
+        A recency rule with no resting ask was the original stranding bug:
+        it said yes on arrival 97% of the time when nothing was for sale.
+        Depth alone failed the other way: approval reads the book several
+        turns before the ship lands, and in a sixth of episodes the depth
+        approved at departure was gone by arrival. Together they mean a
+        market that is both stocked now and habitually restocked, which is
+        the only thing a ship in transit can reasonably bet on. When only
+        one signal holds, the escape floor stands.
 
         Only when fuel is purchasable nowhere else in the galaxy is there no
         escape leg to demand. Grounding the whole fleet would then be worse
@@ -464,6 +481,10 @@ class TraderBrain(ShipBrain):
         """
         escape_fuel = self._min_escape_fuel(destination)
         if escape_fuel is not None:
+            if self._fuel_purchasable_at(
+                destination
+            ) and self._nav.fuel_traded_recently(destination):
+                return 0
             return escape_fuel
         requirement = self.ship.fuel_required(
             self._nav.distance(destination, return_planet)
@@ -491,8 +512,8 @@ class TraderBrain(ShipBrain):
         by this number and a top-up that buys up to it agree with the gate by
         construction. Committing to the bare leg was what left ships holding
         cargo forever: they bought one leg's worth, and the gate then refused
-        them for the arrival reserve they had never funded. Since the arrival
-        reserve is now an unconditional escape leg, hold-cargo trips, plan
+        them for the arrival reserve they had never funded. Because the
+        arrival reserve comes from one place, hold-cargo trips, plan
         departures and empty repositions all fund the same number, and
         :meth:`_opportunistic_fuel_topup` buys up to it via
         ``_committed_fuel_need``.
@@ -2070,10 +2091,15 @@ class TraderBrain(ShipBrain):
 
         Candidates that also clear :meth:`_fuel_safe_destination` sort ahead
         of ones that do not, so a hop that leaves an escape route always
-        beats an equally plausible hop that does not. The unsafe ones are
-        still offered rather than dropped: a ship already below the escape
-        floor cannot meet it, and sitting on a fuel desert is worse than a
-        hop to a planet that at least has a fuel producer.
+        beats an equally plausible hop that does not.
+
+        An unsafe candidate - one the ship would land on below its arrival
+        floor - is only acceptable in tier 0, where there is a live ask to
+        buy up from on landing. Unsafe hops into the history-only tiers are
+        dropped: they were a sink, arriving under the floor at a planet with
+        nothing to lift and no way back out, and ships that took them sat
+        for hundreds of turns. Staying put with a standing bid is the better
+        of two bad options there.
         """
         current = self.ship.planet
         if current is None:
@@ -2102,6 +2128,8 @@ class TraderBrain(ShipBrain):
                 if self._fuel_safe_destination(planet, current, fuel_available - leg)
                 else 1
             )
+            if unsafe and tier > 0:
+                continue
             key = (unsafe, tier, distance)
             if best is None or key < (best[0], best[1], best[2]):
                 best = (unsafe, tier, distance, planet)

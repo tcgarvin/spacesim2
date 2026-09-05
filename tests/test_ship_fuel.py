@@ -757,7 +757,9 @@ def test_arrival_requirement_never_below_escape_leg_however_deep_the_ask():
 
     Depth is read when the trip is approved and is often gone several turns
     later when the ship lands. The escape leg is a property of the galaxy,
-    so it is the floor whatever the book says.
+    so it is the floor whatever the book says. Waiving it takes a second,
+    independent signal that the market restocks - see
+    test_arrival_floor_waived_only_when_both_fuel_signals_hold.
     """
     sim, fuel, _, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
     supplier_a = _make_ship(sim, a, fuel_units=500, name="SupplierA")
@@ -943,3 +945,128 @@ def test_is_stranded_false_once_fuel_exceeds_reserve():
     ship.cargo.add_commodity(fuel, reserve + 5)
 
     assert not ship.brain.is_stranded()
+
+
+# ---------------------------------------------------------------------------
+# The arrival floor is waived only for a market that is stocked *and* restocked
+# ---------------------------------------------------------------------------
+
+
+def _make_working_fuel_market(sim, planet, fuel, resting=50, price=10):
+    """Give ``planet`` both fuel signals: recent trades and a live resting ask."""
+    supplier = _make_ship(sim, planet, fuel_units=500, name=f"Supplier{planet.name}")
+    buyer = _make_ship(sim, planet, money=9000, name=f"Buyer{planet.name}")
+    _drain_fuel_ask(planet, fuel, supplier, buyer, price=price)
+    planet.market.place_sell_order(supplier, fuel, resting, price)
+    return supplier
+
+
+def test_arrival_floor_waived_only_when_both_fuel_signals_hold():
+    """One signal is never enough; the escape floor stands until both do.
+
+    Requiring the escape leg even of a fuel seller is self-ratcheting: a ship
+    holding exactly its escape leg can never spend it, because the hop to the
+    seller demands that seller's escape leg on arrival.
+    """
+    sim, fuel, _, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    supplier_a = _make_ship(sim, a, fuel_units=500, name="SupplierA")
+    supplier_b = _make_ship(sim, b, fuel_units=500, name="SupplierB")
+    buyer_b = _make_ship(sim, b, money=9000, name="BuyerB")
+    ship = _make_ship(sim, a, name="Trader")
+    escape_cost = ship.fuel_required(ship.route_distance(a, b))
+    nav = ship.brain._nav
+
+    # A sells fuel, so the escape leg out of B is escape_cost.
+    a.market.place_sell_order(supplier_a, fuel, 50, 10)
+
+    # Live ask at B, but fuel has never traded there: the floor stands.
+    b.market.place_sell_order(supplier_b, fuel, 50, 10)
+    nav.refresh_market_facts()
+    assert nav.fuel_purchasable_at(b) and not nav.fuel_traded_recently(b)
+    assert ship.brain._arrival_fuel_requirement(b, a) == escape_cost
+
+    # Recent trades at B, but the ask that made them is gone: floor stands.
+    b.market.place_buy_order(buyer_b, fuel, 50, 10)
+    b.market.match_orders()
+    nav.refresh_market_facts()
+    assert nav.fuel_traded_recently(b) and not nav.fuel_purchasable_at(b)
+    assert ship.brain._arrival_fuel_requirement(b, a) == escape_cost
+
+    # Both signals: B is a working fuel market and the floor is waived.
+    b.market.place_sell_order(supplier_b, fuel, 50, 10)
+    nav.refresh_market_facts()
+    assert nav.fuel_purchasable_at(b) and nav.fuel_traded_recently(b)
+    assert ship.brain._arrival_fuel_requirement(b, a) == 0
+    assert ship.brain._fuel_safe_destination(b, a, 0)
+
+
+def _fuel_desert_world(sim_specs=(("D", 0, 0), ("C", 50, 0), ("F", 300, 0))):
+    """A desert, a near candidate, and a distant working fuel market."""
+    sim, fuel, _, (desert, near, far) = _make_world(list(sim_specs))
+    _make_working_fuel_market(sim, far, fuel)
+    ship = _make_ship(sim, desert, name="Idler")
+    leg = ship.fuel_required(ship.route_distance(desert, near))
+    # Only the near planet is in range; the ship would land there dry.
+    assert leg < ship.fuel_required(ship.route_distance(desert, far))
+    return sim, fuel, desert, near, ship, leg
+
+
+def test_survival_reposition_drops_unsafe_history_only_candidate():
+    """An unsafe last-resort hop is refused when only history vouches for it.
+
+    Landing under the arrival floor on a planet with nothing to lift is a
+    sink; ships that took those hops sat for hundreds of turns.
+    """
+    sim, fuel, desert, near, ship, leg = _fuel_desert_world()
+    supplier = _make_ship(sim, near, fuel_units=500, name="SupplierC")
+    buyer = _make_ship(sim, near, money=9000, name="BuyerC")
+    _drain_fuel_ask(near, fuel, supplier, buyer)
+    ship.brain._nav.refresh_market_facts()
+
+    assert ship.brain._nav.fuel_traded_recently(near)
+    assert not ship.brain._nav.fuel_purchasable_at(near)
+    assert not ship.brain._fuel_safe_destination(near, desert, 0)
+    assert ship.brain._survival_reposition_target(leg) is None
+
+
+def test_survival_reposition_accepts_unsafe_live_ask_candidate():
+    """The same unsafe hop is worth taking when there is an ask to land against."""
+    sim, fuel, desert, near, ship, leg = _fuel_desert_world()
+    supplier = _make_ship(sim, near, fuel_units=500, name="SupplierC")
+    near.market.place_sell_order(supplier, fuel, 50, 10)
+    ship.brain._nav.refresh_market_facts()
+
+    assert ship.brain._nav.fuel_purchasable_at(near)
+    assert not ship.brain._nav.fuel_traded_recently(near)
+    assert not ship.brain._fuel_safe_destination(near, desert, 0)
+    assert ship.brain._survival_reposition_target(leg) is near
+
+
+def test_rationed_escape_hop_clears_the_departure_gate():
+    """A ship rationed at a spiked ask can actually fly to the fuel seller.
+
+    End to end: spiked ask at the origin, a working fuel market one hop away,
+    so the escape target is the bare leg and the arrival gate approves it.
+    """
+    sim, fuel, _, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    _make_working_fuel_market(sim, b, fuel, resting=100, price=10)
+    local_supplier = _make_ship(sim, a, fuel_units=200, name="LocalSupplier")
+    a.market.place_sell_order(local_supplier, fuel, 100, 60)
+
+    ship = _make_ship(sim, a, fuel_units=0, money=5000, name="Trader")
+    ship.brain._nav.refresh_market_facts()
+    leg = ship.fuel_required(ship.route_distance(a, b))
+
+    assert ship.brain._arrival_fuel_requirement(b, a) == 0
+    escape_target = ship.brain._fuel_escape_target()
+    assert escape_target == leg
+
+    ship.brain.decide_trade_actions()
+    buys = [o for o in a.market.buy_orders[fuel] if o.actor is ship]
+    assert len(buys) == 1 and buys[0].quantity == escape_target
+
+    a.market.match_orders()
+    on_hand = ship.cargo.get_quantity(fuel)
+    assert on_hand == leg
+    assert on_hand >= ship.brain._departure_fuel_requirement(b)
+    assert ship.brain._fuel_safe_destination(b, a, on_hand - leg)
