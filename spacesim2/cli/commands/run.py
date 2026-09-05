@@ -105,6 +105,14 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
         "for agents evaluating whether the economy behaves as intended.",
     )
     parser.add_argument(
+        "--summary-json",
+        type=str,
+        default="",
+        metavar="PATH",
+        help="Write the KPI summary JSON to PATH (implies --summary), so a "
+        "caller reads a file instead of slicing it out of stdout.",
+    )
+    parser.add_argument(
         "--notebook", action="store_true", help="Open marimo notebook after simulation"
     )
 
@@ -218,8 +226,9 @@ def execute(args: argparse.Namespace) -> int:
         print(f"\n{header}:\n{tail}")
 
     # Tier-0 readout.
-    if args.summary:
-        _emit_summary(sim, output_path if should_export else None)
+    summary_json = Path(args.summary_json) if args.summary_json else None
+    if args.summary or summary_json is not None:
+        _emit_summary(sim, output_path if should_export else None, summary_json)
 
     if should_export and exporter is not None:
         print("\n" + "=" * 60)
@@ -243,12 +252,16 @@ def execute(args: argparse.Namespace) -> int:
     return 0
 
 
-def _emit_summary(sim: Any, output_path: Path | None) -> None:
+def _emit_summary(
+    sim: Any, output_path: Path | None, summary_json: Path | None = None
+) -> None:
     """Print the compact KPI summary, delimited for parsing.
 
     Args:
         output_path: If exporting, the run directory to also write
             summary.json.
+        summary_json: Explicit file to write the same payload to
+            (``--summary-json``), independent of exporting.
     """
     from spacesim2.analysis.summary import compute_summary
 
@@ -264,6 +277,11 @@ def _emit_summary(sim: Any, output_path: Path | None) -> None:
         summary_file = output_path / "summary.json"
         summary_file.write_text(payload)
         print(f"Summary written to: {summary_file}")
+
+    if summary_json is not None:
+        summary_json.parent.mkdir(parents=True, exist_ok=True)
+        summary_json.write_text(payload)
+        print(f"Summary written to: {summary_json}")
 
 
 def _open_notebook(output_path: Path) -> None:
