@@ -212,20 +212,37 @@ Two things prevent that:
   full tank it cannot trade around. That converts parked working capital
   into cash without touching any fuel-safety gate, and selling only to the
   target keeps the next turn's top-up from re-buying what was just sold.
-  Distress clears as soon as the ship has cash again, or as soon as a bid
-  actually fills and puts trade goods aboard.
   `TraderBrain._distress_entries` counts entries for analysis; a fleet-wide
   rise means capital is mis-sized.
-  Holding a plan does **not** clear the condition. It used to, and since an
-  unfillable plan is re-adopted every turn, the ships most in need of the
-  exit were exactly the ones that could never reach it. Filling cargo, not
-  merely intending to, is what proves a ship is trading again.
+- While distressed, `_plan_acceptable` drops `TradePlan.MIN_MARGIN` (15%) to
+  a plain profit test: any haul that more than covers its own fuel and
+  maintenance is worth flying for a parked ship. Nothing about safety moves -
+  the round-trip cash gate in `_pair_economics` still sizes the haul to the
+  cash on hand, and every fuel gate is untouched.
+
+Entering and leaving distress are deliberately different tests. Entering
+needs an idle, empty, below-floor turn; leaving needs **cash at or above
+`_short_trip_cash_floor()`** and nothing else. Clearing on cargo alone was a
+bug: a ship that won a few units into its hold left distress while still
+unable to fund a trip, lost the wider selling and margin rules that were
+about to move it, and fell straight back in. Holding a plan has never
+cleared the condition, since an unfillable plan is re-adopted every turn and
+the ships most in need of the exit were the ones that could never reach it.
 
 ### Fuel-safe destinations
 
 `_fuel_safe_destination(destination, return_planet, fuel_after_arrival)`
 gates every departure, in `_pair_economics`, `decide_travel`, the hold-cargo
-comparison and `_find_reposition_target`. A destination is safe when:
+comparison and `_find_reposition_target`. Everywhere it is asked about a
+docked ship's *reach*, reach means the tank plus `_affordable_local_fuel()` -
+what the ship could buy here, bounded by hold room, 90% of its money at the
+local ask, and tank capacity. Judging reach on the tank alone was the
+largest single source of idle turns: ships with cash and a fuel ask in front
+of them could neither plan nor reposition. `_find_reposition_target` charges
+that purchase against the plan the origin backs, and
+`_reposition_destination` records the chosen origin in
+`_reposition_intent` so the next docked turn funds it through
+`_committed_fuel_need`, the same mechanism a held cargo uses. A destination is safe when:
 
 1. it has a live fuel ask **and** the shortfall between `fuel_after_arrival`
    and `_refuel_need_at(destination)` - the leg to the nearest *other* fuel

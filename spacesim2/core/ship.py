@@ -344,6 +344,13 @@ class TraderBrain(ShipBrain):
         # How many times this ship has entered distress. Exposed for analysis;
         # a rising count across the fleet means capital is mis-sized.
         self._distress_entries = 0
+        # Empty reposition the ship has chosen but cannot fly yet because the
+        # fuel for it is still in the local ask book rather than the tank.
+        # Held across turns so decide_trade_actions can fund it through
+        # ``_committed_fuel_need``; dropped as soon as the ship is anywhere
+        # other than the planet the choice was made at.
+        self._reposition_intent: Optional[Planet] = None
+        self._reposition_intent_planet_name = ""
 
     def _recent_flow_per_turn(
         self, market: "Market", commodity: CommodityDefinition
@@ -522,6 +529,27 @@ class TraderBrain(ShipBrain):
             reserve = max(reserve, escape_fuel)
         return reserve
 
+    def _affordable_local_fuel(self, planet: Planet) -> int:
+        """Fuel units the ship could buy at ``planet`` right now.
+
+        The reach of a docked ship is the tank plus this: ships run near the
+        survival target, so judging any trip on tank fuel alone rejects trips
+        the ship could trivially fund from the book in front of it. Bounded
+        by hold room, 90% of money at the local ask - the same operating
+        buffer every other buy keeps - and the tank's remaining capacity.
+        Zero where fuel is not purchasable.
+        """
+        ship = self.ship
+        fuel_commodity = self._fuel_commodity()
+        if fuel_commodity is None or not self._fuel_purchasable_at(planet):
+            return 0
+        _, ask = planet.market.get_bid_ask_spread(fuel_commodity)
+        if ask is None or ask <= 0:
+            return 0
+        cargo_room = ship.cargo_capacity - ship.cargo.get_total_quantity()
+        tank_room = ship.fuel_capacity - ship.cargo.get_quantity(fuel_commodity)
+        return max(0, min(cargo_room, tank_room, int(ship.money * 0.9) // ask))
+
     def _fuel_survival_target(self) -> int:
         """Fuel units to keep on hand to stay mobile.
 
@@ -600,9 +628,23 @@ class TraderBrain(ShipBrain):
         return self._fuel_reserve_need() * price
 
     def _update_distress(self, idle_and_broke: bool) -> None:
-        """Advance or clear the distress counter for this docked turn."""
-        if not idle_and_broke:
+        """Advance or clear the distress counter for this docked turn.
+
+        Entering and leaving are deliberately different tests. A ship enters
+        distress when it is idle *and* poorer than one short round trip of
+        fuel; it leaves only when its purse clears that floor again. Clearing
+        on cargo alone was the bug: a distressed ship that won a few units
+        into its hold dropped straight out of distress while still unable to
+        fund a trip, lost the wider selling and margin rules that were about
+        to get it moving, and fell back in a turn later. Cash above the floor
+        is the only evidence that the ship can trade unaided.
+        """
+        if self.ship.money >= self._short_trip_cash_floor():
             self._distress_turns = 0
+            return
+        if self._distress_turns == 0 and not idle_and_broke:
+            # Below the floor but still working a hold of cargo: not idle, so
+            # the clock has not started.
             return
         self._distress_turns += 1
         if self._distress_turns == DISTRESS_PATIENCE:
@@ -1254,6 +1296,23 @@ class TraderBrain(ShipBrain):
         self._plan_search_memo = (turn, current_planet, plan)
         return plan
 
+    def _plan_acceptable(self, plan: TradePlan) -> bool:
+        """Whether this ship will adopt ``plan``.
+
+        Normally the plan must clear ``TradePlan.MIN_MARGIN``, which is a
+        quality bar for a ship that has alternatives. A distressed ship has
+        none: it is parked, out of cash, and every turn it waits for a
+        15%-margin haul is a turn of no income at all. For it, any haul whose
+        expected profit more than covers its own fuel and maintenance is
+        worth flying. Nothing about safety is relaxed: the round-trip cash
+        gate and the refuel floor in :meth:`_pair_economics` still size the
+        haul to the cash the ship actually has, and the fuel-safety gates are
+        untouched.
+        """
+        if plan.expected_profit <= 0:
+            return False
+        return plan.is_profitable() or self.is_distressed
+
     def _best_plan_from(self, origin: Planet) -> Optional[TradePlan]:
         """Most profitable trade plan exporting from ``origin``, if any.
 
@@ -1309,7 +1368,11 @@ class TraderBrain(ShipBrain):
                     pair=pair,
                     acquisition=acquisition,
                 )
-                if plan and plan.is_profitable() and plan.expected_profit > best_profit:
+                if (
+                    plan
+                    and self._plan_acceptable(plan)
+                    and plan.expected_profit > best_profit
+                ):
                     best_plan = plan
                     best_profit = plan.expected_profit
 
@@ -1469,18 +1532,7 @@ class TraderBrain(ShipBrain):
         # rejected almost every one of them and the cargo was dumped into a
         # local book that had no buyer.
         _, local_fuel_ask = market.get_bid_ask_spread(fuel_commodity)
-        buyable_fuel = 0
-        if self._fuel_purchasable_at(current_planet) and local_fuel_ask:
-            cargo_room = ship.cargo_capacity - ship.cargo.get_total_quantity()
-            buyable_fuel = max(
-                0,
-                min(
-                    cargo_room,
-                    int(ship.money * 0.9) // local_fuel_ask,
-                    ship.fuel_capacity - fuel_in_tank,
-                ),
-            )
-        fuel_available = fuel_in_tank + buyable_fuel
+        fuel_available = fuel_in_tank + self._affordable_local_fuel(current_planet)
 
         for commodity in self._get_tradeable_commodities():
             quantity = self._sellable_quantity(commodity)
@@ -1604,6 +1656,11 @@ class TraderBrain(ShipBrain):
         # Now that the hold is whole again, judge last turn's local asks.
         self._refresh_local_sale_staleness()
 
+        # A reposition intent speaks for one planet only. Anywhere else - the
+        # ship flew, or was diverted - it is stale and must not fund fuel.
+        if self._reposition_intent_planet_name != current_planet.name:
+            self._clear_reposition_intent()
+
         # Distress bookkeeping, before anything reads is_distressed. A ship
         # that is docked, empty of trade goods and poorer than one short
         # round trip of fuel is locked out of the planner: every pair fails
@@ -1704,6 +1761,13 @@ class TraderBrain(ShipBrain):
             should_sell_here, self._committed_fuel_need = self._cargo_disposition(
                 market
             )
+        elif self._reposition_intent is not None:
+            # Empty, but committed to flying somewhere worth trading from and
+            # short of the fuel for it. Same commitment a held cargo makes, so
+            # the top-up buys what the departure gate will ask for.
+            self._committed_fuel_need = self._departure_fuel_requirement(
+                self._reposition_intent
+            )
 
         # Fuel upkeep, whenever the tank is under the stranding reserve, and
         # ahead of every branch that can end the turn: an accumulating plan
@@ -1766,8 +1830,10 @@ class TraderBrain(ShipBrain):
                 self._plan_loaded = False
                 self._plan_turns_left = ACCUMULATION_PATIENCE
                 # The commitment spoke for cargo the ship was holding for a
-                # trip; the plan's own fuel step owns the tank now.
+                # trip, or for a reposition it no longer needs; the plan's own
+                # fuel step owns the tank now.
                 self._committed_fuel_need = 0
+                self._clear_reposition_intent()
                 self._execute_trade_plan(
                     plan,
                     # A fuel ask of ours is resting: bidding for fuel now
@@ -1856,7 +1922,8 @@ class TraderBrain(ShipBrain):
                 return None
             reposition = self._find_reposition_target(fuel_available, fuel_commodity)
             if reposition is not None:
-                return reposition
+                return self._reposition_destination(reposition, fuel_available)
+            self._clear_reposition_intent()
             # Nothing profitable anywhere. Idling is only safe where fuel can
             # be bought. On a fuel desert every waiting turn risks the tank
             # dropping below the escape threshold, and no local producer can
@@ -1971,6 +2038,20 @@ class TraderBrain(ShipBrain):
         first, as candidate origins and finds the best profitable export plan
         from each. Returns the origin backing the most profitable one, or
         None if none is reachable or profitable.
+
+        Reach is the tank *plus* the fuel the ship could buy here, since
+        repositioning may buy fuel like any other trip. Judging it on the
+        tank alone was the single biggest source of idle turns: ships running
+        at a couple of units of fuel, with hundreds of credits and a fuel ask
+        in the book in front of them, could neither plan (the round-trip cash
+        gate refuses a plan they cannot fund) nor move. The purchase is not
+        free, so it is charged against the plan the origin backs, and the
+        arrival floor in :meth:`_fuel_safe_destination` is applied to the
+        fuel the ship would actually land with.
+
+        Buying it is the caller's job: :meth:`_reposition_destination` records
+        the intent so the next docked turn commits ``_committed_fuel_need``
+        to it, exactly as a ship holding cargo for a trip does.
         """
         current_planet = self.ship.planet
         if current_planet is None:
@@ -1981,6 +2062,11 @@ class TraderBrain(ShipBrain):
         if not self._nav.has_any_trade_signal():
             return None
 
+        buyable_fuel = self._affordable_local_fuel(current_planet)
+        _, local_fuel_ask = current_planet.market.get_bid_ask_spread(fuel_commodity)
+        fuel_price = local_fuel_ask if buyable_fuel > 0 and local_fuel_ask else 0
+        reach = fuel_available + buyable_fuel
+
         best_origin: Optional[Planet] = None
         best_profit = 0
         surveyed = 0
@@ -1988,24 +2074,62 @@ class TraderBrain(ShipBrain):
         for origin in self._nav.planets_by_proximity(current_planet):
             if surveyed >= REPOSITION_ORIGIN_CANDIDATES:
                 break
-            # Must have enough fuel on board to reach this origin empty, and
-            # arriving there must leave an escape route.
+            # Must be able to reach this origin empty, out of the tank or the
+            # local book, and arriving there must leave an escape route.
             distance_to_origin = self._nav.distance(current_planet, origin)
             fuel_to_origin = self.ship.fuel_required(distance_to_origin)
-            if fuel_available < fuel_to_origin:
+            if reach < fuel_to_origin:
                 continue
+            # The departure gate asks for the leg plus the arrival reserve, so
+            # that is what the trip has to be funded to.
+            departure_need = self._departure_fuel_requirement(origin)
+            if reach < departure_need:
+                continue
+            fuel_to_buy = max(0, departure_need - fuel_available)
             if not self._fuel_safe_destination(
-                origin, current_planet, fuel_available - fuel_to_origin
+                origin, current_planet, fuel_available + fuel_to_buy - fuel_to_origin
             ):
                 continue
 
             surveyed += 1
             plan = self._best_plan_from(origin)
-            if plan is not None and plan.expected_profit > best_profit:
-                best_profit = plan.expected_profit
+            if plan is None:
+                continue
+            net_profit = plan.expected_profit - fuel_to_buy * fuel_price
+            if net_profit > best_profit:
+                best_profit = net_profit
                 best_origin = origin
 
         return best_origin
+
+    def _reposition_destination(
+        self, target: Planet, fuel_available: int
+    ) -> Optional[Planet]:
+        """Fly the empty reposition now, or stay a turn and fund its fuel.
+
+        :meth:`_find_reposition_target` counts fuel the ship could buy here,
+        so the chosen origin is often out of reach until that purchase
+        settles. Recording the intent makes the next docked turn commit
+        ``_committed_fuel_need`` to this trip, which is the mechanism
+        :meth:`_opportunistic_fuel_topup` honours even at a scarcity price.
+        """
+        current_planet = self.ship.planet
+        if current_planet is None:
+            return None
+        leg = self.ship.fuel_required(self._nav.distance(current_planet, target))
+        if fuel_available >= leg and self._fuel_safe_destination(
+            target, current_planet, fuel_available - leg
+        ):
+            self._clear_reposition_intent()
+            return target
+        self._reposition_intent = target
+        self._reposition_intent_planet_name = current_planet.name
+        return None
+
+    def _clear_reposition_intent(self) -> None:
+        """Forget any pending empty reposition."""
+        self._reposition_intent = None
+        self._reposition_intent_planet_name = ""
 
 
 class Ship:
