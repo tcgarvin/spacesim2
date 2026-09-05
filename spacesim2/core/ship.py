@@ -26,8 +26,10 @@ if TYPE_CHECKING:
 # always read them from this module.
 
 # A docked ship fills its tank only while the local ask is within this
-# multiple of the galaxy fuel reference price. Above it, it buys only the
-# survival minimum. Filling a whole tank at spike prices bankrupts ships.
+# multiple of the galaxy fuel reference price, the median believable
+# per-planet valuation. Above it, it buys only the survival minimum:
+# filling a whole tank at spike prices bankrupts ships. A typical planet
+# sits near the reference and bunkers; only a real spike is priced out.
 FUEL_BUNKER_PREMIUM = 1.3
 
 # Fraction of a ship's money that may go to fuel beyond the survival
@@ -424,6 +426,9 @@ class TraderBrain(ShipBrain):
         Priced at the local fuel market, ignoring the tank: a ship whose
         whole purse is worth less than one short trip of fuel cannot fund a
         trade even with a full tank, because cargo must be paid for too.
+        With no local price at all, falls back to the galaxy's typical
+        believable fuel price rather than its cheapest, so the floor
+        reflects what fuel really costs.
         """
         planet = self.ship.planet
         fuel_commodity = self._fuel_commodity()
@@ -448,9 +453,11 @@ class TraderBrain(ShipBrain):
             self._distress_entries += 1
 
     def _fuel_value_reference(self) -> Optional[float]:
-        """Cheapest believable fuel valuation anywhere in the galaxy.
+        """Typical believable fuel valuation across the galaxy.
 
-        See :meth:`Navigator.fuel_value_reference` for the rationale.
+        The median of the per-planet believable valuations, not the galaxy
+        minimum. See :meth:`Navigator.fuel_value_reference` for the
+        rationale.
         """
         return self._nav.fuel_value_reference()
 
@@ -569,8 +576,9 @@ class TraderBrain(ShipBrain):
     ) -> Optional[str]:
         """Buy fuel with leftover cargo space and money, price-aware.
 
-        When the local ask is near the galaxy's cheapest believable fuel
-        price, bunker toward a full tank. When it is scarcity-priced, buy
+        When the local ask is within FUEL_BUNKER_PREMIUM of the galaxy's
+        typical believable fuel price, the median over planets, bunker
+        toward a full tank. When it is priced well above that median, buy
         only up to the survival target; filling tanks at spike prices
         bankrupts ships.
 

@@ -127,8 +127,44 @@ def test_fuel_market_scan_reports_asks_and_reference():
     nav.refresh_market_facts()
 
     assert nav.cheapest_fuel_ask() == 8
-    assert nav.fuel_value_reference() == 8.0
+    # The reference is the median of the two believable asks, not the min.
+    assert nav.fuel_value_reference() == 10.0
     assert dict(nav.fuel_ask_planets()) == {a: 12, b: 8}
+
+
+def test_fuel_reference_ignores_one_unit_probe_asks():
+    """A lone one-unit probe ask does not drag the reference to its price."""
+    specs = [("P0", 0, 0)] + [(f"P{i}", 100 * i, 0) for i in range(1, 5)]
+    sim, fuel, _, planets = _make_world(specs)
+    nav = Navigator(sim)
+
+    probe = Ship("Probe", sim, planets[0])
+    probe.cargo.add_commodity(fuel, 1)
+    planets[0].market.place_sell_order(probe, fuel, 1, 2)
+    for planet in planets[1:]:
+        supplier = Ship(f"Supplier{planet.name}", sim, planet)
+        supplier.cargo.add_commodity(fuel, 50)
+        planet.market.place_sell_order(supplier, fuel, 50, 30)
+    nav.refresh_market_facts()
+
+    assert nav.cheapest_fuel_ask() == 2
+    assert nav.fuel_value_reference() == 30.0
+
+
+def test_fuel_reference_resists_a_single_scarcity_spike():
+    """One panic-priced planet barely moves the median."""
+    specs = [(f"P{i}", 100 * i, 0) for i in range(5)]
+    sim, fuel, _, planets = _make_world(specs)
+    nav = Navigator(sim)
+
+    for index, planet in enumerate(planets):
+        supplier = Ship(f"Supplier{planet.name}", sim, planet)
+        supplier.cargo.add_commodity(fuel, 50)
+        price = 200 if index == 0 else 30
+        planet.market.place_sell_order(supplier, fuel, 50, price)
+    nav.refresh_market_facts()
+
+    assert nav.fuel_value_reference() == 30.0
 
 
 def test_exportable_commodity_summaries():

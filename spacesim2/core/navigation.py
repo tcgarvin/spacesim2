@@ -112,6 +112,7 @@ class _FuelScan:
     # (planet, best non-dealer ask, non-dealer depth) where such an ask rests.
     producer_asks: List[Tuple["Planet", int, int]]
     cheapest_ask: Optional[int]
+    # Median believable per-planet valuation; see fuel_value_reference.
     reference: Optional[float]
 
 
@@ -427,13 +428,27 @@ class Navigator:
         return self._fuel_market_scan().cheapest_ask
 
     def fuel_value_reference(self) -> Optional[float]:
-        """Cheapest believable fuel valuation anywhere in the galaxy.
+        """Typical believable fuel valuation across the galaxy.
 
-        Minimum over every planet's current ask and its 30-day average price
-        where real trades back it. During a local scarcity spike the rolling
-        averages stay near the pre-spike level, so this reference keeps a
-        ship from filling its whole tank at panic prices. Returns None when
-        no planet has any signal.
+        The median, over the planets that have believable evidence, of each
+        planet's own fuel valuation. A planet is believable when it has a
+        real price signal, in which case it contributes its 30-day average
+        price, or failing that when a non-dealer ask rests there with more
+        than a single unit of depth, in which case it contributes that ask.
+        Planets whose only evidence is a one-unit probe ask, or a dealer's
+        markup on this same reference, contribute nothing. Returns None when
+        no planet has any believable evidence.
+
+        This was a galaxy-wide *minimum* over asks and averages, meant to
+        stop a ship filling its tank at a local panic price. With a hundred
+        planets that minimum is pinned by whoever is cheapest anywhere: a
+        market maker's one-unit discovery ask or one washed-out outlier held
+        it near 17 while fuel actually traded around 31 and the median ask
+        sat near 42. Every planet then looked scarcity-priced, no ship ever
+        bunkered, tanks ran at a handful of units, and each plan had to fund
+        its whole round trip from the origin ask. A central statistic keeps
+        the original protection - a genuine spike is far above the median -
+        without declaring the whole galaxy expensive.
         """
         return self._fuel_market_scan().reference
 
@@ -699,7 +714,7 @@ class Navigator:
         """One sweep over every market collecting galaxy-wide fuel facts.
 
         Collects the planets with resting asks, the best non-dealer ask and
-        non-dealer depth per planet, the cheapest ask, and the cheapest
+        non-dealer depth per planet, the cheapest ask, and the median
         believable valuation. Cached until the next refresh.
         """
         if self._fuel_scan is not None:
@@ -711,20 +726,19 @@ class Navigator:
         asks: List[Tuple["Planet", int]] = []
         producer_asks: List[Tuple["Planet", int, int]] = []
         cheapest_ask: Optional[int] = None
-        reference: Optional[float] = None
+        # One believable valuation per planet; see fuel_value_reference.
+        believable: List[float] = []
         fuel = self.fuel_commodity()
         if fuel is not None:
             for planet in self._sim.planets:
                 market = planet.market
+                best_producer: Optional[int] = None
+                producer_depth = 0
                 _, ask = market.get_bid_ask_spread(fuel)
                 if ask is not None and ask > 0:
                     asks.append((planet, ask))
                     if cheapest_ask is None or ask < cheapest_ask:
                         cheapest_ask = ask
-                    if reference is None or ask < reference:
-                        reference = float(ask)
-                    best_producer: Optional[int] = None
-                    producer_depth = 0
                     for order in market.sell_orders.get(fuel, []):
                         if order.cancelled:
                             continue
@@ -739,10 +753,25 @@ class Navigator:
                             best_producer = order.price
                     if best_producer is not None:
                         producer_asks.append((planet, best_producer, producer_depth))
-                if market.has_price_signal(fuel):
-                    avg_30 = market.get_30_day_average_price(fuel)
-                    if avg_30 > 0 and (reference is None or avg_30 < reference):
-                        reference = avg_30
+                avg_30 = (
+                    market.get_30_day_average_price(fuel)
+                    if market.has_price_signal(fuel)
+                    else 0.0
+                )
+                if avg_30 > 0:
+                    # Traded evidence beats a resting quote.
+                    believable.append(float(avg_30))
+                elif best_producer is not None and producer_depth > 1:
+                    believable.append(float(best_producer))
+        reference: Optional[float] = None
+        if believable:
+            believable.sort()
+            middle = len(believable) // 2
+            reference = (
+                believable[middle]
+                if len(believable) % 2
+                else (believable[middle - 1] + believable[middle]) / 2.0
+            )
         self._fuel_scan = _FuelScan(
             asks=asks,
             producer_asks=producer_asks,

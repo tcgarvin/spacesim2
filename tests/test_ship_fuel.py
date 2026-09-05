@@ -455,6 +455,46 @@ def test_topup_bunkers_at_cheap_prices():
     assert buys[0].quantity == ship.fuel_capacity
 
 
+def test_topup_bunkers_near_the_median_despite_a_cheap_outlier():
+    """One cheap planet elsewhere no longer blocks bunkering everywhere.
+
+    The reference is the median believable valuation, so a local ask close
+    to what fuel typically costs still buys a full tank even when some
+    distant planet sells far cheaper.
+    """
+    specs = [(f"P{i}", 100 * i, 0) for i in range(5)]
+    sim, fuel, _, planets = _make_world(specs)
+    home = planets[0]
+    # One cheap outlier, the rest of the galaxy near 30.
+    outlier = _make_ship(sim, planets[1], fuel_units=200, name="Outlier")
+    planets[1].market.place_sell_order(outlier, fuel, 100, 5)
+    for planet in planets[2:]:
+        supplier = _make_ship(sim, planet, fuel_units=200, name=f"S{planet.name}")
+        planet.market.place_sell_order(supplier, fuel, 100, 30)
+    local = _make_ship(sim, home, fuel_units=200, name="LocalSupplier")
+    home.market.place_sell_order(local, fuel, 100, 33)
+
+    ship = _make_ship(sim, home, fuel_units=0, money=20000, name="Trader")
+    ship.brain.decide_trade_actions()
+
+    buys = [o for o in home.market.buy_orders[fuel] if o.actor is ship]
+    assert len(buys) == 1
+    assert buys[0].quantity == ship.fuel_capacity
+
+    # An ask far above the median still only buys the survival target.
+    home.market.cancel_order(buys[0].order_id)
+    for order in list(home.market.sell_orders[fuel]):
+        home.market.cancel_order(order.order_id)
+    spiker = _make_ship(sim, home, fuel_units=200, name="Spiker")
+    home.market.place_sell_order(spiker, fuel, 100, 150)
+    ship.brain._nav.refresh_market_facts()
+    ship.brain.decide_trade_actions()
+
+    buys = [o for o in home.market.buy_orders[fuel] if o.actor is ship]
+    assert len(buys) == 1
+    assert buys[0].quantity == ship.brain._fuel_survival_target()
+
+
 def test_plan_quantity_capped_by_destination_bid_depth():
     """Plans buy no more cargo than the destination book can absorb."""
     sim, fuel, food, (a, b) = _make_world([("A", 0, 0), ("B", 60, 0)])

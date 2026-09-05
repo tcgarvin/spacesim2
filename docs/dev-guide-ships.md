@@ -83,11 +83,14 @@ it when planning for a specific ship so planning and consumption agree.
 `TraderBrain._opportunistic_fuel_topup` buys fuel price-aware:
 
 - Bunker (fill the tank) only when the local ask is within
-  `FUEL_BUNKER_PREMIUM` (30%) of the galaxy's cheapest believable fuel
-  price, which is the min over current asks and 30-day averages backed by
-  real trades (`_fuel_value_reference`). Bunkering beyond the survival
-  target spends at most `FUEL_BUNKER_BUDGET_FRACTION` (50%) of cash so fuel
-  does not crowd out trading capital.
+  `FUEL_BUNKER_PREMIUM` (30%) of the galaxy's *typical* believable fuel
+  price (`_fuel_value_reference`): the median over planets of each planet's
+  30-day average price, or its best non-dealer ask with more than one unit
+  of depth when it has never traded. This used to be the galaxy-wide
+  minimum, which one-unit probe asks pinned far below the traded price, so
+  every planet looked scarcity-priced and no ship ever bunkered. Bunkering
+  beyond the survival target spends at most `FUEL_BUNKER_BUDGET_FRACTION`
+  (50%) of cash so fuel does not crowd out trading capital.
 - Ration at scarcity prices: buy only up to `_fuel_survival_target()`, the
   larger of two shortest round trips and the escape leg. Filling a tank at
   spike prices bankrupts ships.
