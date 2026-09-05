@@ -129,20 +129,18 @@ class ShipDetail:
 def planet_wellbeing(planet: Planet) -> float:
     """Mean welfare of resident regular actors, in [0, 1].
 
-    Averages each actor's ``drive.metrics.get_score()`` values, then averages
-    across actors. Market makers are excluded. Returns 0.0 when the planet has
-    no regular actors.
+    Averages each need drive's ``metrics.get_score()``, then averages across
+    actors. Service actors and prosperity drives are excluded. Returns 0.0
+    when the planet has no regular actors.
     """
     scores: List[float] = []
     for actor in planet.actors:
         if actor.actor_type == ActorType.SERVICE:
             continue
-        if not actor.drives:
+        needs = [d for d in actor.drives if d.WELLBEING]
+        if not needs:
             continue
-        actor_score = sum(d.metrics.get_score() for d in actor.drives) / len(
-            actor.drives
-        )
-        scores.append(actor_score)
+        scores.append(sum(d.metrics.get_score() for d in needs) / len(needs))
     if not scores:
         return 0.0
     return max(0.0, min(1.0, sum(scores) / len(scores)))
@@ -172,6 +170,8 @@ def _drive_stats(planet: Planet) -> Tuple[DriveStat, ...]:
         if actor.actor_type == ActorType.SERVICE:
             continue
         for drive in actor.drives:
+            if not drive.WELLBEING:
+                continue
             score = max(0.0, min(1.0, drive.metrics.get_score()))
             scores_by_name.setdefault(drive.metrics.get_name(), []).append(score)
     return tuple(

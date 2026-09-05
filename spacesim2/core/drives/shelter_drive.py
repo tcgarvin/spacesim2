@@ -38,7 +38,9 @@ class ShelterDrive(ActorDrive):
     """Shelter maintenance with quality tiers.
 
     - Stochastic maintenance events, about 1 per 120 days.
-    - Uses prefab_housing first, then simple_building_materials.
+    - Uses simple_building_materials first, prefab_housing as a fallback.
+      The prosperity shelter drive owns prefab_housing; it is not bid for
+      here.
     - Quality materials recover debt faster.
     """
 
@@ -59,10 +61,7 @@ class ShelterDrive(ActorDrive):
         )
 
     def materials(self) -> list[CommodityDefinition]:
-        mats = [self.building_materials]
-        if self.quality_materials:
-            mats.append(self.quality_materials)
-        return mats
+        return [self.building_materials]
 
     def target_units(self) -> int:
         return self.TARGET_UNITS
@@ -88,14 +87,14 @@ class ShelterDrive(ActorDrive):
         used_quality = False
 
         if event_today and has_shelter_materials:
-            # Quality first.
-            if self.quality_materials and actor.inventory.remove_commodity(
+            # Basic first; quality is the fallback.
+            if actor.inventory.remove_commodity(self.building_materials, 1):
+                did_maintain = True
+            elif self.quality_materials and actor.inventory.remove_commodity(
                 self.quality_materials, 1
             ):
                 did_maintain = True
                 used_quality = True
-            elif actor.inventory.remove_commodity(self.building_materials, 1):
-                did_maintain = True
 
             # Post-consumption inventory.
             materials_qty = actor.inventory.get_available_quantity(

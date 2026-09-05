@@ -37,6 +37,8 @@ def _wire_producer_index(sim_mock):
 class _StubDrive:
     """Minimal drive with the interface ActorBrain pricing uses."""
 
+    WELLBEING = True
+
     def __init__(self, name, materials, target, miss_penalty=0.2, buffer=0.0):
         self._materials = materials
         self._target = target
@@ -60,6 +62,9 @@ class _StubDrive:
 
     def security(self, actor, unit_price):
         return self._buffer
+
+    def can_purchase(self, actor):
+        return True
 
 
 class TestIndustrialistBrain:

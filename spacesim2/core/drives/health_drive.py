@@ -51,12 +51,9 @@ class HealthDrive(ActorDrive):
         )
 
     def materials(self) -> list[CommodityDefinition]:
-        mats: list[CommodityDefinition] = []
-        if self.medicine:
-            mats.append(self.medicine)
-        if self.quality_medicine:
-            mats.append(self.quality_medicine)
-        return mats
+        # The prosperity health drive owns advanced_medicine; here it is only
+        # an emergency fallback.
+        return [self.medicine] if self.medicine else []
 
     def target_units(self) -> int:
         return self.TARGET_UNITS
@@ -83,14 +80,14 @@ class HealthDrive(ActorDrive):
         did_treat = False
 
         if event_today and has_medicine:
-            # Quality first.
-            if self.quality_medicine and actor.inventory.remove_commodity(
+            # Basic first; quality is the fallback.
+            if self.medicine and actor.inventory.remove_commodity(self.medicine, 1):
+                did_treat = True
+            elif self.quality_medicine and actor.inventory.remove_commodity(
                 self.quality_medicine, 1
             ):
                 did_treat = True
                 consumed_quality = True
-            elif self.medicine and actor.inventory.remove_commodity(self.medicine, 1):
-                did_treat = True
 
             # Post-consumption inventory.
             medicine_qty = (

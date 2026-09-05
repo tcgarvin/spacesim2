@@ -151,6 +151,7 @@ committing on the default branch" behavior.
 | Turn flow & testing | `docs/dev-guide-simulation.md` | Debugging AI, market mechanics, testing |
 | Ship trading AI | `docs/dev-guide-ships.md` | Ship brains, fuel and trade logic |
 | Spaceport operators | `docs/spaceport-design.md` | Service actors; phase 1 landed, phases 2+ open |
+| Prosperity drives | `docs/prosperity-design.md` | Tier 2/3 consumption, tastes, prosperity index; drives landed, UI tiers open |
 | Notebook analysis | `notebooks/README.md` | Marimo notebooks |
 | Needs/drives system | `docs/needs.md` | Actor consumption |
 | Skills system | `docs/skills.md` | Actor skill levels, production |
@@ -262,8 +263,11 @@ Every drive tracks four 0-1 metrics: `health` (immediate status), `debt`
 (priority multiplier).
 
 Materials: food uses `food`; clothing uses `clothing`; shelter uses
-`simple_building_materials` or `prefab_housing`; health uses `medicine` or
-`advanced_medicine`.
+`simple_building_materials`; health uses `medicine`. The upgraded goods
+(`processed_food`, `quality_clothing`, `prefab_housing`, `advanced_medicine`,
+`luxury_goods`, `computers`) belong to `ProsperityDrive` instances, one per
+category, which bid only while every need is met and consume at a rate set
+by the actor's fixed taste vector. See `docs/prosperity-design.md`.
 
 Adding a drive needs the whole supply chain:
 1. Raw material and finished good in `data/commodities.yaml`.

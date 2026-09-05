@@ -122,17 +122,12 @@ class TestShelterDrive:
         assert abs(result.debt - initial_debt * DEBT_DECAY_FACTOR) < 1e-6
 
     @patch("spacesim2.core.drives.shelter_drive.random.random")
-    def test_tick_event_prefers_quality_material(
+    def test_tick_event_prefers_basic_material(
         self, mock_random, shelter_drive, mock_actor
     ):
-        """An event with both tiers consumes quality first and decays debt faster."""
+        """An event with both tiers consumes the basic material first."""
         mock_random.return_value = 0.001
-
-        def get_qty(commodity):
-            return 5  # both tiers in stock
-
-        mock_actor.inventory.get_available_quantity.side_effect = get_qty
-        # remove_commodity succeeds for either tier.
+        mock_actor.inventory.get_available_quantity.return_value = 5
         mock_actor.inventory.remove_commodity.side_effect = lambda c, q: True
         initial_debt = 0.4
         shelter_drive.metrics.debt = initial_debt
@@ -140,15 +135,29 @@ class TestShelterDrive:
         result = shelter_drive.tick(mock_actor)
 
         assert result.health == 1.0
-        # The quality decay factor is smaller, so debt falls further.
-        quality_debt = initial_debt * QUALITY_DEBT_DECAY_FACTOR
-        normal_debt = initial_debt * DEBT_DECAY_FACTOR
-        assert result.debt <= normal_debt
-        assert abs(result.debt - quality_debt) < 1e-6
-
-        # The first remove_commodity call is for the quality material.
+        assert abs(result.debt - initial_debt * DEBT_DECAY_FACTOR) < 1e-6
         first_call = mock_actor.inventory.remove_commodity.call_args_list[0]
-        assert first_call[0][0].id == PREFAB_HOUSING_NAME
+        assert first_call[0][0].id == BUILDING_MATERIALS_NAME
+
+    @patch("spacesim2.core.drives.shelter_drive.random.random")
+    def test_tick_event_falls_back_to_quality_material(
+        self, mock_random, shelter_drive, mock_actor
+    ):
+        """With no basic material, the quality good is used and decays debt faster."""
+        mock_random.return_value = 0.001
+        mock_actor.inventory.get_available_quantity.side_effect = (
+            lambda c: 0 if c.id == BUILDING_MATERIALS_NAME else 5
+        )
+        mock_actor.inventory.remove_commodity.side_effect = (
+            lambda c, q: c.id == PREFAB_HOUSING_NAME
+        )
+        initial_debt = 0.4
+        shelter_drive.metrics.debt = initial_debt
+
+        result = shelter_drive.tick(mock_actor)
+
+        assert result.health == 1.0
+        assert abs(result.debt - initial_debt * QUALITY_DEBT_DECAY_FACTOR) < 1e-6
 
     @patch("spacesim2.core.drives.shelter_drive.random.random")
     def test_tick_event_failed_maintenance(
@@ -280,8 +289,8 @@ class TestShelterDriveIntegration:
         ) + actor.inventory.get_available_quantity(quality)
         assert total_remaining == 19
 
-    def test_quality_preferred_over_basic(self, real_registry):
-        """Quality material is consumed first when both tiers are available."""
+    def test_basic_preferred_over_quality(self, real_registry):
+        """Basic material is consumed first when both tiers are available."""
         drive = ShelterDrive(real_registry)
         actor = get_actor("TestActor")
         basic = real_registry.get_commodity(BUILDING_MATERIALS_NAME)
@@ -294,8 +303,8 @@ class TestShelterDriveIntegration:
         ):
             drive.tick(actor)
 
-        assert actor.inventory.get_available_quantity(quality) == 4
-        assert actor.inventory.get_available_quantity(basic) == 5
+        assert actor.inventory.get_available_quantity(quality) == 5
+        assert actor.inventory.get_available_quantity(basic) == 4
 
 
 class TestShelterDriveStochastic:

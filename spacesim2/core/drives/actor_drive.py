@@ -58,9 +58,20 @@ class ActorDrive:
     # deprivation stake used to price buy orders. Subclasses set it to their
     # DEBT_MISS_PENALTY.
     MISS_PENALTY: float = 0.0
+    # Whether this drive is a basic need: counted in wellbeing, the summary
+    # verdict, and the prosperity purchase gate. Prosperity drives set False.
+    WELLBEING: bool = True
 
     def __init__(self, commodity_registry: CommodityRegistry):
         self.metrics = get_zero_metrics()
+
+    def can_purchase(self, actor: Actor) -> bool:
+        """Whether the brain may place buy orders for this drive this turn.
+
+        Needs always may. Prosperity drives gate on the actor's needs being
+        met, so surplus is spent only after subsistence is secure.
+        """
+        return True
 
     def deprivation_stake(self) -> float:
         """Welfare value of one consumed unit of this drive's material.

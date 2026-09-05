@@ -267,7 +267,7 @@ class ActorBrain:
 
         for drive in self._drives_by_priority(actor):
             mats = drive.materials()
-            if not mats:
+            if not mats or not drive.can_purchase(actor):
                 continue
 
             have = sum(actor.inventory.get_quantity(m) for m in mats)
@@ -346,11 +346,20 @@ class ActorBrain:
         return anchor
 
     def _drives_by_priority(self, actor: "Actor") -> List["ActorDrive"]:
-        """Order drives with food first, then by marginal welfare."""
+        """Order drives: food, then needs, then prosperity, by marginal welfare.
+
+        Prosperity drives sort behind every need regardless of welfare, so
+        a nearly full need still claims budget before any upgrade good.
+        """
 
         def key(drive: "ActorDrive") -> Tuple[int, float]:
-            is_numeraire = drive.metrics.get_name() == NUMERAIRE_DRIVE
-            return (0 if is_numeraire else 1, -drive.marginal_welfare())
+            if drive.metrics.get_name() == NUMERAIRE_DRIVE:
+                rank = 0
+            elif drive.WELLBEING:
+                rank = 1
+            else:
+                rank = 2
+            return (rank, -drive.marginal_welfare())
 
         return sorted(actor.drives, key=key)
 

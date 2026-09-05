@@ -35,8 +35,9 @@ class ClothingDrive(ActorDrive):
     """Random-demand clothing replacement with quality tiers.
 
     - Daily Bernoulli demand with probability BASE_EVENT_PROB.
-    - On an event, use quality_clothing first, then clothing. A miss accrues
-      debt.
+    - On an event, use clothing first, then quality_clothing as a fallback.
+      A miss accrues debt. The prosperity clothing drive owns the quality
+      good; it is not bid for here.
     - Quality clothing recovers debt faster.
     - Health reflects current stock, not the event outcome.
     - Buffer is expected days of coverage from all clothing types.
@@ -59,10 +60,7 @@ class ClothingDrive(ActorDrive):
         )
 
     def materials(self) -> list[CommodityDefinition]:
-        mats = [self.clothing_good]
-        if self.quality_good:
-            mats.append(self.quality_good)
-        return mats
+        return [self.clothing_good]
 
     def target_units(self) -> int:
         return self.TARGET_UNITS
@@ -83,13 +81,12 @@ class ClothingDrive(ActorDrive):
         consumed_quality = False
         event_today = random.random() < p_event
         if event_today:
-            # Quality first.
-            if self.quality_good and actor.inventory.remove_commodity(
-                self.quality_good, 1
-            ):
-                consumed_quality = True
-            else:
-                actor.inventory.remove_commodity(self.clothing_good, 1)
+            # Basic first; quality is the fallback.
+            if not actor.inventory.remove_commodity(self.clothing_good, 1):
+                if self.quality_good and actor.inventory.remove_commodity(
+                    self.quality_good, 1
+                ):
+                    consumed_quality = True
 
             # Post-consumption inventory.
             clothing_inventory = actor.inventory.get_available_quantity(

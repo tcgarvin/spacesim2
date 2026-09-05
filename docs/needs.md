@@ -5,7 +5,7 @@ Actor needs are drives in `spacesim2/core/drives/`. Each drive inherits from
 turn: it consumes satisfying goods from the actor's inventory and updates a
 `DriveMetrics` record.
 
-| Drive | Consumption | Basic good | Quality good | Miss penalty |
+| Drive | Consumption | Basic good | Fallback good | Miss penalty |
 |-------|-------------|------------|--------------|--------------|
 | Food (`food_drive.py`) | deterministic, 1/turn | `food` | `processed_food` | 0.2 |
 | Clothing (`clothing_drive.py`) | stochastic, p = 1/60 per turn | `clothing` | `quality_clothing` | 0.5 |
@@ -29,11 +29,40 @@ Each `tick()` updates four values, all in [0, 1]:
   health 90/270, shelter 120/360.
 - **urgency**: priority multiplier. Fixed at 1.0 for all drives.
 
-## Quality tiers
+## Fallback goods
 
-Every drive tries its quality good first and falls back to the basic good.
-Quality consumption decays debt faster (0.5 vs 0.8). Both tiers count toward
-buffer coverage. The basic good is the one that trades in volume.
+Every need drive consumes its basic good first and the fallback good only
+when the basic good is out of stock. Fallback consumption decays debt faster
+(0.5 vs 0.8). Both goods count toward buffer coverage, but `materials()`
+returns the basic good only, so a need never bids for or stockpiles the
+upgraded good. The upgraded goods are owned by the prosperity drives below.
+
+## Prosperity drives
+
+`prosperity_drive.py` holds one class, `ProsperityDrive`, with one instance
+per category on every regular actor. Design in `docs/prosperity-design.md`.
+
+| Category | Good | Base event rate | Base target units |
+|----------|------|-----------------|-------------------|
+| food | `processed_food` | 1/3 per turn | 3 |
+| clothing | `quality_clothing` | 1/60 | 2 |
+| shelter | `prefab_housing` | 1/120 | 2 |
+| health | `advanced_medicine` | 1/90 | 1 |
+| luxury | `luxury_goods` | 1/45 | 2 |
+| computing | `computers` | 1/180 | 1 |
+
+- `WELLBEING = False`: excluded from planet wellbeing, the summary `drives`
+  block, and the verdict. Reported in the summary `prosperity` block.
+- Miss penalty 0.1, below every need, and `ActorBrain._drives_by_priority`
+  ranks prosperity drives behind all needs regardless of welfare.
+- Gate: `can_purchase()` is true only while every need drive has
+  `debt < 0.25` and `buffer >= 0.3` (`needs_are_met`). Consumption from stock
+  and metric updates continue while gated.
+- Taste: `Actor.tastes` is fixed at creation, weight 1.0 per category and
+  3.0 on one favorite. It multiplies the event rate and the target stock.
+  Nothing else reads it.
+- `coverage` is an EMA of "event served" with a 60-turn half-life;
+  `prosperity_index(actor)` is its unweighted mean across categories.
 
 ## Economic coupling (willingness to pay)
 
@@ -46,6 +75,8 @@ buffer coverage. The basic good is the one that trades in volume.
 - `materials()`: satisfying commodities, basic good first.
 - `target_units()`: inventory level the actor keeps on hand
   (food 6, clothing 3, shelter 3, health 2).
+- `can_purchase(actor)`: whether the brain may bid for this drive this
+  turn. Always true for needs; prosperity drives gate on met needs.
 
 ## Adding a new drive
 
@@ -64,4 +95,5 @@ A drive needs a complete supply chain or it starves silently:
 ## Not implemented
 
 Money-savings, tool-ownership, and social or variety needs have no drive
-classes. Money and tools are handled directly by brain logic.
+classes. Money and tools are handled directly by brain logic. Habituation
+(a standard of living that creates debt when lost) is deferred.

@@ -37,10 +37,9 @@ class FoodDrive(ActorDrive):
         self.quality_commodity = commodity_registry.get_commodity("processed_food")
 
     def materials(self) -> list[CommodityDefinition]:
-        mats = [self.food_commodity]
-        if self.quality_commodity:
-            mats.append(self.quality_commodity)
-        return mats
+        # The prosperity food drive owns processed_food; here it is only an
+        # emergency fallback, so it is not bid for or kept as a need.
+        return [self.food_commodity]
 
     def target_units(self) -> int:
         return self.TARGET_UNITS
@@ -68,16 +67,16 @@ class FoodDrive(ActorDrive):
         return units
 
     def tick(self, actor: Actor) -> DriveMetrics:
-        # Quality food first.
+        # Basic food first; processed food only when the pantry is empty.
         did_eat = False
         ate_quality = False
-        if self.quality_commodity and actor.inventory.remove_commodity(
+        if actor.inventory.remove_commodity(self.food_commodity, DAILY_CONSUMPTION):
+            did_eat = True
+        elif self.quality_commodity and actor.inventory.remove_commodity(
             self.quality_commodity, DAILY_CONSUMPTION
         ):
             did_eat = True
             ate_quality = True
-        elif actor.inventory.remove_commodity(self.food_commodity, DAILY_CONSUMPTION):
-            did_eat = True
         actor.food_consumed_this_turn = did_eat
 
         # Buffer counts both food types.

@@ -19,6 +19,8 @@ from spacesim2.core.drives import (
     FoodDrive,
     HealthDrive,
     ShelterDrive,
+    prosperity_drives,
+    random_tastes,
 )
 from spacesim2.core.facility import FacilityRegistry
 from spacesim2.core.galaxy import (
@@ -398,10 +400,14 @@ class Simulation:
             for i in range(1, count + 1):
                 initial_skills = self._random_initial_skills(all_skills)
 
+                tastes = random_tastes()
+                # Needs first: keep levels and budget priority both take the
+                # first drive that lists a material.
                 drives: list[ActorDrive] = [
                     Drive(commodity_registry=self.commodity_registry)
                     for Drive in (FoodDrive, ClothingDrive, ShelterDrive, HealthDrive)
                 ]
+                drives.extend(prosperity_drives(self.commodity_registry, tastes))
 
                 actor = Actor(
                     name=f"{actor_name_prefix}{role_name}-{i}",
@@ -412,6 +418,7 @@ class Simulation:
                     drives=drives,
                     initial_money=50,
                     initial_skills=initial_skills,
+                    tastes=tastes,
                 )
                 self.actors.append(actor)
                 planet.add_actor(actor)

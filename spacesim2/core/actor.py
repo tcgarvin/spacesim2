@@ -1,5 +1,5 @@
 import enum
-from typing import TYPE_CHECKING, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Dict, List, Mapping, Optional, cast
 
 from spacesim2.core.commands import (
     PlaceBuyOrderCommand,
@@ -40,8 +40,12 @@ class Actor:
         planet: Optional[Planet] = None,
         initial_money: int = 50,
         initial_skills: Optional[Dict[str, float]] = None,
+        tastes: Optional[Mapping[str, float]] = None,
     ) -> None:
         self.name = name
+        # Fixed for life. Prosperity drives read it at construction; it is
+        # kept here for export and the UI.
+        self.tastes: Dict[str, float] = dict(tastes) if tastes else {}
         # No implicit capital injection by actor type: every actor starts with
         # exactly what the caller passed. Market makers are sized explicitly at
         # setup; spaceport operators bootstrap on the government wage.

@@ -14,6 +14,12 @@ import statistics
 from typing import Dict, List, Sequence
 
 from spacesim2.core.actor import Actor, ActorType
+from spacesim2.core.drives.prosperity_drive import (
+    PROSPERITY_CATEGORIES,
+    ProsperityDriveMetrics,
+    needs_are_met,
+    prosperity_index,
+)
 from spacesim2.core.navigation import get_navigator
 from spacesim2.core.ship import Ship, ShipStatus
 from spacesim2.core.simulation import Simulation
@@ -87,6 +93,7 @@ def compute_summary(sim: Simulation) -> Dict[str, object]:
     drives = _summarize_drives(regular_actors)
     prices = _summarize_prices(sim)
     markets = _summarize_markets(sim)
+    prosperity = _summarize_prosperity(regular_actors, markets)
     trade = _summarize_trade(sim)
     trade.update(_summarize_fleet_fuel(sim))
     summary: Dict[str, object] = {
@@ -97,6 +104,7 @@ def compute_summary(sim: Simulation) -> Dict[str, object]:
         "ships": len(sim.ships),
         "money": _summarize_money(regular_actors),
         "drives": drives,
+        "prosperity": prosperity,
         "inventory_totals": _summarize_inventory(sim),
         "prices": prices,
         "markets": markets,
@@ -129,11 +137,12 @@ def _summarize_money(regular_actors: List) -> Dict[str, float]:
 
 
 def _summarize_drives(regular_actors: List) -> Dict[str, Dict[str, float]]:
-    """Aggregate per-drive metrics across the population.
+    """Aggregate per-need metrics across the population.
 
     Returns drive name to {mean_health, mean_debt, pct_deprived}, where
     pct_deprived is the fraction of actors whose debt for that drive exceeds
-    `_DEPRIVED_DEBT`.
+    `_DEPRIVED_DEBT`. Prosperity drives are reported separately by
+    ``_summarize_prosperity`` and never enter the verdict.
     """
     health: Dict[str, List[float]] = {}
     debt: Dict[str, List[float]] = {}
@@ -141,6 +150,8 @@ def _summarize_drives(regular_actors: List) -> Dict[str, Dict[str, float]]:
 
     for actor in regular_actors:
         for drive in actor.drives:
+            if not drive.WELLBEING:
+                continue
             name = drive.metrics.get_name()
             health.setdefault(name, []).append(drive.metrics.health)
             debt.setdefault(name, []).append(drive.metrics.debt)
@@ -156,6 +167,47 @@ def _summarize_drives(regular_actors: List) -> Dict[str, Dict[str, float]]:
             "pct_deprived": round(deprived.get(name, 0) / n, 3) if n else 0.0,
         }
     return result
+
+
+def _summarize_prosperity(
+    regular_actors: List, markets: Dict[str, object]
+) -> Dict[str, object]:
+    """Consumption above subsistence: index, coverage, gate, and trade volume.
+
+    ``index_mean`` is the population mean of ``prosperity_index``.
+    ``coverage`` is mean coverage per category. ``gate_pass_share`` is the
+    fraction of actors whose needs are met well enough to bid for
+    prosperity goods this turn. ``volume_per_planet_turn`` repeats the
+    markets block for the prosperity goods only, 0.0 when never traded.
+    """
+    n = len(regular_actors)
+    coverage: Dict[str, List[float]] = {}
+    index_total = 0.0
+    gate_passes = 0
+    for actor in regular_actors:
+        index_total += prosperity_index(actor)
+        if needs_are_met(actor):
+            gate_passes += 1
+        for drive in actor.drives:
+            if isinstance(drive.metrics, ProsperityDriveMetrics):
+                coverage.setdefault(drive.metrics.name, []).append(
+                    drive.metrics.coverage
+                )
+
+    volume = markets["volume_per_planet_turn"]
+    assert isinstance(volume, dict)
+    return {
+        "index_mean": round(index_total / n, 3) if n else 0.0,
+        "gate_pass_share": round(gate_passes / n, 3) if n else 0.0,
+        "coverage": {
+            name: round(statistics.fmean(values), 3)
+            for name, values in sorted(coverage.items())
+        },
+        "volume_per_planet_turn": {
+            c.commodity_id: volume.get(c.commodity_id, 0.0)
+            for c in PROSPERITY_CATEGORIES
+        },
+    }
 
 
 def _summarize_inventory(sim: Simulation) -> Dict[str, int]:
