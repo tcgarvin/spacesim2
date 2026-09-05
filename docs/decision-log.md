@@ -4,6 +4,25 @@ Append-only record of closed decisions, postmortems, and landed campaigns.
 Newest first. Open work lives in `TODO.md`; current reference docs live
 alongside this file.
 
+## 2026-09-05 - Idle ships: local-sale veto expires, one-way fuel in margins
+
+Done (8ff2118, 398948e, b096ff3). With operators selling fuel on most
+planets, 69/100 ships were still idle by turn 450 while two thirds of them
+had a profitable, affordable trade within three lanes. Half of idle time
+was a livelock: a ship holding cargo judged destinations on tank fuel
+alone (tanks sit near a 9-unit survival target), listed the cargo locally,
+and an unconditional "selling locally" veto blocked departure and
+replanning forever. The rest was the planner charging round-trip fuel at
+spiked local asks into one-way margins. Changes: the veto lasts one turn
+unless something filled; reach and fuel commitment use the same departure
+requirement the travel gate applies; plan margins charge the outbound leg
+(tank fuel at the galaxy reference, bought fuel at the local ask) while
+the round-trip cash gate stays; cost basis is the liftable ask, not
+max(ask, average); fuel plans load at the origin; ships never bid on their
+own asks. Rationing fuel purchases to one leg was tested and rejected (it
+grounds the fleet). Single 100-planet runs at turn 300: departures 77 to
+217, idle 67 to 39. Full A/B: `tmp/overnight_ab.sh`.
+
 ## 2026-09-04 - Spaceport operators: service actors as the fuel counterparty
 
 Landed on main (2678924..96330d2). Two probes on the stranded fleet found
