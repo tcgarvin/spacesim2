@@ -14,8 +14,9 @@ uv run spacesim2 run                 # Headless sim with progress bar (default)
 uv run spacesim2 run --quiet         # Suppress all output
 uv run spacesim2 run --no-export     # Quick run without data export
 uv run spacesim2 run --log-actors all  # Detailed per-actor logging (also: N, or an actor name)
-uv run spacesim2 run --planets 5     # Smaller galaxy (default is 100 planets)
+uv run spacesim2 run --planets 12    # Smaller galaxy (defaults: 100 planets, 100 actors, 2 makers, 2 operators, 1 ship, 1000 turns)
 uv run spacesim2 run --operators 2   # Spaceport operators per planet (default 2)
+uv run spacesim2 run --workers 12    # Thread the actor phase (needs free-threaded CPython)
 uv run spacesim2 run --arms 4 --lane-density 0.3  # Spiral arm count / extra star lanes beyond the spanning tree
 
 # Development
@@ -32,6 +33,7 @@ uv run spacesim2 dev graph -f png      # Alternative formats: svg (default), png
 uv run spacesim2 dev analyze FILE.py   # Run a Tier-1 analysis script against latest run
 uv run spacesim2 dev check             # Umbrella: format+lint+types+pytest+short sim run
 uv run spacesim2 dev check --fast      # Skip the slower types and sim stages
+uv run spacesim2 dev ab --base <ref>   # A/B a change against a baseline ref (see sim-ab-testing skill)
 ```
 
 ## The Dev Loop
@@ -40,9 +42,43 @@ Change, then verify:
 
 ```bash
 uv run pytest -q                                                  # 1. unit tests (~2s)
-uv run spacesim2 run --turns 200 --no-export --quiet --summary    # 2. macro behavior
+uv run spacesim2 run --turns 200 --planets 12 --no-export --quiet --summary    # 2. macro behavior (~30s)
 # 3. read JSON between ===SUMMARY_BEGIN=== / ===SUMMARY_END=== (verdict + KPIs)
 ```
+
+Use `--planets 12` for the routine loop: measured 31 s with verdict PASS on
+2026-09-05, and the summary has the same structure as a full run. Drop
+`--planets` (100-planet default) only when the question is about the galaxy:
+fleet mobility, interplanetary trade, fuel geography. Those KPIs mean nothing
+at 12 planets.
+
+### What a run costs
+
+Defaults are 100 planets x 100 actors x 2 makers x 2 operators x 1 ship, and
+`--turns` defaults to 1000. Measured serial on the dev laptop:
+
+| Config | Rate | 200 turns | 450 turns |
+|--------|------|-----------|-----------|
+| `--planets 12` | ~0.15 s/turn | ~30 s | ~70 s |
+| default 100 planets | ~2 s/turn | ~7 min | ~15 min |
+| 100 planets + `--log-actors all` + export | ~4 s/turn | ~15 min | ~35 min |
+
+The Bash tool's default timeout is 120 s (max 600 s). Anything above the first
+row needs an explicit `timeout` or `run_in_background: true` on the first
+call. `--workers N` threads the actor phase but only helps on a free-threaded
+interpreter; see `docs/performance.md`.
+
+`dev check`'s sim stage is separate and cheap: 5 planets x 100 actors x 200
+turns, run in-process.
+
+### Shell rules
+
+The shell builtin `cd` is forbidden in Bash commands. A PreToolUse hook
+(`hooks/bash-cd-guard.sh`) enforces it: a leading `cd <repo root> &&` is
+rewritten away, everything else is denied. Use absolute paths, `git -C DIR`,
+`uv run --project DIR`. Never chain `sleep N; command`; give the call an
+explicit timeout or `run_in_background: true`. Exclude `.claude/worktrees/`
+from searches; it holds stale detached copies of the repo.
 
 `uv run spacesim2 dev check` runs format, lint, types, pytest, and a short
 `--summary` sim as one pass/fail gate. It only checks formatting, it does not
@@ -85,6 +121,22 @@ Ruff config: `E501` is ignored because the formatter owns line length.
 `notebooks/**` is exempt from lint (still formatted) because marimo's
 cross-cell variables trigger false `F401`/`F821`/`I001`.
 
+## Writing
+
+Mannered prose substitutes metaphor and flourish for direct statement. Instead of
+"a parameter worth varying", the mannered writer produces "a dial worth turning".
+Instead of "this point still matters", they write "this point earns its keep".
+The phrases exist to display the writer, not to convey the idea, and readers can
+tell. Metaphors drag in connotations the writer did not choose and cannot
+control. The fix is to say what you mean. When a literal phrase is available,
+use it. Also: state what is true now; do not narrate history or hedge; verify
+every flag, path, function, and constant you cite by grepping for it before
+you keep the reference.
+
+Prefer a table of numbers to a paragraph about numbers. Lead a report with the
+verdict and the 2-5 load-bearing figures. This applies to comments, docstrings,
+docs, commit messages, and reports to the user.
+
 ## Branching
 
 Work on `main` only. Commit directly to `main`. Do not create feature branches
@@ -98,7 +150,7 @@ committing on the default branch" behavior.
 | Simulation design | `docs/sim-design.md` | Game mechanics and rules |
 | Turn flow & testing | `docs/dev-guide-simulation.md` | Debugging AI, market mechanics, testing |
 | Ship trading AI | `docs/dev-guide-ships.md` | Ship brains, fuel and trade logic |
-| Spaceport operators | `docs/spaceport-design.md` | Service-actor design (proposal) |
+| Spaceport operators | `docs/spaceport-design.md` | Service actors; phase 1 landed, phases 2+ open |
 | Notebook analysis | `notebooks/README.md` | Marimo notebooks |
 | Needs/drives system | `docs/needs.md` | Actor consumption |
 | Skills system | `docs/skills.md` | Actor skill levels, production |
@@ -109,6 +161,9 @@ committing on the default branch" behavior.
 | Decision log | `docs/decision-log.md` | Why past changes were made |
 | Commodity/process editing | `.claude/skills/commodity-process-design/` | Commodities, recipes, production chains |
 | Evaluating sim behavior | `.claude/skills/sim-evaluation/` | KPI summary, analysis scripts, notebooks |
+| A/B comparison | `.claude/skills/sim-ab-testing/` | Did a change move a KPI beyond noise |
+| Open work | `TODO.md` | What is unfinished |
+| Prose style | `docs/style.md` | Writing or rewriting comments, docstrings, docs |
 
 ## Key Architecture Facts
 
@@ -235,6 +290,23 @@ for commodity in (food, fuel, wood):
     ...
 ```
 
+### Shared Brain Logic
+
+Algorithms shared between brains go in a module of plain functions, never a
+shared base class. `core/brains/dealer.py` is the pattern: `market_maker_2.py`
+and `spaceport_operator.py` both import it and call its functions; neither
+inherits from anything in it.
+
+### Performance Changes
+
+An optimization must not change what any actor decides (exact semantics).
+Per-actor valuation stays per-actor. A shared cache is allowed only when every
+actor at the same cache version would compute identical values. Write an
+equivalence test that compares the optimized path against a brute-force
+reference; `TestBestProcessRankedWalkEquivalence` and
+`TestReplacementCostSplitEquivalence` in
+`tests/test_registry_and_brain_cache.py` are the existing examples.
+
 ## Analysis
 
 The default loop is the Dev Loop above: `--summary` for the verdict, a
@@ -256,6 +328,7 @@ return unused variables.
 When to use what:
 - `--summary`: did my change break the economy?
 - `dev analyze` script: open-ended behavioral questions, debugging
+- `dev ab`: did my change move the KPI, or is that noise?
 - Marimo notebook: interactive charts for a human
 - pytest: durable assertions, for example:
 ```python

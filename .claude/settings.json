@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cmd=$(jq -r '.tool_input.command // empty'); if printf '%s' \"$cmd\" | grep -qE '(^|[;&|(`]|&&|\\|\\|)[[:space:]]*cd([[:space:]]|$)'; then printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Do not use cd in this repo. Use absolute paths, or run tools from the working directory directly (e.g. uv run ...). cd in a compound command also triggers a permission prompt.\"}}'; fi"
+            "command": "\"$CLAUDE_PROJECT_DIR/hooks/bash-cd-guard.sh\""
           }
         ]
       }
