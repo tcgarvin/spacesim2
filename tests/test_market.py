@@ -225,6 +225,10 @@ def test_third_party_still_fills_at_the_self_crossing_price(
 
     market.place_buy_order(trader, food_commodity, 5, 10)
     market.place_sell_order(trader, food_commodity, 5, 8)
+    # Exact (price, timestamp) ties are broken at random, so the third
+    # parties arrive a turn later: the self-crossing actor holds strict time
+    # priority on both sides, which is the case the guard has to get right.
+    market.current_turn += 1
     market.place_sell_order(other_seller, food_commodity, 5, 8)
     market.place_buy_order(other_buyer, food_commodity, 5, 10)
 
