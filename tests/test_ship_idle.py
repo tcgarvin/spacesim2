@@ -15,8 +15,10 @@ same turn as a local sale must not have the ship bidding for its own cargo,
 and the staleness clock must turn on fills, not on the sellable total.
 """
 
+from types import SimpleNamespace
+
 from spacesim2.core.commodity import CommodityDefinition
-from spacesim2.core.ship import ShipStatus
+from spacesim2.core.ship import DISTRESS_PATIENCE, ShipStatus, TradePlan
 from tests.test_ship_fuel import _make_ship, _make_world
 
 
@@ -310,3 +312,127 @@ def test_accumulating_plan_still_lists_unrelated_cargo():
     assert not ship.brain._plan_loaded
     assert any(o.actor is ship for o in a.market.sell_orders[junk])
     assert [o for o in a.market.buy_orders[food] if o.actor is ship]
+
+
+# ---------------------------------------------------------------------------
+# A near-dry ship on a fuel-selling planet is not parked
+# ---------------------------------------------------------------------------
+
+
+def test_reposition_counts_fuel_the_ship_can_buy_here():
+    """A 1-fuel ship with cash repositions, and funds the trip's fuel.
+
+    Reach used to be the tank alone, so a ship sitting on a fuel ask with
+    hundreds of credits could neither plan (the round-trip cash gate) nor
+    move (no fuel aboard), and idled forever.
+    """
+    sim, fuel, _food, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    supplier_a = _make_ship(sim, a, fuel_units=500, name="SupplierA")
+    supplier_b = _make_ship(sim, b, fuel_units=500, name="SupplierB")
+    a.market.place_sell_order(supplier_a, fuel, 200, 10)
+    b.market.place_sell_order(supplier_b, fuel, 200, 10)
+
+    ship = _make_ship(sim, a, fuel_units=1, money=2000, name="Trader")
+    ship.brain._nav.refresh_market_facts()
+    # A warm galaxy where every origin backs a lucrative plan, so fuel is the
+    # only thing that can hold the ship here.
+    ship.brain._nav.has_any_trade_signal = lambda: True
+    ship.brain._best_plan_from = lambda origin: SimpleNamespace(expected_profit=1000)
+    # ...except right here, so the ship has a reason to leave.
+    ship.brain._find_best_trade_plan = lambda: None
+
+    assert ship.brain._find_reposition_target(1, fuel) is b
+
+    # It cannot fly yet, so it commits to the trip and stays this turn.
+    assert ship.brain.decide_travel() is None
+    assert ship.brain._reposition_intent is b
+
+    # Next docked turn the commitment funds the fuel the departure gate wants.
+    ship.brain.decide_trade_actions()
+    assert ship.brain._committed_fuel_need == ship.brain._departure_fuel_requirement(b)
+    fuel_buys = [o for o in a.market.buy_orders[fuel] if o.actor is ship]
+    assert fuel_buys
+    assert sum(o.quantity for o in fuel_buys) + 1 >= ship.brain._committed_fuel_need
+
+    # With the fuel aboard the reposition departs.
+    a.market.match_orders()
+    assert ship.brain.decide_travel() is b
+    assert ship.brain._reposition_intent is None
+
+
+def test_reposition_intent_is_dropped_when_the_ship_moves_on():
+    """An intent formed at one planet never funds fuel at another."""
+    sim, fuel, _food, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    supplier = _make_ship(sim, a, fuel_units=500, name="SupplierA")
+    a.market.place_sell_order(supplier, fuel, 200, 10)
+    ship = _make_ship(sim, a, fuel_units=1, money=2000, name="Trader")
+    ship.brain._reposition_intent = b
+    ship.brain._reposition_intent_planet_name = "Elsewhere"
+
+    ship.brain.decide_trade_actions()
+
+    assert ship.brain._reposition_intent is None
+    assert ship.brain._committed_fuel_need == 0
+
+
+# ---------------------------------------------------------------------------
+# Distress
+# ---------------------------------------------------------------------------
+
+
+def _thin_margin_plan(ship, origin, destination, commodity):
+    """A plan that clears its costs but misses TradePlan.MIN_MARGIN."""
+    distance = ship.route_distance(origin, destination)
+    return TradePlan(
+        origin=origin,
+        destination=destination,
+        commodity=commodity,
+        quantity=10,
+        bid_price_per_unit=10,
+        purchase_price_per_unit=10,
+        expected_sell_price_per_unit=11,
+        distance=distance,
+        fuel_needed_one_way=ship.fuel_required(distance),
+        fuel_price_at_origin=1,
+        fuel_units_from_tank=0,
+        fuel_price_from_tank=1,
+        expected_maintenance_cost=0,
+    )
+
+
+def test_distressed_ship_accepts_a_haul_that_only_covers_its_costs():
+    """Below MIN_MARGIN but profit-positive is good enough when parked."""
+    sim, _fuel, food, (a, b) = _make_world([("A", 0, 0), ("B", 50, 0)])
+    ship = _make_ship(sim, a, fuel_units=5, money=100, name="Trader")
+    plan = _thin_margin_plan(ship, a, b, food)
+
+    assert plan.expected_profit > 0
+    assert not plan.is_profitable()  # under MIN_MARGIN
+    assert not ship.brain._plan_acceptable(plan)
+
+    ship.brain._distress_turns = DISTRESS_PATIENCE
+    assert ship.brain.is_distressed
+    assert ship.brain._plan_acceptable(plan)
+
+    # A losing haul is still refused, distressed or not.
+    plan.expected_sell_price_per_unit = 1
+    assert not ship.brain._plan_acceptable(plan)
+
+
+def test_distress_does_not_end_below_the_short_trip_cash_floor():
+    """Winning some cargo is not an exit; only cash above the floor is."""
+    sim, fuel, food, (a, _b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    supplier = _make_ship(sim, a, fuel_units=500, name="Supplier")
+    a.market.place_sell_order(supplier, fuel, 200, 40)
+    ship = _make_ship(sim, a, fuel_units=5, money=10, name="Trader")
+    floor = ship.brain._short_trip_cash_floor()
+    assert floor > 10
+
+    ship.brain._distress_turns = DISTRESS_PATIENCE
+    ship.cargo.add_commodity(food, 5)  # trade cargo, but still no cash
+    ship.brain._update_distress(idle_and_broke=False)
+    assert ship.brain.is_distressed
+
+    ship.money = floor
+    ship.brain._update_distress(idle_and_broke=False)
+    assert not ship.brain.is_distressed

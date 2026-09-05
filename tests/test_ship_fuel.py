@@ -743,7 +743,9 @@ def test_reposition_target_rejected_when_it_leaves_no_escape():
     supplier_b = _make_ship(sim, b, fuel_units=500, name="SupplierB")
     a.market.place_sell_order(supplier_a, fuel, 200, 10)
     b.market.place_sell_order(supplier_b, fuel, 200, 10)
-    ship = _make_ship(sim, a, money=9000, name="Trader")
+    # Penniless, so reach is the tank alone: repositioning counts fuel it
+    # could buy here, and A has an ask, so any purse would fund the trip.
+    ship = _make_ship(sim, a, money=0, name="Trader")
     ship.brain._nav.refresh_market_facts()
 
     # A warm galaxy where every origin backs a lucrative plan, so the fuel
