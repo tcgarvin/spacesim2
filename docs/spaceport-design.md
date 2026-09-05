@@ -1,6 +1,8 @@
 # Spaceport Operators: a Service Actor Design
 
-Status: proposal, 2026-09-04. Nothing here is implemented.
+Status: phase 1 landed 2026-09-04 (commits 2678924..96330d2); see the
+decision log entry of the same date for what was measured and what changed
+after landing. Phases 2+ and the open questions below are still open.
 
 ## Why
 

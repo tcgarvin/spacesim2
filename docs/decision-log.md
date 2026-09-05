@@ -4,6 +4,59 @@ Append-only record of closed decisions, postmortems, and landed campaigns.
 Newest first. Open work lives in `TODO.md`; current reference docs live
 alongside this file.
 
+## 2026-09-04 - Spaceport operators: service actors as the fuel counterparty
+
+Landed on main (2678924..96330d2). Two probes on the stranded fleet found
+one coordination failure seen from both sides: industrialists held ~22k
+fuel listed at an honest ~25 floor with no local buyer above 3, while
+every stranded ship posted a rescue bid too small (~7 units) for a fuel
+run to beat any other plan. A markdown rule and a carrying cost were both
+analyzed and rejected: there was no buyer at any price, and either would
+add parameters while destroying the price signal ships use.
+
+Decision: a new kind of actor, the service actor, judged on keeping a
+capability available rather than on producing. `ActorType` collapsed to
+`REGULAR`/`SERVICE`; market makers became the first service actor
+(they had no drives and lived on the wage already, never recorded as a
+decision). Spaceport operators are the second: two per planet, a pre-built
+`spaceport` facility, one `FacilityUpkeepDrive` whose weighted failure
+table lives in the new `data/facilities.yaml`, 50 credits and the wage,
+no capital injection, condition decay as the only exit. Shared dealer
+logic went to `core/brains/dealer.py` as plain functions; the user
+rejected a shared base class. Design: `docs/spaceport-design.md`.
+
+Two post-landing defects, both in the operator's bid rule as specified,
+not in the design:
+- The bid gate used the galaxy-minimum fuel valuation, pinned at 3-11 by
+  one-unit market-maker probe asks, so operators refused every real ask.
+  Fixed by bounding bids at the navigator's delivered import price.
+- A price ratchet: operators anchored on each other's asks, sellers copy
+  the resting bid into their ask, inventory skew added up to 50% per hop;
+  fuel went 14 to 94 credits by turn 100 and 7.7k units froze on a
+  cost-basis floor. Fixed by anchoring on producer asks only, capping the
+  bid at the delivered price, and flooring asks on restock cost the way
+  producers floor on replacement cost. The alternative from the original
+  design, bidding at imputed make cost, was tested in-process and
+  rejected: imputed cost is circular on an operator's planet and it
+  bankrupted the fleet.
+Also fixed on the way: `dealer.ingest_fills` replayed fills after history
+trimming (market makers were exposed), and the ships' fuel value
+reference became a median of believable planet valuations instead of a
+galaxy minimum that no planet ever passed.
+
+Result at 450 turns, 100 planets (two runs per side, stochastic):
+planets with a live fuel ask 24-31 to 68-75; operator fuel stock 6-17 to
+5.9-7.3k units sold at ~30; industrialist hoard unchanged (11-20k to
+20-23k); nova_fuel mean price 22-31 to 48-52. Fleet activity did NOT
+improve: idle ships 65-92 of 100, deliveries in the last 50 turns 32-242
+against 220-521. Availability was the design's target and is met; the
+fleet is now idle with fuel for sale, which the ratchet probe attributed
+to the ship planner's cash gate under higher fuel prices. That is the
+next decision, with the industrialist valuation defect (`_output_unit_value`
+case 3 values a run at the 30-day average with zero volume) still
+deferred. The old stranded-ship KPI is now gamed by ubiquitous asks; judge
+on `idle_ships`, `departures_window`, and `ship_delivered_total`.
+
 ## 2026-09-03 - Medicine stockpile and fleet lockout: four root causes
 
 Landed on main. Medicine sat in producer inventories (16k units on 16
