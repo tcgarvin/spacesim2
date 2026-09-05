@@ -121,6 +121,23 @@ def _seller(sim, planet, commodity, quantity, price, money=0):
     return actor
 
 
+def _dealer_seller(sim, planet, commodity, quantity, price):
+    """A SERVICE actor resting an ask, i.e. another dealer's quote."""
+    actor = Actor(
+        name=f"Dealer-{planet.name}",
+        sim=sim,
+        actor_type=ActorType.SERVICE,
+        drives=[],
+        brain=SpaceportOperatorBrain(),
+        planet=planet,
+        initial_money=0,
+    )
+    actor.inventory.add_commodity(commodity, quantity)
+    planet.add_actor(actor)
+    planet.market.place_sell_order(actor, commodity, quantity, price)
+    return actor
+
+
 def _quote(sim, actor):
     """Refresh galaxy fuel facts, then ask the brain for this turn's orders."""
     get_navigator(sim).refresh_market_facts()
@@ -177,9 +194,10 @@ def test_rests_a_delivery_priced_bid_when_the_local_ask_is_too_dear():
     delivered = navigator.fuel_delivery_bid_price(planet, target)
     assert delivered < 500
     assert len(bids) == 1
-    assert bids[0].price == dealer.skew_midpoint(
-        delivered, 0, target, INVENTORY_SKEW_CAP
-    )
+    # The delivered price is an arbitrage ceiling: the empty-stock skew would
+    # raise the bid above it, and is clipped.
+    assert bids[0].price == delivered
+    assert delivered < dealer.skew_midpoint(delivered, 0, target, INVENTORY_SKEW_CAP)
 
 
 def test_lifts_a_local_ask_at_or_below_the_delivered_price():
@@ -211,13 +229,32 @@ def test_rests_a_delivery_priced_bid_when_there_is_no_ask():
     bids = _orders(commands, PlaceBuyOrderCommand, "nova_fuel")
 
     assert len(bids) == 1
-    # Skewed up while stock is empty, so the bid still attracts a delivery.
-    expected = dealer.skew_midpoint(
-        navigator.fuel_delivery_bid_price(planet, target), 0, target, INVENTORY_SKEW_CAP
-    )
-    assert bids[0].price == expected
-    assert expected > navigator.fuel_delivery_bid_price(planet, target)
+    # Never above the delivered price, whatever the inventory skew wants.
+    delivered = navigator.fuel_delivery_bid_price(planet, target)
+    assert bids[0].price == delivered
     assert bids[0].quantity == target
+
+
+def test_bid_is_never_skewed_above_the_delivered_price():
+    """Low stock may not bid over what importing the fuel would cost.
+
+    The skew used to be free to add up to 50%. Operators bid each other's
+    prices up through it: every dealer's ask fed the next dealer's anchor.
+    """
+    sim, registry, (planet, other) = _make_world()
+    fuel = registry.get_commodity("nova_fuel")
+    _seller(sim, other, fuel, 500, 30)
+    actor, _ = _make_operator(sim, planet, money=100000)
+    navigator = get_navigator(sim)
+    target = fuel_capacity_for(navigator.mean_pair_distance(), 1.0)
+
+    commands = _quote(sim, actor)
+    bids = _orders(commands, PlaceBuyOrderCommand, "nova_fuel")
+
+    delivered = navigator.fuel_delivery_bid_price(planet, target)
+    assert len(bids) == 1
+    assert bids[0].price == delivered
+    assert dealer.skew_midpoint(delivered, 0, target, INVENTORY_SKEW_CAP) > delivered
 
 
 # ---------------------------------------------------------------------------
@@ -225,27 +262,52 @@ def test_rests_a_delivery_priced_bid_when_there_is_no_ask():
 # ---------------------------------------------------------------------------
 
 
-def test_ask_prices_off_cost_basis_and_scales_quantity_with_condition():
-    sim, registry, (planet, _) = _make_world()
+def test_ask_prices_off_restock_cost_and_scales_quantity_with_condition():
+    sim, registry, (planet, other) = _make_world()
     fuel = registry.get_commodity("nova_fuel")
-    market = planet.market
-    actor, drive = _make_operator(sim, planet, money=5000)
-
-    # Real fills: the operator buys 40 units at 20 from a resting ask.
-    _seller(sim, planet, fuel, 40, 20)
-    market.place_buy_order(actor, fuel, 40, 20)
-    market.match_orders()
-    assert actor.inventory.get_quantity(fuel) == 40
+    actor, drive = _make_operator(sim, planet, money=5000, fuel_units=40)
+    # Bought during a spike: the basis is 60, but restocking today is cheap.
+    actor.brain._fuel_units = 40
+    actor.brain._fuel_total_cost = 2400.0
+    _seller(sim, other, fuel, 500, 10)
 
     drive.metrics.health = 0.5
     commands = _quote(sim, actor)
     asks = _orders(commands, PlaceSellOrderCommand, "nova_fuel")
 
-    assert len(asks) == 1
-    basis = 20.0
+    navigator = get_navigator(sim)
+    target = fuel_capacity_for(navigator.mean_pair_distance(), 1.0)
+    restock = float(navigator.fuel_delivery_bid_price(planet, target))
     spread = actor.brain.spread
-    assert asks[0].price == max(math.ceil(basis) + 1, math.ceil(basis * (1.0 + spread)))
+    assert len(asks) == 1
+    assert asks[0].price == max(
+        math.ceil(restock) + 1, math.ceil(restock * (1.0 + spread))
+    )
+    # The spike-priced stock is sold at a loss rather than frozen above market.
+    assert asks[0].price < 60
     assert asks[0].quantity == 20  # floor(40 * 0.5)
+
+
+def test_ask_follows_a_cheaper_local_producer_ask_down():
+    """Restock cost is the cheaper of a local ask and an import, not history."""
+    sim, registry, (planet, other) = _make_world()
+    fuel = registry.get_commodity("nova_fuel")
+    actor, _ = _make_operator(sim, planet, money=5000, fuel_units=20)
+    actor.brain._fuel_units = 20
+    actor.brain._fuel_total_cost = 1600.0  # basis 80
+    _seller(sim, other, fuel, 500, 40)
+    _seller(sim, planet, fuel, 500, 8)
+
+    commands = _quote(sim, actor)
+    asks = _orders(commands, PlaceSellOrderCommand, "nova_fuel")
+    bids = _orders(commands, PlaceBuyOrderCommand, "nova_fuel")
+
+    spread = actor.brain.spread
+    assert len(asks) == 1
+    assert asks[0].price == max(9, math.ceil(8 * (1.0 + spread)))
+    # The self-trade guard is not needed here, but the invariant it protects
+    # holds anyway: what we bid stays under what we ask.
+    assert bids and bids[0].price < asks[0].price
 
 
 def test_no_ask_below_the_condition_floor():
@@ -284,18 +346,25 @@ def test_upkeep_is_bought_before_fuel_and_targets_the_last_unmet_material():
     assert _orders(commands, PlaceBuyOrderCommand, metal.id)[0].quantity == 1
 
 
-def test_self_trade_guard_drops_a_bid_at_or_above_our_own_ask():
-    sim, registry, (planet, _) = _make_world()
+def test_self_trade_guard_drops_a_bid_at_or_above_our_own_ask(monkeypatch):
+    """The guard still fires, even though restock pricing rarely needs it.
+
+    Restock-cost asks sit a spread above the price the bid is capped at, so
+    the two sides no longer cross on their own. The guard remains because a
+    crossed quote would churn inventory for a guaranteed loss.
+    """
+    sim, registry, (planet, other) = _make_world()
+    fuel = registry.get_commodity("nova_fuel")
+    _seller(sim, other, fuel, 500, 40)
     actor, _ = _make_operator(sim, planet, money=5000, fuel_units=10)
-    # A cost basis of 1 puts the ask at 2, far below the delivery-viable bid.
-    actor.brain._fuel_units = 10
-    actor.brain._fuel_total_cost = 10.0
 
+    cheap_ask = PlaceSellOrderCommand(fuel, 10, 2)
+    monkeypatch.setattr(
+        SpaceportOperatorBrain, "_fuel_ask", lambda *args, **kwargs: cheap_ask
+    )
     commands = _quote(sim, actor)
-    asks = _orders(commands, PlaceSellOrderCommand, "nova_fuel")
 
-    assert len(asks) == 1
-    assert asks[0].price == 2
+    assert _orders(commands, PlaceSellOrderCommand, "nova_fuel") == [cheap_ask]
     assert _orders(commands, PlaceBuyOrderCommand, "nova_fuel") == []
 
 
@@ -449,6 +518,42 @@ def test_delivery_price_ignores_a_shallow_ask_it_cannot_fill():
 
     assert price == _legacy_fuel_bid_price_from(navigator, planet, near, 20, 40)
     assert price > _legacy_fuel_bid_price_from(navigator, planet, far, 2, 40)
+
+
+def test_delivery_price_ignores_a_dealer_ask():
+    """Another dealer's ask is a markup on this same anchor, so it cannot set it.
+
+    Anchoring on it closed a loop: the anchor set the bid, the bid became the
+    price a dealer paid, its ask marked that up, and the next dealer anchored
+    there. Fuel VWAP ratcheted from 14 to 94 in a hundred turns on it.
+    """
+    sim, registry, (planet, near, far) = _make_world(
+        (("A", 0, 0), ("Near", 100, 0), ("Far", 400, 0))
+    )
+    fuel = registry.get_commodity("nova_fuel")
+    _dealer_seller(sim, near, fuel, 500, 20)
+    _seller(sim, far, fuel, 500, 20)
+    navigator = get_navigator(sim)
+    navigator.refresh_market_facts()
+
+    price = navigator.fuel_delivery_bid_price(planet, 40)
+
+    assert price == _legacy_fuel_bid_price_from(navigator, planet, far, 20, 40)
+    assert price > _legacy_fuel_bid_price_from(navigator, planet, near, 20, 40)
+
+
+def test_delivery_price_falls_back_to_dealer_asks_when_nobody_produces():
+    """With only dealers selling, their asks are the only supply signal there is."""
+    sim, registry, (planet, other) = _make_world()
+    fuel = registry.get_commodity("nova_fuel")
+    _dealer_seller(sim, other, fuel, 500, 20)
+    navigator = get_navigator(sim)
+    navigator.refresh_market_facts()
+
+    price = navigator.fuel_delivery_bid_price(planet, 40)
+
+    assert price == _legacy_fuel_bid_price_from(navigator, planet, other, 20, 40)
+    assert price > navigator.local_fuel_reference_price(planet)
 
 
 def _legacy_fuel_bid_price_from(navigator, planet, source, ask, quantity):

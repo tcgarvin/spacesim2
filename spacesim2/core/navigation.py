@@ -103,6 +103,18 @@ class _TradeSignalIndex:
         )
 
 
+@dataclass(frozen=True)
+class _FuelScan:
+    """One turn's galaxy-wide fuel market snapshot."""
+
+    # (planet, best ask) for every planet with a resting fuel ask.
+    asks: List[Tuple["Planet", int]]
+    # (planet, best non-dealer ask, non-dealer depth) where such an ask rests.
+    producer_asks: List[Tuple["Planet", int, int]]
+    cheapest_ask: Optional[int]
+    reference: Optional[float]
+
+
 class Navigator:
     """Cached view of galaxy geometry and fuel reachability for one simulation.
 
@@ -131,9 +143,7 @@ class Navigator:
         self._fuel_purchasable: Dict["Planet", bool] = {}
         self._fuel_ask_depth: Dict["Planet", int] = {}
         self._nearest_fuel_distance: Dict["Planet", Optional[float]] = {}
-        self._fuel_scan: Optional[
-            Tuple[List[Tuple["Planet", int]], Optional[int], Optional[float]]
-        ] = None
+        self._fuel_scan: Optional["_FuelScan"] = None
         self._trade_index: Optional[_TradeSignalIndex] = None
         # Turn the market-fact snapshot belongs to. None means never refreshed
         # or force-refreshed outside a turn.
@@ -398,11 +408,23 @@ class Navigator:
 
     def fuel_ask_planets(self) -> List[Tuple["Planet", int]]:
         """Every planet with a resting fuel ask, as (planet, ask) pairs."""
-        return self._fuel_market_scan()[0]
+        return self._fuel_market_scan().asks
+
+    def producer_fuel_ask_planets(self) -> List[Tuple["Planet", int, int]]:
+        """Planets whose fuel supply is not a dealer's, as (planet, ask, depth).
+
+        The ask is the best non-dealer ask on the planet and the depth is how
+        many units all non-dealer asks there hold. "Dealer" means a SERVICE
+        actor, i.e. a market maker or a spaceport operator: its ask is a markup
+        on the same delivered-price anchor this scan feeds, so treating it as
+        an independent supply signal closes a price loop. A ship's tank fuel is
+        real supply and counts as a producer ask.
+        """
+        return self._fuel_market_scan().producer_asks
 
     def cheapest_fuel_ask(self) -> Optional[int]:
         """The lowest resting fuel ask anywhere, or None if there is none."""
-        return self._fuel_market_scan()[1]
+        return self._fuel_market_scan().cheapest_ask
 
     def fuel_value_reference(self) -> Optional[float]:
         """Cheapest believable fuel valuation anywhere in the galaxy.
@@ -413,7 +435,7 @@ class Navigator:
         ship from filling its whole tank at panic prices. Returns None when
         no planet has any signal.
         """
-        return self._fuel_market_scan()[2]
+        return self._fuel_market_scan().reference
 
     def exportable_commodities(
         self, planet: "Planet"
@@ -486,19 +508,30 @@ class Navigator:
     def fuel_delivery_bid_price(self, planet: "Planet", quantity: int) -> int:
         """Price for a standing fuel bid at ``planet`` that makes delivery pay.
 
-        Anchors on the cheapest *fillable* ask anywhere else in the galaxy plus
-        the deliverer's round-trip burn at worst-case efficiency, amortized over
-        ``quantity``, marked up by :data:`FUEL_BID_MARGIN` so the delivery
-        clears the arbitrage threshold a trader applies. With no ask anywhere,
-        falls back to :meth:`local_fuel_reference_price`.
+        Anchors on the cheapest *fillable producer* ask anywhere else in the
+        galaxy plus the deliverer's round-trip burn at worst-case efficiency,
+        amortized over ``quantity``, marked up by :data:`FUEL_BID_MARGIN` so
+        the delivery clears the arbitrage threshold a trader applies. With no
+        ask anywhere, falls back to :meth:`local_fuel_reference_price`.
 
         Fillable means the source's resting ask depth covers ``quantity``. Top
         of book alone is a bad anchor: market makers post one-unit discovery
         asks at a few credits, and a galaxy-wide minimum over those prices a
         40-unit delivery as if it could be bought for 2 credits a unit, which
-        no deliverer would ever accept. Sources that could actually fill the
-        order are preferred; only if none exists do shallower sources anchor
-        the price, and only if there is no ask at all does the local reference.
+        no deliverer would ever accept.
+
+        Producer means the ask was not posted by a SERVICE actor. A dealer's
+        ask is a markup on its own cost basis, and that basis comes from
+        buying at exactly this delivered price: anchoring on it closes a
+        feedback loop where each operator's bid raises the next operator's
+        anchor, which raised the galaxy fuel VWAP sixfold over a hundred turns
+        with no change in real supply. A ship's tank fuel is not a dealer ask
+        and still anchors, because it is real supply someone chose to carry.
+
+        Preference order: producer asks deep enough to fill the order, then
+        producer asks of any depth, then - only when the galaxy holds no
+        producer ask at all - any ask, deep ones first, and finally the local
+        reference price.
 
         Lives on the navigator rather than on a ship because it is a fact
         about the galaxy's fuel geography, and both a stranded ship and a
@@ -521,24 +554,51 @@ class Navigator:
         if self.fuel_commodity() is None:
             return FUEL_BID_FALLBACK_FLOOR
 
-        best_fillable: Optional[float] = None
-        best_any: Optional[float] = None
-        for source, ask in self.fuel_ask_planets():
-            if source is planet:
-                continue
+        needed_depth = max(quantity, 1)
+
+        def delivered_cost(source: "Planet", ask: int) -> float:
             distance = self.distance(source, planet)
             leg_fuel = math.ceil(
                 Ship.calculate_fuel_needed(distance) / DELIVERER_WORST_FUEL_EFFICIENCY
             )
-            delivered_cost = ask + (2 * leg_fuel * ask) / max(quantity, 1)
-            if best_any is None or delivered_cost < best_any:
-                best_any = delivered_cost
-            if self.fuel_ask_depth_at(source) >= max(quantity, 1) and (
-                best_fillable is None or delivered_cost < best_fillable
-            ):
-                best_fillable = delivered_cost
+            return ask + (2 * leg_fuel * ask) / needed_depth
 
-        best_delivered_cost = best_fillable if best_fillable is not None else best_any
+        producer_fillable: Optional[float] = None
+        producer_any: Optional[float] = None
+        for source, ask, depth in self.producer_fuel_ask_planets():
+            if source is planet:
+                continue
+            cost = delivered_cost(source, ask)
+            if producer_any is None or cost < producer_any:
+                producer_any = cost
+            if depth >= needed_depth and (
+                producer_fillable is None or cost < producer_fillable
+            ):
+                producer_fillable = cost
+
+        best_delivered_cost = (
+            producer_fillable if producer_fillable is not None else producer_any
+        )
+
+        if best_delivered_cost is None:
+            # No producer sells fuel anywhere. Dealers are then the only
+            # supply there is, so anchoring on them beats having no anchor.
+            best_fillable: Optional[float] = None
+            best_any: Optional[float] = None
+            for source, ask in self.fuel_ask_planets():
+                if source is planet:
+                    continue
+                cost = delivered_cost(source, ask)
+                if best_any is None or cost < best_any:
+                    best_any = cost
+                if self.fuel_ask_depth_at(source) >= needed_depth and (
+                    best_fillable is None or cost < best_fillable
+                ):
+                    best_fillable = cost
+            best_delivered_cost = (
+                best_fillable if best_fillable is not None else best_any
+            )
+
         if best_delivered_cost is not None:
             return max(1, math.ceil(best_delivered_cost * (1.0 + FUEL_BID_MARGIN)))
 
@@ -635,17 +695,21 @@ class Navigator:
         )
         return self._trade_index
 
-    def _fuel_market_scan(
-        self,
-    ) -> Tuple[List[Tuple["Planet", int]], Optional[int], Optional[float]]:
-        """One O(planets) sweep collecting galaxy-wide fuel market facts.
+    def _fuel_market_scan(self) -> "_FuelScan":
+        """One sweep over every market collecting galaxy-wide fuel facts.
 
-        Returns a tuple of planets with resting asks, the cheapest ask, and
-        the cheapest believable valuation, cached until the next refresh.
+        Collects the planets with resting asks, the best non-dealer ask and
+        non-dealer depth per planet, the cheapest ask, and the cheapest
+        believable valuation. Cached until the next refresh.
         """
         if self._fuel_scan is not None:
             return self._fuel_scan
+        # Imported here, not at module scope, to keep this module importable
+        # from anywhere in core without an import cycle through actor.py.
+        from spacesim2.core.actor import Actor, ActorType
+
         asks: List[Tuple["Planet", int]] = []
+        producer_asks: List[Tuple["Planet", int, int]] = []
         cheapest_ask: Optional[int] = None
         reference: Optional[float] = None
         fuel = self.fuel_commodity()
@@ -659,11 +723,32 @@ class Navigator:
                         cheapest_ask = ask
                     if reference is None or ask < reference:
                         reference = float(ask)
+                    best_producer: Optional[int] = None
+                    producer_depth = 0
+                    for order in market.sell_orders.get(fuel, []):
+                        if order.cancelled:
+                            continue
+                        seller = order.actor
+                        if (
+                            isinstance(seller, Actor)
+                            and seller.actor_type is ActorType.SERVICE
+                        ):
+                            continue
+                        producer_depth += order.quantity
+                        if best_producer is None or order.price < best_producer:
+                            best_producer = order.price
+                    if best_producer is not None:
+                        producer_asks.append((planet, best_producer, producer_depth))
                 if market.has_price_signal(fuel):
                     avg_30 = market.get_30_day_average_price(fuel)
                     if avg_30 > 0 and (reference is None or avg_30 < reference):
                         reference = avg_30
-        self._fuel_scan = (asks, cheapest_ask, reference)
+        self._fuel_scan = _FuelScan(
+            asks=asks,
+            producer_asks=producer_asks,
+            cheapest_ask=cheapest_ask,
+            reference=reference,
+        )
         return self._fuel_scan
 
 

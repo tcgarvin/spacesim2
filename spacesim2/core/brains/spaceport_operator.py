@@ -5,8 +5,8 @@ The gap this fills is a coordination failure, not a production one (see
 replacement-cost floor that only ships ever bid for, and stranded ships post
 rescue bids too small to be worth a delivery. The operator is the standing
 counterparty between them: it bids at a price a producer or a deliverer will
-actually take, and asks at its own cost basis plus a spread, so a docking ship
-always has somewhere to refuel.
+actually take, and asks at what restocking would cost it today plus a spread,
+so a docking ship always has somewhere to refuel.
 
 It is a *service* actor, so it does not eat: its only need is keeping its
 spaceport maintained, expressed as a ``FacilityUpkeepDrive``. Condition scales
@@ -158,9 +158,10 @@ class SpaceportOperatorBrain(ActorBrain):
     def _ingest_fuel_fills(self, actor: Actor, market: "Market") -> None:
         """Roll the fuel cost basis forward through this turn's own fills.
 
-        The ask is priced off the basis, so it has to see every buy and sell:
-        without ingestion the operator would keep quoting off a stale purchase
-        price and sell restocked fuel below what it paid.
+        The basis does not set the ask (see :meth:`_fuel_ask`); it is the
+        record of what this stock actually cost, which is what says whether
+        the fuel business is making money. Every buy and sell has to be seen
+        for it to mean anything.
         """
         self._fill_cursor, grouped = dealer.ingest_fills(
             actor, market, self._fill_cursor
@@ -298,11 +299,13 @@ class SpaceportOperatorBrain(ActorBrain):
 
         - A local ask rests at or below the delivered price: lift it. Buying
           locally beats paying for a delivery.
-        - Otherwise rest a bid at the delivered price, inventory-skewed. That
-          is what a deliverer needs to see for a fuel run to beat its
-          alternatives, and the skew pulls the bid down as stock approaches
-          target so the operator stops paying delivery prices for fuel it no
-          longer needs.
+        - Otherwise rest a bid at the delivered price, skewed *down* by
+          inventory. That price is what a deliverer needs to see for a fuel
+          run to beat its alternatives, and the skew pulls the bid below it as
+          stock approaches target so the operator stops paying delivery prices
+          for fuel it no longer needs. The skew never pushes the bid above the
+          delivered price: that price is an arbitrage ceiling, not a midpoint,
+          and paying over it means paying more than importing would cost.
 
         The operator never sits out while it needs fuel and can afford a unit.
         An earlier version gated the lift on the galaxy-wide fuel value
@@ -327,8 +330,11 @@ class SpaceportOperatorBrain(ActorBrain):
         if ask is not None and ask > 0 and ask <= delivered:
             price = ask
         else:
-            price = dealer.skew_midpoint(
-                delivered, held, target, INVENTORY_SKEW_CAP, min_price=1
+            price = min(
+                delivered,
+                dealer.skew_midpoint(
+                    delivered, held, target, INVENTORY_SKEW_CAP, min_price=1
+                ),
             )
 
         price = max(1, price)
@@ -346,27 +352,29 @@ class SpaceportOperatorBrain(ActorBrain):
         target: int,
         condition: float,
     ) -> Optional[PlaceSellOrderCommand]:
-        """Offer stock at cost plus spread, scaled and gated by condition.
+        """Offer stock at restock cost plus spread, scaled and gated by condition.
 
-        The ask never goes below cost basis plus one credit: an operator that
-        sold below cost would burn its capital keeping ships fuelled and then
-        have none, which helps nobody. Over target the skew walks the price
-        down toward that floor to clear the excess. Condition scales the
-        offered quantity, and below :data:`CONDITION_ASK_FLOOR` the ask is
-        withdrawn: a neglected port stops being a fuel source.
+        The floor is what replacing a unit costs *now*, not what this stock
+        happened to cost: the same rule producers follow when they floor an ask
+        at replacement cost. A dealer whose suppliers got cheaper realizes the
+        loss and sells; pricing off a historical cost basis instead froze
+        thousands of units above market for hundreds of turns, because the
+        stock had been bought during a price spike and the floor never came
+        back down. The cost basis is still tracked, for analysis and for
+        measuring whether the business makes money, but it no longer sets the
+        price.
+
+        Over target the skew walks the price down toward the floor to clear
+        the excess, and never below it. Condition scales the offered quantity,
+        and below :data:`CONDITION_ASK_FLOOR` the ask is withdrawn: a
+        neglected port stops being a fuel source.
         """
         if held <= 0 or condition < CONDITION_ASK_FLOOR:
             return None
 
-        basis = self._fuel_cost_basis()
-        if basis <= 0.0:
-            # Stock with no basis should not happen: every unit is bought
-            # through the market. Fall back to the local average so a
-            # hand-seeded operator still quotes something sane.
-            basis = float(max(1, market.get_avg_price(fuel)))
-
-        floor = math.ceil(basis) + 1
-        price = max(floor, math.ceil(basis * (1.0 + self.spread)))
+        restock = self._restock_cost(actor, market, fuel, target)
+        floor = math.ceil(restock) + 1
+        price = max(floor, math.ceil(restock * (1.0 + self.spread)))
         if held > target:
             price = dealer.skew_midpoint(
                 price, held, target, INVENTORY_SKEW_CAP, min_price=floor
@@ -374,3 +382,33 @@ class SpaceportOperatorBrain(ActorBrain):
 
         quantity = max(1, int(math.floor(held * condition)))
         return PlaceSellOrderCommand(fuel, quantity, price)
+
+    def _restock_cost(
+        self,
+        actor: Actor,
+        market: "Market",
+        fuel: "CommodityDefinition",
+        target: int,
+    ) -> float:
+        """What one more unit of fuel would cost the operator today.
+
+        The cheaper of buying from somebody else's resting local ask and
+        paying the delivered price for a restock of ``target`` units, which is
+        exactly the choice :meth:`_fuel_bid` makes. Our own ask is excluded:
+        quoting off it would just repeat yesterday's price forever.
+        """
+        planet = actor.planet
+        delivered = (
+            float(get_navigator(actor.sim).fuel_delivery_bid_price(planet, target))
+            if planet is not None
+            else float(max(1, market.get_avg_price(fuel)))
+        )
+        best_local: Optional[int] = None
+        for order in market.sell_orders.get(fuel, []):
+            if order.cancelled or order.actor is actor:
+                continue
+            if best_local is None or order.price < best_local:
+                best_local = order.price
+        if best_local is not None and best_local < delivered:
+            return float(max(1, best_local))
+        return max(1.0, delivered)
