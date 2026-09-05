@@ -103,7 +103,7 @@ class MarketMakerBrain(ActorBrain):
         self._state: Dict[str, MarketMakerState] = {}
 
         # Cursor into the actor's transaction history.
-        self._last_transaction_index: int = 0
+        self._fill_cursor: int = 0
 
     # -------- Required interface ---------------------------------------------
 
@@ -161,8 +161,8 @@ class MarketMakerBrain(ActorBrain):
         self, actor: Actor, market: "Market"
     ) -> Dict[str, dealer.CommodityFills]:
         """Group the actor's new fills since the last tick by commodity and side."""
-        self._last_transaction_index, grouped = dealer.ingest_fills(
-            actor, market, self._last_transaction_index
+        self._fill_cursor, grouped = dealer.ingest_fills(
+            actor, market, self._fill_cursor
         )
         return grouped
 

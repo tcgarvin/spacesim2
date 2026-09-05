@@ -6,7 +6,7 @@ import pytest
 
 from spacesim2.core.brains import dealer
 from spacesim2.core.commodity import CommodityRegistry
-from spacesim2.core.market import Market
+from spacesim2.core.market import TRANSACTIONS_KEEP_PER_ACTOR, Market
 
 from .helpers import get_actor
 
@@ -55,7 +55,7 @@ def test_ingest_fills_groups_by_commodity_and_side(
 
     cursor, fills = dealer.ingest_fills(buyer, market, 0)
 
-    assert cursor == 2
+    assert cursor == market.actor_transaction_history[buyer.name][-1].transaction_id
     bucket = fills[food_commodity.name]
     assert [lot.quantity for lot in bucket.buys] == [5, 3]
     assert bucket.sell_prices == []
@@ -82,16 +82,89 @@ def test_ingest_fills_advances_cursor(
     assert fills == {}
 
 
-def test_ingest_fills_resets_cursor_past_history_end(
+def test_ingest_fills_survives_history_trimming(
     commodity_registry, food_commodity, mock_sim
 ) -> None:
-    """A cursor beyond a trimmed history restarts at 0 instead of skipping."""
-    market, buyer, _ = _traded_market(commodity_registry, food_commodity, mock_sim)
+    """Fills pushed out of the retained window are neither skipped nor replayed.
 
-    cursor, fills = dealer.ingest_fills(buyer, market, 99)
+    The market keeps only the last TRANSACTIONS_KEEP_PER_ACTOR fills per actor,
+    so an index-based cursor would go stale. Trade well past that bound between
+    two ingests and check that the second call sees exactly the fills that are
+    still retained and no earlier one a second time.
+    """
+    market = Market()
+    market.commodity_registry = commodity_registry
+    buyer = get_actor("Buyer", mock_sim, initial_money=1_000_000)
+    seller = get_actor("Seller", mock_sim, initial_money=0)
+    seller.inventory.add_commodity(food_commodity, 10_000)
 
-    assert cursor == 2
-    assert len(fills[food_commodity.name].buys) == 2
+    def _trade(price):
+        market.place_sell_order(seller, food_commodity, 1, price)
+        market.place_buy_order(buyer, food_commodity, 1, price)
+        market.match_orders()
+
+    _trade(5)
+    cursor, first = dealer.ingest_fills(buyer, market, 0)
+    assert len(first[food_commodity.name].buys) == 1
+
+    extra = TRANSACTIONS_KEEP_PER_ACTOR + 20
+    for _ in range(extra):
+        _trade(7)
+
+    history = market.actor_transaction_history[buyer.name]
+    # Trimming really happened: the price-5 fill is gone from the window.
+    assert len(history) <= TRANSACTIONS_KEEP_PER_ACTOR + 1 < extra
+    assert all(txn.price == 7 for txn in history)
+
+    next_cursor, second = dealer.ingest_fills(buyer, market, cursor)
+
+    buys = second[food_commodity.name].buys
+    # Every retained fill after the cursor, and not one from before it.
+    assert len(buys) == len(history)
+    assert all(lot.price == 7 for lot in buys)
+    assert next_cursor == history[-1].transaction_id
+
+    # A third call sees nothing: no replay of the retained window.
+    third_cursor, third = dealer.ingest_fills(buyer, market, next_cursor)
+    assert third == {}
+    assert third_cursor == next_cursor
+
+
+def test_cost_basis_stays_correct_across_a_trim(
+    commodity_registry, food_commodity, mock_sim
+) -> None:
+    """A dealer's running basis is not corrupted by a replayed window.
+
+    Ingesting the same fills twice would double the pooled units and leave the
+    operator quoting off a basis it never paid.
+    """
+    market = Market()
+    market.commodity_registry = commodity_registry
+    buyer = get_actor("Buyer", mock_sim, initial_money=1_000_000)
+    seller = get_actor("Seller", mock_sim, initial_money=0)
+    seller.inventory.add_commodity(food_commodity, 10_000)
+
+    units, total_cost, cursor = 0, 0.0, 0
+    bought = TRANSACTIONS_KEEP_PER_ACTOR + 50
+    for i in range(bought):
+        market.place_sell_order(seller, food_commodity, 1, 8)
+        market.place_buy_order(buyer, food_commodity, 1, 8)
+        market.match_orders()
+        if i % 10 == 0:
+            cursor, fills = dealer.ingest_fills(buyer, market, cursor)
+            bucket = fills.get(food_commodity.name, dealer.CommodityFills())
+            units, total_cost, _ = dealer.cost_basis(
+                units, total_cost, bucket.buys, bucket.sells
+            )
+
+    cursor, fills = dealer.ingest_fills(buyer, market, cursor)
+    bucket = fills.get(food_commodity.name, dealer.CommodityFills())
+    units, total_cost, per_unit = dealer.cost_basis(
+        units, total_cost, bucket.buys, bucket.sells
+    )
+
+    assert units == bought
+    assert per_unit == 8.0
 
 
 def test_commodity_fills_truthiness() -> None:

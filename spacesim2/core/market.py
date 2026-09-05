@@ -4,7 +4,7 @@ import math
 import random
 import threading
 from collections import defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, AbstractSet, Deque, Dict, List, Optional, Tuple, Union
 
 from spacesim2.core.actor import Actor
@@ -61,6 +61,12 @@ class _LockedCounter:
 
 _ORDER_ID_COUNTER = _LockedCounter(1)
 
+# Monotonic transaction-id source, shared across every market in the process
+# for the same reason and with the same locking as the order-id counter. Ids
+# are strictly increasing in creation order, which is what lets a reader hold
+# a cursor into a per-actor history that gets trimmed underneath it.
+_TRANSACTION_ID_COUNTER = _LockedCounter(1)
+
 
 @dataclass
 class Order:
@@ -115,6 +121,12 @@ class Transaction:
     turn: int = 0
     buy_order_id: Optional[str] = None
     sell_order_id: Optional[str] = None
+    # Strictly increasing across the process, assigned at creation. Readers
+    # that follow their own fills (see core/brains/dealer.ingest_fills) key
+    # their cursor on this rather than on a list index, because
+    # _trim_transaction_history drops the front of a per-actor history and an
+    # index cursor would then either skip fills or replay them.
+    transaction_id: int = field(default_factory=lambda: next(_TRANSACTION_ID_COUNTER))
 
 
 class Market:

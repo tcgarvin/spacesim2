@@ -486,11 +486,19 @@ class Navigator:
     def fuel_delivery_bid_price(self, planet: "Planet", quantity: int) -> int:
         """Price for a standing fuel bid at ``planet`` that makes delivery pay.
 
-        Anchors on the cheapest ask anywhere else in the galaxy plus the
-        deliverer's round-trip burn at worst-case efficiency, amortized over
+        Anchors on the cheapest *fillable* ask anywhere else in the galaxy plus
+        the deliverer's round-trip burn at worst-case efficiency, amortized over
         ``quantity``, marked up by :data:`FUEL_BID_MARGIN` so the delivery
         clears the arbitrage threshold a trader applies. With no ask anywhere,
         falls back to :meth:`local_fuel_reference_price`.
+
+        Fillable means the source's resting ask depth covers ``quantity``. Top
+        of book alone is a bad anchor: market makers post one-unit discovery
+        asks at a few credits, and a galaxy-wide minimum over those prices a
+        40-unit delivery as if it could be bought for 2 credits a unit, which
+        no deliverer would ever accept. Sources that could actually fill the
+        order are preferred; only if none exists do shallower sources anchor
+        the price, and only if there is no ask at all does the local reference.
 
         Lives on the navigator rather than on a ship because it is a fact
         about the galaxy's fuel geography, and both a stranded ship and a
@@ -499,7 +507,8 @@ class Navigator:
         Args:
             planet: Where the bid would rest, i.e. the delivery destination.
             quantity: Units bid for; the round trip is amortized over it, so
-                a bigger bid tolerates a lower price per unit.
+                a bigger bid tolerates a lower price per unit. Also the depth
+                a source must have to count as fillable.
 
         Returns:
             A price of at least 1.
@@ -512,7 +521,8 @@ class Navigator:
         if self.fuel_commodity() is None:
             return FUEL_BID_FALLBACK_FLOOR
 
-        best_delivered_cost: Optional[float] = None
+        best_fillable: Optional[float] = None
+        best_any: Optional[float] = None
         for source, ask in self.fuel_ask_planets():
             if source is planet:
                 continue
@@ -521,9 +531,14 @@ class Navigator:
                 Ship.calculate_fuel_needed(distance) / DELIVERER_WORST_FUEL_EFFICIENCY
             )
             delivered_cost = ask + (2 * leg_fuel * ask) / max(quantity, 1)
-            if best_delivered_cost is None or delivered_cost < best_delivered_cost:
-                best_delivered_cost = delivered_cost
+            if best_any is None or delivered_cost < best_any:
+                best_any = delivered_cost
+            if self.fuel_ask_depth_at(source) >= max(quantity, 1) and (
+                best_fillable is None or delivered_cost < best_fillable
+            ):
+                best_fillable = delivered_cost
 
+        best_delivered_cost = best_fillable if best_fillable is not None else best_any
         if best_delivered_cost is not None:
             return max(1, math.ceil(best_delivered_cost * (1.0 + FUEL_BID_MARGIN)))
 

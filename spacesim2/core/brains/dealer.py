@@ -79,24 +79,37 @@ def ingest_fills(
 ) -> Tuple[int, Dict[str, CommodityFills]]:
     """Read the actor's fills recorded since ``cursor`` and group them.
 
+    The cursor is the highest ``Transaction.transaction_id`` already seen, not
+    an index. The market trims each per-actor history to its last
+    ``TRANSACTIONS_KEEP_PER_ACTOR`` entries, which shifts every index down: an
+    index cursor would silently skip the fills that moved past it, or, if it
+    ran off the end, replay the whole retained window and double-count the
+    cost basis. Transaction ids are assigned from a monotonic counter, so
+    comparing against them is stable under trimming. Fills genuinely dropped
+    by trimming are simply lost, which is the retention policy's cost; nothing
+    is counted twice.
+
     Args:
         actor: The participant whose own fills we want.
         market: The market holding the per-actor transaction history.
-        cursor: Index into that history returned by the previous call; 0 first.
+        cursor: Opaque cursor returned by the previous call; 0 first.
 
     Returns:
-        ``(new_cursor, fills_by_commodity_name)``. The cursor is reset to 0 when
-        the history has been trimmed below it, so a reset replays what is left
-        rather than silently skipping every later fill.
+        ``(new_cursor, fills_by_commodity_name)``. Callers store the cursor
+        without interpreting it.
     """
     history: List[Transaction] = market.get_actor_transaction_history(actor) or []
 
-    # History was reset (or trimmed) beneath us.
-    if cursor > len(history):
-        cursor = 0
+    # Ids increase along the history, so the new tail is a suffix: walk back
+    # from the end to find where it starts instead of rescanning everything.
+    start = len(history)
+    while start > 0 and history[start - 1].transaction_id > cursor:
+        start -= 1
 
     grouped: Dict[str, CommodityFills] = {}
-    for txn in history[cursor:]:
+    for txn in history[start:]:
+        if txn.transaction_id > cursor:
+            cursor = txn.transaction_id
         if txn.buyer is actor:
             buying = True
         elif txn.seller is actor:
@@ -108,7 +121,7 @@ def ingest_fills(
         lot = FillLot(quantity=txn.quantity, price=txn.price)
         (bucket.buys if buying else bucket.sells).append(lot)
 
-    return len(history), grouped
+    return cursor, grouped
 
 
 def skew_midpoint(

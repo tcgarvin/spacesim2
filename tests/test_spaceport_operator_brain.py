@@ -24,7 +24,7 @@ from spacesim2.core.galaxy import StarLaneNetwork
 from spacesim2.core.market import Market
 from spacesim2.core.navigation import get_navigator
 from spacesim2.core.planet import Planet
-from spacesim2.core.ship import FUEL_BUNKER_PREMIUM, Ship, fuel_capacity_for
+from spacesim2.core.ship import Ship, fuel_capacity_for
 from spacesim2.core.simulation import Simulation
 
 _COMMODITIES = [
@@ -141,8 +141,10 @@ def _orders(commands, command_class, commodity_id):
 
 
 def test_lifts_a_cheap_local_ask_up_to_the_stock_target():
-    sim, registry, (planet, _) = _make_world()
+    sim, registry, (planet, other) = _make_world()
     fuel = registry.get_commodity("nova_fuel")
+    # An expensive offworld source sets import parity well above the local ask.
+    _seller(sim, other, fuel, 500, 60)
     _seller(sim, planet, fuel, 500, 20)
     actor, _ = _make_operator(sim, planet, money=5000)
 
@@ -157,19 +159,46 @@ def test_lifts_a_cheap_local_ask_up_to_the_stock_target():
     assert bids[0].quantity == min(target, budget // 20)
 
 
-def test_skips_the_bid_when_the_local_ask_is_scarcity_priced():
-    """Above the ships' bunkering ceiling the operator could not resell."""
+def test_rests_a_delivery_priced_bid_when_the_local_ask_is_too_dear():
+    """A local ask above import parity is passed over, but a bid still rests."""
     sim, registry, (planet, other) = _make_world()
     fuel = registry.get_commodity("nova_fuel")
-    # A cheap ask elsewhere sets the galaxy reference; the local one is a spike.
-    _seller(sim, other, fuel, 100, 10)
+    # Importing from `other` is cheaper than the local spike, so the operator
+    # bids at the delivered price rather than lifting the spike or sitting out.
+    _seller(sim, other, fuel, 500, 10)
     _seller(sim, planet, fuel, 100, 500)
     actor, _ = _make_operator(sim, planet, money=5000)
 
     commands = _quote(sim, actor)
+    bids = _orders(commands, PlaceBuyOrderCommand, "nova_fuel")
 
-    assert math.ceil(10 * FUEL_BUNKER_PREMIUM) < 500
-    assert _orders(commands, PlaceBuyOrderCommand, "nova_fuel") == []
+    navigator = get_navigator(sim)
+    target = fuel_capacity_for(navigator.mean_pair_distance(), 1.0)
+    delivered = navigator.fuel_delivery_bid_price(planet, target)
+    assert delivered < 500
+    assert len(bids) == 1
+    assert bids[0].price == dealer.skew_midpoint(
+        delivered, 0, target, INVENTORY_SKEW_CAP
+    )
+
+
+def test_lifts_a_local_ask_at_or_below_the_delivered_price():
+    """Buying at home beats paying for a delivery, so the ask is lifted."""
+    sim, registry, (planet, other) = _make_world()
+    fuel = registry.get_commodity("nova_fuel")
+    _seller(sim, other, fuel, 500, 30)
+    actor, _ = _make_operator(sim, planet, money=5000)
+    navigator = get_navigator(sim)
+    navigator.refresh_market_facts()
+    target = fuel_capacity_for(navigator.mean_pair_distance(), 1.0)
+    delivered = navigator.fuel_delivery_bid_price(planet, target)
+
+    _seller(sim, planet, fuel, 500, delivered)
+    commands = _quote(sim, actor)
+    bids = _orders(commands, PlaceBuyOrderCommand, "nova_fuel")
+
+    assert len(bids) == 1
+    assert bids[0].price == delivered
 
 
 def test_rests_a_delivery_priced_bid_when_there_is_no_ask():
@@ -398,3 +427,40 @@ def test_trader_brain_delegates_fuel_pricing_to_the_navigator():
     assert ship.brain._local_fuel_reference_price(
         planet
     ) == navigator.local_fuel_reference_price(planet)
+
+
+def test_delivery_price_ignores_a_shallow_ask_it_cannot_fill():
+    """A one-unit probe ask must not anchor the price of a 40-unit order.
+
+    Market makers post tiny discovery asks at a few credits. Anchoring on the
+    cheapest ask regardless of depth priced a real delivery as if the whole
+    load could be bought at the probe price.
+    """
+    sim, registry, (planet, near, far) = _make_world(
+        (("A", 0, 0), ("Near", 100, 0), ("Far", 900, 0))
+    )
+    fuel = registry.get_commodity("nova_fuel")
+    _seller(sim, far, fuel, 1, 2)
+    _seller(sim, near, fuel, 60, 20)
+    navigator = get_navigator(sim)
+    navigator.refresh_market_facts()
+
+    price = navigator.fuel_delivery_bid_price(planet, 40)
+
+    assert price == _legacy_fuel_bid_price_from(navigator, planet, near, 20, 40)
+    assert price > _legacy_fuel_bid_price_from(navigator, planet, far, 2, 40)
+
+
+def _legacy_fuel_bid_price_from(navigator, planet, source, ask, quantity):
+    """Delivered bid price anchored on one named source, for comparison."""
+    from spacesim2.core.navigation import (
+        DELIVERER_WORST_FUEL_EFFICIENCY,
+        FUEL_BID_MARGIN,
+    )
+
+    leg_fuel = math.ceil(
+        Ship.calculate_fuel_needed(navigator.distance(source, planet))
+        / DELIVERER_WORST_FUEL_EFFICIENCY
+    )
+    delivered = ask + (2 * leg_fuel * ask) / max(quantity, 1)
+    return max(1, math.ceil(delivered * (1.0 + FUEL_BID_MARGIN)))

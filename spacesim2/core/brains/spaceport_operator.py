@@ -36,7 +36,7 @@ from spacesim2.core.drives.facility_upkeep_drive import (
 )
 from spacesim2.core.drives.facility_upkeep_drive import FacilityUpkeepDrive
 from spacesim2.core.navigation import get_navigator
-from spacesim2.core.ship import FUEL_BUNKER_PREMIUM, fuel_capacity_for
+from spacesim2.core.ship import fuel_capacity_for
 
 if TYPE_CHECKING:
     from spacesim2.core.commodity import CommodityDefinition
@@ -76,8 +76,8 @@ class SpaceportOperatorBrain(ActorBrain):
     def __init__(self) -> None:
         """Create an operator with an empty book and a freshly drawn spread."""
         super().__init__()
-        # Cursor into the actor's transaction history, advanced by ingest_fills.
-        self._last_transaction_index: int = 0
+        # Opaque fill cursor, advanced by dealer.ingest_fills.
+        self._fill_cursor: int = 0
         # Fuel cost basis pool: units attributed to it and money spent on them.
         self._fuel_units: int = 0
         self._fuel_total_cost: float = 0.0
@@ -162,8 +162,8 @@ class SpaceportOperatorBrain(ActorBrain):
         without ingestion the operator would keep quoting off a stale purchase
         price and sell restocked fuel below what it paid.
         """
-        self._last_transaction_index, grouped = dealer.ingest_fills(
-            actor, market, self._last_transaction_index
+        self._fill_cursor, grouped = dealer.ingest_fills(
+            actor, market, self._fill_cursor
         )
         fuel = actor.sim.commodity_registry.get_commodity(FUEL_COMMODITY_ID)
         if fuel is None:
@@ -292,16 +292,23 @@ class SpaceportOperatorBrain(ActorBrain):
     ) -> Optional[PlaceBuyOrderCommand]:
         """Bid for the fuel needed to reach the stock target, within budget.
 
-        Two cases, because what a seller needs differs by geography:
+        The bound is arbitrage, not a fixed ceiling: the delivered price is
+        what importing ``need`` units would cost, so it is the most the
+        operator would ever rationally pay here.
 
-        - A local ask exists and is not scarcity-priced: lift it. The ceiling
-          is the ships' own bunkering threshold, so anything the operator buys
-          here can plausibly be resold to a ship rather than parked forever.
-        - No ask (or an unaffordably priced one): rest a bid at the navigator's
-          delivery-viable price, which is what a deliverer needs to see for a
-          fuel run to beat its alternatives. Inventory skew then pulls the bid
-          down as stock approaches target, so the operator does not keep paying
-          delivery prices for fuel it no longer needs.
+        - A local ask rests at or below the delivered price: lift it. Buying
+          locally beats paying for a delivery.
+        - Otherwise rest a bid at the delivered price, inventory-skewed. That
+          is what a deliverer needs to see for a fuel run to beat its
+          alternatives, and the skew pulls the bid down as stock approaches
+          target so the operator stops paying delivery prices for fuel it no
+          longer needs.
+
+        The operator never sits out while it needs fuel and can afford a unit.
+        An earlier version gated the lift on the galaxy-wide fuel value
+        reference, which is a minimum polluted by one-unit discovery asks at a
+        few credits; the resulting ceiling sat far below every real ask and
+        most operators posted nothing, every turn.
 
         Nothing is pending: this turn's cancels release last turn's bids, so
         held stock is the whole position.
@@ -316,23 +323,12 @@ class SpaceportOperatorBrain(ActorBrain):
             return None
 
         _, ask = market.get_bid_ask_spread(fuel)
-        reference = get_navigator(actor.sim).fuel_value_reference()
-        ceiling = (
-            math.ceil(reference * FUEL_BUNKER_PREMIUM)
-            if reference is not None
-            else None
-        )
-        if ask is not None and ask > 0 and (ceiling is None or ask <= ceiling):
+        delivered = get_navigator(actor.sim).fuel_delivery_bid_price(planet, need)
+        if ask is not None and ask > 0 and ask <= delivered:
             price = ask
         else:
-            if ask is not None and ask > 0:
-                # A scarcity-priced local ask: bidding above it would just lift
-                # it, so leave that fuel to the ships that need it now.
-                return None
-            navigator = get_navigator(actor.sim)
-            delivery_price = navigator.fuel_delivery_bid_price(planet, need)
             price = dealer.skew_midpoint(
-                delivery_price, held, target, INVENTORY_SKEW_CAP, min_price=1
+                delivered, held, target, INVENTORY_SKEW_CAP, min_price=1
             )
 
         price = max(1, price)
