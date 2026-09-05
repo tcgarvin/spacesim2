@@ -2,7 +2,7 @@ import enum
 import math
 import random
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple
 
 from spacesim2.core.commodity import CommodityDefinition, Inventory
 from spacesim2.core.navigation import (
@@ -111,7 +111,26 @@ class TradePlan:
     """A complete trade opportunity for a ship trader.
 
     Holds where to buy, where to sell, the commodity, and the expected costs
-    and profit including round-trip fuel.
+    and profit of one haul.
+
+    Two prices per unit, deliberately distinct:
+    - ``bid_price_per_unit`` is what the ship posts in the book. It may sit
+      above the cheapest resting ask so the order also wins units out of the
+      turn's flow; matching executes at each seller's ask, so bidding high
+      never overpays for the cheap fills.
+    - ``purchase_price_per_unit`` is what the cargo is expected to *cost*:
+      the resting asks walked for ``quantity`` units, any remainder priced at
+      the bid. Judging the margin on the bid inflated the cost basis of every
+      plan that had a real cheap ask behind it, and that inflated number also
+      filtered the destination's bids and flow.
+
+    Fuel is charged one way, not round trip. This cargo rides the outbound
+    leg only; the return leg is capital the *next* trade spends. Charging
+    both legs to one haul killed genuine spreads whose quantity was
+    flow-capped to a handful of units. The round trip still has to be
+    *funded*: that gate lives in :meth:`TraderBrain._pair_economics`, which
+    reserves round-trip fuel cash and a refuel floor before a credit reaches
+    cargo.
     """
 
     origin: Planet
@@ -120,13 +139,20 @@ class TradePlan:
 
     # Quantities and costs
     quantity: int
+    bid_price_per_unit: int
     purchase_price_per_unit: int
     expected_sell_price_per_unit: int
 
-    # Fuel calculations
+    # Fuel calculations. Of the outbound leg's burn, ``fuel_units_from_tank``
+    # units are already aboard and are valued at ``fuel_price_from_tank`` -
+    # the galaxy fuel reference, what replacing them typically costs. The
+    # rest must be bought here at ``fuel_price_at_origin``, the local ask,
+    # however spiked that is.
     distance: float
     fuel_needed_one_way: int
     fuel_price_at_origin: int
+    fuel_units_from_tank: int
+    fuel_price_from_tank: int
 
     # Expected cost of maintenance rolls over the round trip: 2 departures x
     # MAINTENANCE_CHANCE x the fuel-tier repair cost. Without it penny-margin
@@ -136,17 +162,26 @@ class TradePlan:
 
     @property
     def fuel_needed_round_trip(self) -> int:
-        """Fuel for the round trip, which plans always budget for."""
+        """Fuel for the round trip, which the cash gate budgets for."""
         return self.fuel_needed_one_way * 2
 
     @property
     def total_fuel_cost(self) -> int:
-        """Total fuel cost for round trip."""
-        return self.fuel_needed_round_trip * self.fuel_price_at_origin
+        """Cost of the outbound leg's fuel, the only leg this cargo rides.
+
+        Units already aboard are charged at the fuel reference, units that
+        must be bought at the local ask. Both are charged: fuel burned is
+        value spent, whenever it was bought.
+        """
+        from_tank = min(self.fuel_units_from_tank, self.fuel_needed_one_way)
+        to_buy = self.fuel_needed_one_way - from_tank
+        return (
+            from_tank * self.fuel_price_from_tank + to_buy * self.fuel_price_at_origin
+        )
 
     @property
     def total_purchase_cost(self) -> int:
-        """Total cost to buy the commodity."""
+        """Expected cost of the cargo, at the evaluation price."""
         return self.quantity * self.purchase_price_per_unit
 
     @property
@@ -195,11 +230,42 @@ class _PairEconomics:
 
     distance: float
     fuel_one_way: int
+    # Local ask (or the avg-price fallback): what fuel bought here costs.
     fuel_price: int
+    # Typical believable fuel price across the galaxy: what fuel already in
+    # the tank is worth, and what replacing it normally costs.
+    fuel_reference_price: int
+    # Round-trip shortfall the ship buys here, at ``fuel_price``.
     fuel_to_buy: int
+    # Units of the outbound leg's burn already aboard. The rest come out of
+    # ``fuel_to_buy`` and are charged at the local ask.
+    fuel_from_tank_one_way: int
     expected_maintenance_cost: int
     money_for_trading: int
     max_by_cargo: int
+
+
+@dataclass
+class _OriginAcquisition:
+    """What one commodity costs to acquire at one origin planet.
+
+    Commodity-specific but destination-independent, so
+    :meth:`TraderBrain._best_plan_from` computes it once per commodity and
+    reuses it across every candidate destination.
+    """
+
+    # Resting asks as (price, quantity), cheapest first: the units the ship
+    # could lift right now, and at what price.
+    ask_levels: List[Tuple[int, int]]
+    # Recent clearing price at the origin, 0 when nothing is flowing. Units
+    # beyond the resting asks have to be won out of the flow at this price.
+    flow_price: int
+    # Price the ship posts, max(best ask, flow price); see TradePlan.
+    bid_price: int
+    # Cheapest liftable unit price: the best resting ask when one exists,
+    # else the flow price. Screens destination demand before the exact
+    # quantity, and so the exact walked cost, is known.
+    entry_price: int
 
 
 class ShipStatus(enum.Enum):
@@ -462,17 +528,24 @@ class TraderBrain(ShipBrain):
         return self._nav.fuel_value_reference()
 
     def _fuel_delivery_in_progress(self) -> bool:
-        """Whether the ship is at the destination of an active fuel-run plan.
+        """Whether the ship is at either end of an active fuel-run plan.
 
-        Only then is tank fuel above the travel reserve trade cargo. At the
-        origin the overflow-above-tank rule in :meth:`_sellable_quantity`
-        already marks a loaded deliverer's excess fuel as cargo, so no origin
-        case is needed here.
+        At both ends, tank fuel above the travel reserve is the plan's trade
+        cargo. The origin case matters as much as the destination: the plan
+        counts its load through :meth:`_sellable_quantity`, so while only
+        overflow above a full tank counted at the origin, a fuel plan could
+        never reach ``_plan_loaded`` and timed out after
+        ACCUMULATION_PATIENCE every time. Fuel arbitrage was structurally
+        dead, on a map where dozens of planets have no fuel ask at all.
+
+        Being at the origin of a fuel plan is not a licence to sell the tank
+        here: the plan lifecycle in :meth:`decide_trade_actions` marks such a
+        ship loaded and routes it to the destination instead.
         """
         plan = self._current_plan
         if plan is None or plan.commodity.id != "nova_fuel":
             return False
-        return self.ship.planet is plan.destination
+        return self.ship.planet is plan.destination or self.ship.planet is plan.origin
 
     def _local_fuel_bid_is_scarcity_priced(self) -> bool:
         """Whether the local fuel bid clearly rewards offloading tank fuel.
@@ -505,12 +578,14 @@ class TraderBrain(ShipBrain):
         - The travel reserve is never sellable. Selling the return-leg fuel
           strands ships, including fuel deliverers, which would otherwise
           dump their whole tank at a fuel-poor destination.
-        - Tank fuel is trade cargo only during an explicit fuel-delivery plan
-          or when the local bid is scarcity-priced, such as another ship's
-          standing rescue bid; otherwise only overflow above a full tank is.
-          Without that guard a topped-up ship sells its own tank at the
-          local bid and re-buys at the ask every other turn, bleeding the
-          spread.
+        - Tank fuel counts as trade cargo only at either end of an explicit
+          fuel-delivery plan, or when the local bid is scarcity-priced, such
+          as another ship's standing rescue bid; otherwise only overflow
+          above a full tank does. Without that guard a topped-up ship sells
+          its own tank at the local bid and re-buys at the ask every other
+          turn, bleeding the spread. The origin end counts too, so a fuel
+          plan can reach ``_plan_loaded`` and fly; see
+          :meth:`_fuel_delivery_in_progress`.
         """
         quantity = self.ship.cargo.get_quantity(commodity)
         if commodity.id != "nova_fuel":
@@ -724,6 +799,10 @@ class TraderBrain(ShipBrain):
         - the destination would leave the ship without an escape route
         - no money remains for cargo after fuel, refuel floor, expected
           maintenance, and the operating buffer
+
+        The cash gate below is deliberately round-trip: a trade that
+        disappoints must never leave the ship both broke and dry. Only the
+        *margin* is charged one way, in :class:`TradePlan`.
         """
         fuel_commodity = self._fuel_commodity()
         if fuel_commodity is None:
@@ -743,21 +822,33 @@ class TraderBrain(ShipBrain):
         )
         if fuel_price is None or fuel_price <= 0:
             fuel_price = 10  # Default fuel price if no market data
+        reference = self._fuel_value_reference()
+        fuel_reference_price = math.ceil(reference) if reference else fuel_price
 
         current_fuel = self.ship.cargo.get_quantity(fuel_commodity)
         cargo_space = self.ship.cargo_capacity - self.ship.cargo.get_total_quantity()
 
-        fuel_to_buy = max(0, fuel_round_trip - current_fuel)
-        if fuel_to_buy > 0 and not self._fuel_purchasable_at(origin):
+        round_trip_shortfall = max(0, fuel_round_trip - current_fuel)
+        if round_trip_shortfall > 0 and not self._fuel_purchasable_at(origin):
             # The plan needs fuel that cannot be bought at the origin: no ask
             # and no recent flow. Committing would strand the ship with cargo.
             return None
+
+        # The ship buys the whole round-trip shortfall, even where the local
+        # ask is scarcity-priced. Rationing to this leg's shortfall and
+        # refuelling at the far end was tried, gated on the destination still
+        # being fuel-safe on that much, and it grounded the fleet: over a
+        # 200-turn 30-planet run stranded ships went 3 -> 14 and departures 68
+        # -> 22. A fuel-safe destination is a market that has depth *now*,
+        # and by arrival it usually does not. Only the *margin* is charged one
+        # way; the tank is still filled for the round trip.
+        fuel_to_buy = round_trip_shortfall
         fuel_cost = fuel_to_buy * fuel_price
 
         # Never fly somewhere that leaves no escape route: the destination
         # must sell fuel, or the fuel left after arrival must reach a planet
         # that does.
-        fuel_after_arrival = max(current_fuel, fuel_round_trip) - fuel_one_way
+        fuel_after_arrival = current_fuel + fuel_to_buy - fuel_one_way
         if not self._fuel_safe_destination(destination, origin, fuel_after_arrival):
             return None
 
@@ -788,11 +879,72 @@ class TraderBrain(ShipBrain):
             distance=distance,
             fuel_one_way=fuel_one_way,
             fuel_price=fuel_price,
+            fuel_reference_price=fuel_reference_price,
             fuel_to_buy=fuel_to_buy,
+            fuel_from_tank_one_way=min(current_fuel, fuel_one_way),
             expected_maintenance_cost=maintenance_cost,
             money_for_trading=money_for_trading,
             max_by_cargo=cargo_space - fuel_to_buy,  # fuel takes cargo space
         )
+
+    def _origin_acquisition(
+        self, origin: Planet, commodity: CommodityDefinition
+    ) -> Optional["_OriginAcquisition"]:
+        """What acquiring ``commodity`` at ``origin`` costs, and what to bid.
+
+        A resting ask is directly liftable at its own price; an active local
+        flow - recent volume with a real price signal - has to be bid for at
+        the clearing price. The ship posts the higher of the two, since
+        matching executes at each seller's ask and a generous bid wins flow
+        without overpaying for the cheap fills. What the units are expected
+        to *cost* is a different number, and the two are kept apart here.
+
+        Returns None when the commodity cannot be acquired at all: no ask
+        resting and no flow to bid into.
+        """
+        market = origin.market
+        _, origin_ask = market.get_bid_ask_spread(commodity)
+        origin_flow_px = self._flow_value(market, commodity)
+        if origin_flow_px is not None and (
+            self._recent_flow_per_turn(market, commodity) <= 0
+        ):
+            origin_flow_px = None  # a price with no recent volume buys nothing
+        flow_price = origin_flow_px if origin_flow_px and origin_flow_px > 0 else 0
+        has_ask = origin_ask is not None and origin_ask > 0
+        if not has_ask and flow_price <= 0:
+            return None
+
+        ask_levels = market.get_ask_levels(commodity) if has_ask else []
+        entry_price = ask_levels[0][0] if ask_levels else flow_price
+        bid_price = max(entry_price, flow_price)
+        return _OriginAcquisition(
+            ask_levels=ask_levels,
+            flow_price=flow_price,
+            bid_price=bid_price,
+            entry_price=entry_price,
+        )
+
+    def _walked_purchase_price(
+        self, acquisition: "_OriginAcquisition", quantity: int
+    ) -> int:
+        """Expected per-unit cost of lifting ``quantity`` units at the origin.
+
+        Walks the resting asks cheapest first, then prices whatever the book
+        cannot supply at the bid, which is what winning it out of the flow
+        costs. Rounded up, so the margin gate never flatters the plan.
+        """
+        if quantity <= 0:
+            return acquisition.bid_price
+        remaining = quantity
+        cost = 0
+        for price, qty in acquisition.ask_levels:
+            take = min(qty, remaining)
+            cost += price * take
+            remaining -= take
+            if remaining == 0:
+                break
+        cost += acquisition.bid_price * remaining
+        return math.ceil(cost / quantity)
 
     def _evaluate_trade_opportunity(
         self,
@@ -800,6 +952,7 @@ class TraderBrain(ShipBrain):
         destination: Planet,
         commodity: CommodityDefinition,
         pair: Optional["_PairEconomics"] = None,
+        acquisition: Optional["_OriginAcquisition"] = None,
     ) -> Optional[TradePlan]:
         """Evaluate a single trade opportunity between two planets.
 
@@ -812,48 +965,35 @@ class TraderBrain(ShipBrain):
         - Enough fuel for the round trip, held or purchasable
 
         Prices and quantities come from the flow, recent clearing prices and
-        volume, as well as the resting book. The plan's purchase price is the
-        bid the ship will post; matching executes at each seller's ask, so
-        fills only come in at or below it.
+        volume, as well as the resting book. Costs are judged on what the
+        cargo is expected to cost - the resting asks walked for the planned
+        quantity - not on the bid the ship posts, which is deliberately
+        higher so the order also wins units out of the flow.
 
-        ``pair`` carries the commodity-independent economics of the pair;
-        :meth:`_best_plan_from` precomputes it once per pair, and it is
-        derived on the fly when omitted.
+        ``pair`` carries the commodity-independent economics of the pair and
+        ``acquisition`` the destination-independent origin prices;
+        :meth:`_best_plan_from` precomputes both, and each is derived on the
+        fly when omitted.
         """
         if pair is None:
             pair = self._pair_economics(origin, destination)
         if pair is None:
             return None
-
-        origin_market = origin.market
-        dest_market = destination.market
-
-        # Acquisition price at origin: the bid the ship will post. A resting
-        # ask is directly takeable; an active local flow, recent volume with
-        # a real price signal, is biddable at the clearing price. Bid the
-        # higher of the two: matching executes at each seller's ask, so a
-        # generous bid captures more of the flow without paying more for the
-        # cheap fills, and the margin gate below prices the worst case of
-        # every unit at the bid.
-        _, origin_ask = origin_market.get_bid_ask_spread(commodity)
-        origin_flow_px = self._flow_value(origin_market, commodity)
-        if origin_flow_px is not None and (
-            self._recent_flow_per_turn(origin_market, commodity) <= 0
-        ):
-            origin_flow_px = None  # a price with no recent volume buys nothing
-        price_candidates = [
-            p for p in (origin_ask, origin_flow_px) if p is not None and p > 0
-        ]
-        if not price_candidates:
+        if acquisition is None:
+            acquisition = self._origin_acquisition(origin, commodity)
+        if acquisition is None:
             # Nothing for sale and no active flow to bid into.
             return None
-        buy_price = max(price_candidates)
+
+        dest_market = destination.market
+        # Screen demand against what the cargo costs, not what the ship bids.
+        entry_price = acquisition.entry_price
 
         # Destination demand: resting bids that beat the purchase price...
         bid_levels = [
             (price, qty)
             for price, qty in dest_market.get_bid_levels(commodity)
-            if price > buy_price
+            if price > entry_price
         ]
         depth = sum(qty for _, qty in bid_levels)
         # ...plus the flow: recent clearing volume at the haircut clearing
@@ -861,23 +1001,24 @@ class TraderBrain(ShipBrain):
         dest_flow_px = self._flow_value(dest_market, commodity)
         flow_px = int(dest_flow_px * SELL_PRICE_HAIRCUT) if dest_flow_px else 0
         flow_qty = 0
-        if flow_px > buy_price:
+        if flow_px > entry_price:
             flow_qty = int(
                 self._recent_flow_per_turn(dest_market, commodity)
                 * DEMAND_HORIZON_TURNS
             )
         if depth + flow_qty > 0:
             sellable = depth + flow_qty
-        elif flow_px > buy_price:
+        elif flow_px > entry_price:
             # Price signal but no recent volume: latent demand is a guess
             # that often fails to realize, so such plans are capped small.
             sellable = SPECULATIVE_PLAN_CAP
         else:
             return None
 
-        # Budget and cargo limits are pair-level facts; only the buy price
-        # is commodity-specific.
-        max_by_money = pair.money_for_trading // buy_price
+        # Budget and cargo limits are pair-level facts; only the price is
+        # commodity-specific. Budget against the bid, since that is what an
+        # order actually reserves.
+        max_by_money = pair.money_for_trading // acquisition.bid_price
         max_quantity = max(0, min(max_by_money, pair.max_by_cargo))
 
         # Project revenue from the resting bids first, since their prices are
@@ -902,11 +1043,14 @@ class TraderBrain(ShipBrain):
             destination=destination,
             commodity=commodity,
             quantity=quantity,
-            purchase_price_per_unit=buy_price,
+            bid_price_per_unit=acquisition.bid_price,
+            purchase_price_per_unit=self._walked_purchase_price(acquisition, quantity),
             expected_sell_price_per_unit=sell_price,
             distance=pair.distance,
             fuel_needed_one_way=pair.fuel_one_way,
             fuel_price_at_origin=pair.fuel_price,
+            fuel_units_from_tank=pair.fuel_from_tank_one_way,
+            fuel_price_from_tank=pair.fuel_reference_price,
             expected_maintenance_cost=pair.expected_maintenance_cost,
         )
 
@@ -938,7 +1082,8 @@ class TraderBrain(ShipBrain):
         filters; the evaluation re-verifies prices. When the galaxy shows no
         trade signal at all, planning is skipped. The commodity-independent
         economics of each pair are computed once and shared across
-        commodities.
+        commodities, and the destination-independent origin prices once per
+        commodity.
         """
         nav = self._nav
         if not nav.has_any_trade_signal():
@@ -956,6 +1101,9 @@ class TraderBrain(ShipBrain):
         for commodity in self._get_tradeable_commodities():
             if commodity not in exportable:
                 continue
+            acquisition = self._origin_acquisition(origin, commodity)
+            if acquisition is None:
+                continue
             for destination in nav.candidate_destinations(origin, commodity):
                 if destination in pair_economics:
                     pair = pair_economics[destination]
@@ -969,6 +1117,7 @@ class TraderBrain(ShipBrain):
                     destination=destination,
                     commodity=commodity,
                     pair=pair,
+                    acquisition=acquisition,
                 )
                 if plan and plan.is_profitable() and plan.expected_profit > best_profit:
                     best_plan = plan
@@ -1064,10 +1213,11 @@ class TraderBrain(ShipBrain):
                             self.ship.active_orders[order_id] = "buy fuel"
                             pending_fuel = affordable_fuel
 
-        # Step 2: bid for the plan's remaining cargo at the plan's price. The
-        # order rests in the book and fills at sellers' asks, never above the
-        # bid.
-        bid_price = plan.purchase_price_per_unit
+        # Step 2: bid for the plan's remaining cargo at the plan's bid price
+        # - not its evaluation price, which is what the cargo is expected to
+        # cost. The order rests in the book and fills at sellers' asks, never
+        # above the bid.
+        bid_price = plan.bid_price_per_unit
         already_held = self._sellable_quantity(plan.commodity)
         still_needed = plan.quantity - already_held
         if bid_price > 0 and still_needed > 0:
