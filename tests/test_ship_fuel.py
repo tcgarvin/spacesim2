@@ -11,6 +11,7 @@
 """
 
 import math
+from types import SimpleNamespace
 
 from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
 from spacesim2.core.galaxy import StarLaneNetwork
@@ -151,11 +152,13 @@ def test_fuel_safe_destination_requires_escape_route():
     assert not ship.brain._fuel_safe_destination(b, a, escape_cost - 1)
     assert ship.brain._fuel_safe_destination(b, a, escape_cost)
 
-    # Fuel for sale at B itself: safe even when arriving empty.
+    # Fuel for sale at B itself does not waive the reserve: A is still the
+    # nearest *other* fuel seller, so the escape leg back to it stands.
     supplier_b = _make_ship(sim, b, fuel_units=100, name="SupplierB")
     b.market.place_sell_order(supplier_b, fuel, 50, 10)
     ship.brain._nav.refresh_market_facts()
-    assert ship.brain._fuel_safe_destination(b, a, 0)
+    assert not ship.brain._fuel_safe_destination(b, a, 0)
+    assert ship.brain._fuel_safe_destination(b, a, escape_cost)
 
 
 def test_decide_travel_avoids_fuel_dead_end():
@@ -668,33 +671,94 @@ def test_fuel_ask_depth_counts_resting_sell_quantity():
     assert nav.fuel_ask_depth_at(a) == 7
 
 
-def test_fuel_safe_destination_requires_enough_ask_depth_to_leave_again():
+def test_arrival_requirement_never_below_escape_leg_however_deep_the_ask():
+    """Ask depth at the destination never waives the escape reserve.
+
+    Depth is read when the trip is approved and is often gone several turns
+    later when the ship lands. The escape leg is a property of the galaxy,
+    so it is the floor whatever the book says.
+    """
     sim, fuel, _, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
-    supplier_a = _make_ship(sim, a, fuel_units=200, name="SupplierA")
-    supplier_b = _make_ship(sim, b, fuel_units=200, name="SupplierB")
+    supplier_a = _make_ship(sim, a, fuel_units=500, name="SupplierA")
+    supplier_b = _make_ship(sim, b, fuel_units=500, name="SupplierB")
     ship = _make_ship(sim, a, name="Trader")
     escape_cost = ship.fuel_required(ship.route_distance(a, b))
     assert escape_cost == 5
 
-    # A sells fuel, so leaving B again costs escape_cost. B's ask is a
-    # single unit: a ship arriving dry could never buy its way out.
+    # A sells fuel, so the escape leg out of B is escape_cost.
     a.market.place_sell_order(supplier_a, fuel, 50, 10)
     b.market.place_sell_order(supplier_b, fuel, 1, 10)
     ship.brain._nav.refresh_market_facts()
-    assert not ship.brain._fuel_safe_destination(b, a, 0)
-    assert not ship.brain._fuel_safe_destination(b, a, escape_cost - 2)
-
-    # A shortfall the local book can actually cover is fine: one unit short
-    # of the escape leg is one unit this market can sell.
-    assert ship.brain._fuel_safe_destination(b, a, escape_cost - 1)
-
-    # Arriving with the escape leg still aboard needs no local depth.
+    assert ship.brain._arrival_fuel_requirement(b, a) == escape_cost
+    assert not ship.brain._fuel_safe_destination(b, a, escape_cost - 1)
     assert ship.brain._fuel_safe_destination(b, a, escape_cost)
 
-    # Enough depth to cover the whole shortfall makes B safe when dry.
-    b.market.place_sell_order(supplier_b, fuel, escape_cost, 10)
+    # A very deep ask at B is still just this turn's book: same requirement.
+    b.market.place_sell_order(supplier_b, fuel, 400, 10)
     ship.brain._nav.refresh_market_facts()
-    assert ship.brain._fuel_safe_destination(b, a, 0)
+    assert ship.brain._nav.fuel_ask_depth_at(b) == 401
+    assert ship.brain._arrival_fuel_requirement(b, a) == escape_cost
+    assert not ship.brain._fuel_safe_destination(b, a, 0)
+    assert not ship.brain._fuel_safe_destination(b, a, escape_cost - 1)
+
+
+def test_departure_requirement_funds_the_escape_leg_for_a_deep_market():
+    """Hold-cargo commitment covers leg plus escape floor, not just the leg."""
+    sim, fuel, food, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    supplier_a = _make_ship(sim, a, fuel_units=500, name="SupplierA")
+    supplier_b = _make_ship(sim, b, fuel_units=500, name="SupplierB")
+    a.market.place_sell_order(supplier_a, fuel, 200, 10)
+    b.market.place_sell_order(supplier_b, fuel, 200, 10)
+    ship = _make_ship(sim, a, name="Trader")
+    ship.cargo.add_commodity(food, 10)
+    ship.brain._nav.refresh_market_facts()
+
+    leg = ship.fuel_required(ship.route_distance(a, b))
+    assert ship.brain._departure_fuel_requirement(b) == leg + leg
+
+    # And the hold-cargo path commits exactly that, so the top-up buys it.
+    # B pays far more than A, so the cargo is held for the trip to B.
+    local_buyer = _make_ship(sim, a, money=9000, name="BuyerAtA")
+    a.market.place_buy_order(local_buyer, food, 10, 20)
+    buyer = _make_ship(sim, b, money=9000, name="BuyerAtB")
+    b.market.place_buy_order(buyer, food, 10, 200)
+    ship.cargo.add_commodity(fuel, leg + leg)
+    ship.brain._nav.refresh_market_facts()
+    should_sell_here, committed = ship.brain._cargo_disposition(a.market)
+    assert not should_sell_here
+    assert committed == leg + leg
+
+    # One unit short of the escape floor and the trip is out of reach, so
+    # the cargo is sold here instead of held for a departure that is refused.
+    dry = _make_ship(sim, a, fuel_units=leg + leg - 1, money=0, name="DryTrader")
+    dry.cargo.add_commodity(food, 10)
+    ship.brain._nav.refresh_market_facts()
+    assert dry.brain._cargo_disposition(a.market) == (True, 0)
+
+
+def test_reposition_target_rejected_when_it_leaves_no_escape():
+    """An empty reposition only picks an origin the ship can leave again."""
+    sim, fuel, food, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    supplier_a = _make_ship(sim, a, fuel_units=500, name="SupplierA")
+    supplier_b = _make_ship(sim, b, fuel_units=500, name="SupplierB")
+    a.market.place_sell_order(supplier_a, fuel, 200, 10)
+    b.market.place_sell_order(supplier_b, fuel, 200, 10)
+    ship = _make_ship(sim, a, money=9000, name="Trader")
+    ship.brain._nav.refresh_market_facts()
+
+    # A warm galaxy where every origin backs a lucrative plan, so the fuel
+    # gate is the only thing that can reject a candidate.
+    ship.brain._nav.has_any_trade_signal = lambda: True
+    ship.brain._best_plan_from = lambda origin: SimpleNamespace(expected_profit=1000)
+
+    leg = ship.fuel_required(ship.route_distance(a, b))
+
+    # Exactly the leg: B is reachable, but the ship would land with nothing
+    # left for the escape leg back to A, however deep B's fuel ask is now.
+    assert ship.brain._find_reposition_target(leg, fuel) is None
+
+    # Leg plus escape floor: the same trip is accepted.
+    assert ship.brain._find_reposition_target(leg + leg, fuel) is b
 
 
 # ---------------------------------------------------------------------------
