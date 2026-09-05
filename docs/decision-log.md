@@ -19,9 +19,15 @@ repositioning counts fuel the ship can buy here and funds it through the
 same commitment hold-cargo trips use; distressed ships accept any haul
 that clears the return-leg fuel and exit distress only above the cash
 floor; an actor never trades with itself (maker discovery ladders met at
-2, food industrialists sold their pantry and bid it back). Single 300-turn
-pairs per change: stranded 37 to 24, idle 61 to 32. Multi-run A/B in
-`tmp/ab_out/`. Left open: an absolute per-unit margin floor (a third of
+2, food industrialists sold their pantry and bid it back). The strict
+escape floor then proved self-ratcheting (d954064): it applied even when
+the destination sells fuel, so a ship funded to exactly its escape leg
+could never make the hop to the seller. The floor is now waived only when
+the destination shows both a live ask and recent fuel trades, since
+recency alone (2026-09-04) and depth alone (this morning) each failed on
+their own. 450-turn runs on 100 planets: baseline 71 to 95 idle ships and
+8 to 48 departures per window; final main 22 idle and 436 departures in
+its first sample, more samples in `tmp/ab_out/`. Left open: an absolute per-unit margin floor (a third of
 deliveries realize negative margin, fiber worst) would be a new tunable.
 
 ## 2026-09-05 - Idle ships: local-sale veto expires, one-way fuel in margins
