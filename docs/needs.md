@@ -60,7 +60,8 @@ per category on every regular actor. Design in `docs/prosperity-design.md`.
   and metric updates continue while gated.
 - Taste: `Actor.tastes` is fixed at creation, weight 1.0 per category and
   3.0 on one favorite. It multiplies the event rate and the target stock.
-  Nothing else reads it.
+  Prosperity drives read it at construction; the actor also keeps it for
+  later export and UI use, not yet consumed by either.
 - `coverage` is an EMA of "event served" with a 60-turn half-life;
   `prosperity_index(actor)` is its unweighted mean across categories.
 
@@ -72,7 +73,8 @@ per category on every regular actor. Design in `docs/prosperity-design.md`.
   drive's `MISS_PENALTY`, so it is comparable across drives.
 - `marginal_welfare()`: `deprivation_stake() * (1 - buffer)`. A well-stocked
   drive values an extra unit less.
-- `materials()`: satisfying commodities, basic good first.
+- `materials()`: satisfying commodities; need drives return only the basic
+  good, prosperity drives return their own upgraded good.
 - `target_units()`: inventory level the actor keeps on hand
   (food 6, clothing 3, shelter 3, health 2).
 - `can_purchase(actor)`: whether the brain may bid for this drive this

@@ -143,8 +143,9 @@ The render thread reads nothing else new.
 ## Summary
 
 New `prosperity` block in `compute_summary`: mean index, per-category
-coverage, share of actors passing the gate, and 30-turn volume for each
-prosperity good. Open: a smoke assertion that at least one prosperity good
+coverage, share of actors passing the gate, and volume for each prosperity
+good over the shared activity window (`_ACTIVITY_WINDOW_TURNS`, 50 turns).
+Open: a smoke assertion that at least one prosperity good
 trades at nonzero volume by turn 200, once the first probe shows the level
 to assert against.
 

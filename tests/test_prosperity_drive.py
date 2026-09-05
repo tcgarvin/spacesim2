@@ -1,10 +1,12 @@
 """Prosperity drives: gate, taste scaling, consumption, and brain wiring."""
 
+import math
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+from spacesim2.analysis.summary import compute_summary
 from spacesim2.core.actor import ActorType
 from spacesim2.core.commodity import CommodityRegistry
 from spacesim2.core.drives import ClothingDrive, FoodDrive, HealthDrive, ShelterDrive
@@ -24,7 +26,10 @@ from spacesim2.core.drives.prosperity_drive import (
     prosperity_index,
     random_tastes,
 )
+from spacesim2.core.market import Market
+from spacesim2.core.planet import Planet
 from spacesim2.core.simulation import Simulation
+from spacesim2.ui.live.view_model import planet_wellbeing
 from tests.helpers import get_actor
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -119,7 +124,12 @@ class TestGate:
         assert all(d.can_purchase(actor) for d in actor.drives if d.WELLBEING)
 
     def test_full_food_pantry_passes_buffer_floor(self, registry):
-        """An actor holding the food target passes the gate on food."""
+        """An actor holding the food target passes the gate on food.
+
+        Narrow margin: tick() consumes one of the six units before computing
+        buffer, so this is log_norm_ratio(5, 7.0, 30.0) ~= 0.324 against the
+        0.30 gate floor.
+        """
         actor = _actor_with_needs(registry)
         food = actor.drives[0]
         actor.inventory.add_commodity(food.food_commodity, food.target_units())
@@ -255,3 +265,108 @@ class TestBrainWiring:
         prosperity_ids = {c.commodity_id for c in PROSPERITY_CATEGORIES}
         commands = actor.brain._drive_buy_commands(actor, actor.planet.market)
         assert any(c.commodity_type.id in prosperity_ids for c in commands)
+
+    def test_service_actors_have_no_prosperity_drives(self, sim):
+        """Market makers and spaceport operators are not part of the design."""
+        service_actors = [a for a in sim.actors if a.actor_type == ActorType.SERVICE]
+        assert service_actors
+        for actor in service_actors:
+            assert not any(not d.WELLBEING for d in actor.drives)
+
+
+class TestNeedDriveMaterialsBasicGoodOnly:
+    """Need drives list only their basic good; the upgrade is a fallback."""
+
+    NEED_DRIVES = [
+        (FoodDrive, "food"),
+        (ClothingDrive, "clothing"),
+        (ShelterDrive, "simple_building_materials"),
+        (HealthDrive, "medicine"),
+    ]
+
+    def test_materials_lists_only_the_basic_good(self, registry):
+        for Drive, basic_id in self.NEED_DRIVES:
+            mats = Drive(registry).materials()
+            assert [m.id for m in mats] == [basic_id]
+
+    def test_basic_good_consumed_before_quality(self, registry):
+        """With both goods on hand, the basic good is drawn down first."""
+        drive = FoodDrive(registry)
+        actor = get_actor("Stocked")
+        actor.inventory.add_commodity(drive.food_commodity, 2)
+        actor.inventory.add_commodity(drive.quality_commodity, 2)
+        drive.tick(actor)
+        assert actor.inventory.get_available_quantity(drive.food_commodity) == 1
+        assert actor.inventory.get_available_quantity(drive.quality_commodity) == 2
+
+    def test_quality_good_used_as_fallback_when_basic_is_out(self, registry):
+        """A hungry actor holding only processed food still eats."""
+        drive = FoodDrive(registry)
+        actor = get_actor("QualityOnly")
+        actor.inventory.add_commodity(drive.quality_commodity, 1)
+        drive.tick(actor)
+        assert actor.food_consumed_this_turn is True
+        assert actor.inventory.get_available_quantity(drive.quality_commodity) == 0
+
+
+class TestGateControlsPurchaseNotConsumption:
+    @patch("spacesim2.core.drives.prosperity_drive.random.random", return_value=0.0)
+    def test_consumption_events_fire_when_gate_is_closed(self, _rand, registry):
+        """The gate blocks buy orders only; the drive's own tick still fires."""
+        drive = ProsperityDrive(registry, _category("luxury"))
+        food = FoodDrive(registry)
+        food.metrics.debt = 1.0  # closes the gate
+        actor = get_actor("Gated")
+        actor.drives = [food, drive]
+        actor.inventory.add_commodity(drive.good, 1)
+        assert not needs_are_met(actor)
+        assert not drive.can_purchase(actor)
+        metrics = drive.tick(actor)
+        assert actor.inventory.get_available_quantity(drive.good) == 0
+        assert metrics.coverage > 0.0
+
+
+class TestWellbeingExcludesProsperity:
+    def test_planet_wellbeing_ignores_prosperity_score(self, registry):
+        """A perfect-needs actor with wrecked prosperity scores as 1.0."""
+        planet = Planet("Test", Market())
+        actor = _actor_with_needs(registry)
+        planet.add_actor(actor)
+        _satisfy_needs(actor)
+        for drive in actor.drives:
+            if not drive.WELLBEING:
+                assert isinstance(drive.metrics, ProsperityDriveMetrics)
+                drive.metrics.coverage = 0.0
+                drive.metrics.debt = 1.0
+        assert planet_wellbeing(planet) == pytest.approx(1.0)
+
+    def test_summary_drives_block_omits_prosperity_names(self):
+        """The verdict-feeding drives block never lists a prosperity_* name."""
+        sim = Simulation()
+        sim.setup_simple(
+            num_planets=1, num_regular_actors=3, num_market_makers=1, num_ships=0
+        )
+        summary = compute_summary(sim)
+        assert set(summary["drives"]) == {"food", "clothing", "shelter", "health"}
+
+
+class TestSummaryProsperityBlock:
+    def test_prosperity_block_has_finite_values_and_no_crash_before_any_gate_pass(self):
+        """Every summary key is present and finite, even before anyone qualifies."""
+        sim = Simulation()
+        sim.setup_simple(
+            num_planets=2, num_regular_actors=10, num_market_makers=1, num_ships=1
+        )
+        for _ in range(3):
+            sim.run_turn()
+        prosperity = compute_summary(sim)["prosperity"]
+        assert isinstance(prosperity, dict)
+        assert math.isfinite(prosperity["index_mean"])
+        assert 0.0 <= prosperity["gate_pass_share"] <= 1.0
+        assert set(prosperity["coverage"]) <= set(CATEGORY_NAMES)
+        for value in prosperity["coverage"].values():
+            assert math.isfinite(value)
+        expected_goods = {c.commodity_id for c in PROSPERITY_CATEGORIES}
+        assert set(prosperity["volume_per_planet_turn"]) == expected_goods
+        for value in prosperity["volume_per_planet_turn"].values():
+            assert math.isfinite(value)

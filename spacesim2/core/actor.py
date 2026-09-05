@@ -1,4 +1,5 @@
 import enum
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Dict, List, Mapping, Optional, cast
 
 from spacesim2.core.commands import (
@@ -40,12 +41,12 @@ class Actor:
         planet: Optional[Planet] = None,
         initial_money: int = 50,
         initial_skills: Optional[Dict[str, float]] = None,
-        tastes: Optional[Mapping[str, float]] = None,
+        tastes: Mapping[str, float] = MappingProxyType({}),
     ) -> None:
         self.name = name
-        # Fixed for life. Prosperity drives read it at construction; it is
-        # kept here for export and the UI.
-        self.tastes: Dict[str, float] = dict(tastes) if tastes else {}
+        # Fixed for life. Prosperity drives read it at construction; kept
+        # here for later export and UI use, not yet consumed by either.
+        self.tastes: Dict[str, float] = dict(tastes)
         # No implicit capital injection by actor type: every actor starts with
         # exactly what the caller passed. Market makers are sized explicitly at
         # setup; spaceport operators bootstrap on the government wage.

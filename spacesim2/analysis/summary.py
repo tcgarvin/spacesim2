@@ -189,13 +189,18 @@ def _summarize_prosperity(
         if needs_are_met(actor):
             gate_passes += 1
         for drive in actor.drives:
+            # isinstance, not WELLBEING, because this needs the
+            # ProsperityDriveMetrics-only `coverage` field.
             if isinstance(drive.metrics, ProsperityDriveMetrics):
                 coverage.setdefault(drive.metrics.name, []).append(
                     drive.metrics.coverage
                 )
 
     volume = markets["volume_per_planet_turn"]
-    assert isinstance(volume, dict)
+    if not isinstance(volume, dict):
+        raise ValueError(
+            f"markets['volume_per_planet_turn'] must be a dict, got {type(volume).__name__}"
+        )
     return {
         "index_mean": round(index_total / n, 3) if n else 0.0,
         "gate_pass_share": round(gate_passes / n, 3) if n else 0.0,

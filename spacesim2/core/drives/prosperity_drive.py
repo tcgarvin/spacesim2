@@ -204,6 +204,8 @@ def prosperity_index(actor: Actor) -> float:
     scores = [
         d.metrics.coverage
         for d in actor.drives
+        # isinstance, not WELLBEING, because this needs the
+        # ProsperityDriveMetrics-only `coverage` field.
         if isinstance(d.metrics, ProsperityDriveMetrics)
     ]
     if not scores:

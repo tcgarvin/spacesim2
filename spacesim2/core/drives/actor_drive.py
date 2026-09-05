@@ -86,7 +86,8 @@ class ActorDrive:
     def materials(self) -> List[CommodityDefinition]:
         """Commodities that satisfy this drive, basic market good first.
 
-        The basic good is what trades; quality upgrades follow. Subclasses
+        Need drives return only the basic good; the quality upgrade for a
+        category belongs to its own ProsperityDrive instance. Subclasses
         override.
         """
         return []
