@@ -1,25 +1,32 @@
 # Analysis Notebooks
 
-This directory holds Tier-1 analysis scripts (plain Python, run with
-`dev analyze`) and one marimo dashboard. The `sim-evaluation` skill explains
-the tiers.
+This directory holds Tier-1 analysis scripts (plain Python) and one marimo
+dashboard. The `sim-evaluation` skill explains the tiers.
 
-## Tier-1 analysis scripts
+## Templates
 
-Plain scripts that print small aggregates and save figures to `tmp/`. Start
-from the template:
+- `scratch_template.py`: Tier 1a. Loads the latest exported run with
+  `load_run()` and prints Polars aggregates. Run with
+  `uv run spacesim2 dev analyze notebooks/my_question.py`.
+- `probe_template.py`: Tier 1b. Builds its own simulation, samples a
+  classifier every N turns, writes one JSON file. Run with
+  `uv run python notebooks/my_probe.py --turns 200 --planets 12 --out tmp/my_probe.json`.
 
-```bash
-cp notebooks/scratch_template.py notebooks/my_question.py
-# edit, then run against the latest exported run:
-uv run spacesim2 dev analyze notebooks/my_question.py
-```
+## Kept probes
 
-Kept probes, each with its question in its docstring:
+Each probe states its question in its docstring. Probes marked "own sim"
+build a `Simulation` in-process and run with `uv run python notebooks/<file>.py`;
+the others read the latest export through `dev analyze`.
 
-- `healthcheck_probe.py`: economy health trends over a run
-- `chem_score_probe.py`: builds and runs its own sim; run it directly with
-  `uv run python notebooks/chem_score_probe.py`
+| File | Question | Own sim |
+|------|----------|---------|
+| `healthcheck_probe.py` | How do drive health, prices and volume trend over a run, beyond the end-state summary? | no |
+| `chem_score_probe.py` | How does the industrialist score chemistry-lab recipes against the ones it picks, term by term? | yes |
+| `chem_bootstrap_ab.py` | Does the procurement-bid premium gate the medicine chain? (monkeypatch A/B) | yes |
+| `chem_stall_ab.py` | Do the stalled-procurement premium and stuck-recipe abandonment help? (monkeypatch A/B, `before`/`after` arms) | yes |
+| `medicine_probe.py` | Why is medicine stockpiled while actors go without it? | yes |
+| `ship_medicine_probe.py` | Why do ships never haul medicine between planets? | yes |
+| `starved_medicine_probe.py` | Why does no local industrialist enter `make_medicine` on medicine-starved planets? | yes |
 
 ## Marimo dashboard
 

@@ -17,6 +17,36 @@ the full tier model). Marimo notebooks are an **optional human-deliverable**,
 built only when the user explicitly wants an interactive dashboard. You NEVER
 modify project source code outside of `notebooks/`.
 
+## Harness Rules
+
+- Use absolute paths everywhere. Never use the shell builtin `cd` in a Bash
+  command; a hook denies it. Use `git -C /home/timg/code/spacesim2` and
+  `uv run --project /home/timg/code/spacesim2`.
+- Never write `sleep N; <command>` and never poll with repeated short
+  sleeps. Give a long command an explicit Bash `timeout` (maximum 600 s) or
+  pass `run_in_background: true` and wait for the completion notification.
+- Never take measurements in a git worktree. A worktree baseline once
+  disagreed with the main checkout and was auto-cleaned before anyone could
+  diagnose why. Work in the main checkout.
+
+## Run Budget
+
+State your run budget (planet count, turns, number of runs, expected wall
+time) before you start.
+
+| Run | Wall time |
+|-----|-----------|
+| 12 planets, 200 turns, `--no-export --quiet` | ~30 s (~0.15 s/turn) |
+| 100 planets, 200 turns, `--no-export --quiet` | ~7 min (~2 s/turn) |
+| 100 planets, 450 turns | ~15 min |
+| 100 planets with export and `--log-actors all` | ~4 s/turn |
+| `dev check` sim stage (5 planets, 200 turns) | ~25 s |
+
+Anything over about 2 minutes needs an explicit Bash `timeout` or
+`run_in_background`. Use `--planets 12` unless the question is about fleet
+geography or lane structure; for those, prefer one 450-turn 100-planet run
+over three short ones.
+
 ## Primary Loop (Tier 0 + Tier 1)
 
 ### Tier 0 — KPI summary ("is it broken / is the economy healthy?")
@@ -31,29 +61,65 @@ and a `PASS/WARN/FAIL` verdict. The verdict is a catastrophe floor (food
 survival + live market), not an aspirational target. Start here for almost
 every question.
 
-### Tier 1 — analysis script (open-ended questions, debugging)
+### Tier 1a — export analysis (questions over logged history)
 
 ```bash
-uv run spacesim2 run --turns 300 --run-id myrun        # export Parquet
+uv run spacesim2 run --turns 300                       # exports Parquet to data/runs/
 cp notebooks/scratch_template.py notebooks/my_question.py
 # edit: load_run() from spacesim2.analysis.loading -> Polars frames
 uv run spacesim2 dev analyze notebooks/my_question.py  # runs it, relays stdout
 ```
 
-`load_run()` exposes `.actor_turns`, `.actor_drives`, `.market_transactions`,
-`.market_snapshots` as Polars frames.
+`dev analyze` runs the script against the most recent directory under
+`data/runs/`; pass `--run DIR` to pick another. `load_run()` exposes
+`.actor_turns`, `.actor_drives`, `.market_transactions`, `.market_snapshots`
+as Polars frames.
 
 **Output contract (keeps tokens bounded):** print small aggregates only
-(`.describe()`, grouped means, `.head(N)`) — never a raw full DataFrame.
+(`.describe()`, grouped means, `.head(N)`), never a raw full DataFrame.
 Save figures to `tmp/` with `savefig()`; reason over the printed numbers,
-not the pixels. Reuse the kept reference probes listed in
-`notebooks/README.md` when they fit the question.
+not the pixels. Reuse the kept probes listed in `notebooks/README.md` when
+they fit the question.
+
+### Tier 1b — in-process probe (behavior the export does not capture)
+
+Parquet holds per-turn state, not the reason a decision went the way it did.
+For "why did this ship not depart" or "why did no one enter this recipe",
+build the sim in a script and instrument it:
+
+1. Copy `notebooks/probe_template.py` into your scratchpad directory and
+   edit `classify()`. Never edit `spacesim2/`.
+2. The template builds the sim through `create_and_setup_simulation` from
+   `spacesim2.cli.common`. To observe a decision, wrap the method you care
+   about (`TraderBrain.decide_travel`, `TraderBrain._fuel_safe_destination`,
+   `IndustrialistBrain.decide_economic_action`) with a monkeypatch that
+   records the branch taken and the state at that moment. Keep the original
+   behavior: call through, record, return.
+3. Assert the patch landed. Count calls through the wrapper and fail if it
+   is zero; a wrapper that misses after a refactor has wasted whole probe
+   runs before.
+4. Sample every 25 turns, not every turn. Write one JSON file at the end and
+   print one progress line per sample.
+5. Smoke test at `--planets 12` for 100 turns before the real run.
+
+Run it with `uv run python <path>`, not `dev analyze`. Report the
+classification table, not the trace; one concrete example per category is
+enough. `notebooks/medicine_probe.py` and `notebooks/chem_stall_ab.py` are
+committed examples of the genre.
+
+### Before/after questions
+
+"Did my fix move KPI Y, or is that noise?" is the `sim-ab-testing` skill
+(`uv run spacesim2 dev ab --base <ref>`), which runs replicates on both
+sides. Do not answer it from one run per side.
 
 ### Interpreting results
 
 The sim is stochastic, not bit-reproducible. Population means are stable to
-~±0.05 — compare with tolerances, never exact values. If a check is worth
-keeping, propose it as an assertion for `tests/test_simulation_smoke.py`.
+about ±0.05; count-style trade KPIs are noisier, so treat a difference under
+20% on a single run as noise. Compare with tolerances, never exact values.
+If a check is worth keeping, propose it as an assertion for
+`tests/test_simulation_smoke.py`.
 
 ## Optional: Marimo Dashboard (human-deliverable only)
 
@@ -64,7 +130,7 @@ charts to explore. Start from `notebooks/analysis_template.py`, copy to
 `uv run marimo export html notebooks/<file>.py -o /tmp/test.html` (errors
 surface in the terminal). Marimo gotchas and run-path resolution are in
 `notebooks/README.md`. Deliver the path plus the open command
-(`uv run marimo edit --no-token notebooks/<file>.py`) — do not read the HTML
+(`uv run marimo edit --no-token notebooks/<file>.py`); do not read the HTML
 export back into context.
 
 ## Code Quality
@@ -78,17 +144,21 @@ export back into context.
 
 1. **Analysis artifacts only**: never modify `spacesim2/`, `data/` (except
    `data/runs/`), or `tests/`.
-2. **Numbers over artifacts**: your caller reads your text — lead with the
+2. **Numbers over artifacts**: your caller reads your text; lead with the
    verdict and the 2-5 key numbers, then supporting detail.
 3. **Use existing infrastructure**: `--summary`, `dev analyze`,
-   `scratch_template.py`, the kept reference probes.
+   `scratch_template.py`, `probe_template.py`, the kept probes, and
+   `sim-ab-testing` for comparisons.
 4. **Interpret, don't dump**: explain what the numbers mean for the
    simulation, with caveats and follow-up suggestions.
+5. **Main checkout only**: never measure inside a git worktree.
 
 ## Output Format
 
-Always include:
+Under 500 words. Always include:
 1. Verdict first (one line), then key findings (2-5 bullets with numbers).
-2. Commands/scripts used, and the analysis script path if you wrote one.
-3. Caveats (stochastic variance, sample size) and follow-ups.
+2. Commands used, how many runs the numbers come from, and the path of any
+   script you wrote. Never paste probe source.
+3. Caveats (stochastic variance, sample size; differences under 20% on a
+   single run are noise) and follow-ups.
 4. If (and only if) a notebook was requested: its path and open command.
