@@ -1,8 +1,8 @@
 # Prosperity Drives: Tier 2 and 3 Consumption
 
-Design for demand above subsistence. Status: phases 1 and 2 implemented
-2026-09-05 (`core/drives/prosperity_drive.py`, summary `prosperity` block);
-phase 3 (UI) and phase 4 open. No probe run yet.
+Design for demand above subsistence. Status: phases 1, 2, and 4 implemented
+(`core/drives/prosperity_drive.py`, summary `prosperity` block, surplus
+money discount in `ActorBrain._surplus_money_discount`); phase 3 (UI) open.
 
 ## Why
 
@@ -89,9 +89,22 @@ is `marginal_welfare / value_of_money`, capped by replacement cost when the
 actor could make the good, and the posted bid escalates from the reference
 price under scarcity pressure. Nothing new. The value of money is floored at
 10% of the hungry value, so a rich actor's ceiling is about ten times a
-hungry actor's. At food near 11 credits that puts a luxury ceiling near 110,
-which is close to the recipe cost. If the first probe shows flat demand, the
-follow-up is a floor that keeps falling with wealth. Not in scope now.
+hungry actor's. Since the prosperity stake (0.1) is half the food stake
+(0.2), that put every prosperity ceiling near four times the food price,
+about 43 credits, while prefab housing costs 66-84 to make, luxury goods
+76-92, advanced medicine 157, and computers 265. The 2026-09-06 probe
+(`notebooks/prosperity_blockers_probe.py`) found the welfare term binding
+on 100% of prosperity bids with gated actors holding a median 920 credits.
+
+Phase 4 fixes this with a surplus money discount, applied to prosperity
+drives only. Cash beyond `SURPLUS_REFERENCE_DAYS` (30) of food is surplus;
+lambda is scaled by `reference_days / affordable_days`, floored at
+`SURPLUS_DISCOUNT_FLOOR` (0.1). An actor holding 90 days of food money gets
+a ceiling three times higher; the floor caps the gain at ten times. Need
+drives keep the undiscounted lambda, so a rich actor still bids for food
+and clothing exactly as before. The posted bid is still bounded by the
+reference price under scarcity pressure (at most four times the average or
+imputed price), so the discount raises the ceiling, not the opening bid.
 
 ## Prosperity index
 
@@ -156,7 +169,7 @@ to assert against.
 | 1 | `ProsperityDrive`, gate, taste vector, need drives drop quality preference, summary block. Done. | Do tier 2 goods trade once someone bids for them? |
 | 2 | Luxury and computing categories. Done, shipped with phase 1. | Does demand alone pull tier 3 through the chain? |
 | 3 | Snapshot fields, tier overlays, panel rows, charts | Can you see rich and poor planets at fit zoom? |
-| 4 | Only if demand is flat: wealth-continuous value of money | Is the demand curve steep enough? |
+| 4 | Surplus money discount on prosperity lambda. Done. | Is the demand curve steep enough? |
 
 Phase 1 is measurable in one 12-planet 200-turn run. Supply may still stall
 on facility depth; the probe shows which side binds.

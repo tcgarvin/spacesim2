@@ -27,6 +27,12 @@ TOOL_EXPECTED_LIFESPAN = 100
 # Willingness-to-pay for every other drive good is relative to it.
 NUMERAIRE_DRIVE = "food"
 
+# Surplus money discount for prosperity bids. Cash beyond this many days of
+# food is surplus; its marginal value falls in proportion, floored so the
+# discount cannot zero the price of money. Needs are priced without it.
+SURPLUS_REFERENCE_DAYS = 30.0
+SURPLUS_DISCOUNT_FLOOR = 0.1
+
 # Max recursion depth for make-or-buy imputation through production chains.
 MAX_IMPUTE_DEPTH = 6
 
@@ -264,11 +270,13 @@ class ActorBrain:
         lam = self._value_of_money(actor, market, cache)
         if lam <= 0:
             return commands
+        surplus_lam = lam * self._surplus_money_discount(actor, market, cache)
 
         for drive in self._drives_by_priority(actor):
             mats = drive.materials()
             if not mats or not drive.can_purchase(actor):
                 continue
+            drive_lam = lam if drive.WELLBEING else surplus_lam
 
             have = sum(actor.inventory.get_quantity(m) for m in mats)
             need = drive.target_units() - have
@@ -279,7 +287,7 @@ class ActorBrain:
                 actor, market, mats, cache
             )
             wtp = self._drive_willingness_to_pay(
-                actor, market, drive, target_commodity, lam, cache
+                actor, market, drive, target_commodity, drive_lam, cache
             )
             if wtp <= 0:
                 continue
@@ -362,6 +370,50 @@ class ActorBrain:
             return (rank, -drive.marginal_welfare())
 
         return sorted(actor.drives, key=key)
+
+    def _surplus_money_discount(
+        self,
+        actor: "Actor",
+        market: "Market",
+        cache: Optional[BrainCache] = None,
+    ) -> float:
+        """Multiplier on the value of money for prosperity bids, in (0, 1].
+
+        ``_value_of_money`` floors the food-security discount, so a rich
+        actor's ceiling for any good is a fixed multiple of the food price
+        (about four times it) however much cash it holds. Every tier 3 good
+        costs more than that to make, so nobody could ever bid enough for
+        one. Prosperity spending only happens once needs are met, and the
+        money it spends is surplus above them, so its marginal value falls
+        with the size of the surplus: cash beyond ``SURPLUS_REFERENCE_DAYS``
+        of food discounts lambda in proportion, down to
+        ``SURPLUS_DISCOUNT_FLOOR``. Bids stay bounded by the reference price
+        under scarcity pressure, so this raises the ceiling, not the posted
+        bid. Needs keep the undiscounted lambda.
+        """
+        price_food = self._numeraire_price(actor, market, cache)
+        if price_food <= 0:
+            return 1.0
+        affordable_days = actor.money / price_food
+        if affordable_days <= SURPLUS_REFERENCE_DAYS:
+            return 1.0
+        return max(SURPLUS_DISCOUNT_FLOOR, SURPLUS_REFERENCE_DAYS / affordable_days)
+
+    def _numeraire_price(
+        self,
+        actor: "Actor",
+        market: "Market",
+        cache: Optional[BrainCache] = None,
+    ) -> float:
+        """Effective food price for this actor, or 0 with no numeraire drive."""
+        for drive in actor.drives:
+            if drive.metrics.get_name() != NUMERAIRE_DRIVE:
+                continue
+            mats = drive.materials()
+            if not mats:
+                return 0.0
+            return self._effective_food_price(actor, market, mats[0], cache)
+        return 0.0
 
     def _value_of_money(
         self,

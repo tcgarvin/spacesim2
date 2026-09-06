@@ -8,8 +8,10 @@ import pytest
 
 from spacesim2.analysis.summary import compute_summary
 from spacesim2.core.actor import ActorType
+from spacesim2.core.actor_brain import SURPLUS_DISCOUNT_FLOOR, SURPLUS_REFERENCE_DAYS
 from spacesim2.core.commodity import CommodityRegistry
 from spacesim2.core.drives import ClothingDrive, FoodDrive, HealthDrive, ShelterDrive
+from spacesim2.core.drives.food_drive import PANTRY_MAX
 from spacesim2.core.drives.prosperity_drive import (
     CATEGORY_NAMES,
     DEBT_DECAY_FACTOR,
@@ -384,3 +386,71 @@ class TestSummaryProsperityBlock:
         assert set(prosperity["volume_per_planet_turn"]) == expected_goods
         for value in prosperity["volume_per_planet_turn"].values():
             assert math.isfinite(value)
+
+
+class TestSurplusMoneyDiscount:
+    """Wealth lowers the price of money for prosperity bids and nothing else."""
+
+    @pytest.fixture(scope="class")
+    def sim(self) -> Simulation:
+        sim = Simulation()
+        sim.setup_simple(
+            num_planets=1, num_regular_actors=4, num_market_makers=1, num_ships=0
+        )
+        return sim
+
+    def _regular(self, sim: Simulation):
+        return next(a for a in sim.actors if a.actor_type == ActorType.REGULAR)
+
+    def test_no_discount_within_reference_days(self, sim):
+        actor = self._regular(sim)
+        market = actor.planet.market
+        price_food = actor.brain._numeraire_price(actor, market)
+        assert price_food > 0
+        actor.money = int(price_food * SURPLUS_REFERENCE_DAYS) - 1
+        assert actor.brain._surplus_money_discount(actor, market) == 1.0
+
+    def test_discount_falls_with_surplus_and_is_floored(self, sim):
+        actor = self._regular(sim)
+        market = actor.planet.market
+        price_food = actor.brain._numeraire_price(actor, market)
+        actor.money = int(price_food * SURPLUS_REFERENCE_DAYS * 4)
+        assert actor.brain._surplus_money_discount(actor, market) == pytest.approx(
+            0.25, rel=0.05
+        )
+        actor.money = int(price_food * SURPLUS_REFERENCE_DAYS * 1000)
+        assert actor.brain._surplus_money_discount(actor, market) == pytest.approx(
+            SURPLUS_DISCOUNT_FLOOR
+        )
+
+    def test_wealth_raises_prosperity_ceiling_but_not_need_ceiling(self, sim):
+        """The same actor, poorer then richer: need WTP holds, prosperity WTP rises."""
+        actor = self._regular(sim)
+        market = actor.planet.market
+        _satisfy_needs(actor)
+        clothing = next(d for d in actor.drives if d.metrics.get_name() == "clothing")
+        luxury = next(
+            d for d in actor.drives if d.metrics.get_name() == "prosperity_luxury"
+        )
+        clothing.metrics.buffer = 0.0
+        luxury.metrics.buffer = 0.0
+        price_food = actor.brain._numeraire_price(actor, market)
+
+        def ceilings(money: int):
+            actor.money = money
+            lam = actor.brain._value_of_money(actor, market)
+            surplus_lam = lam * actor.brain._surplus_money_discount(actor, market)
+            need = actor.brain._drive_willingness_to_pay(
+                actor, market, clothing, clothing.materials()[0], lam
+            )
+            want = actor.brain._drive_willingness_to_pay(
+                actor, market, luxury, luxury.materials()[0], surplus_lam
+            )
+            return need, want
+
+        # Both wealth levels are food-secure, so the undiscounted lambda is
+        # at its floor and the need ceiling is identical for both.
+        need_lo, want_lo = ceilings(int(price_food * PANTRY_MAX * 2))
+        need_hi, want_hi = ceilings(int(price_food * PANTRY_MAX * 20))
+        assert need_hi == need_lo
+        assert want_hi >= want_lo * 4
