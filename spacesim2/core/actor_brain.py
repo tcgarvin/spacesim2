@@ -497,9 +497,6 @@ class ActorBrain:
         if replacement is not None:
             replacement *= 1.0 + drive.metrics.debt
         wtp = welfare_wtp if replacement is None else min(welfare_wtp, replacement)
-        multiple = drive.max_numeraire_multiple()
-        if math.isfinite(multiple):
-            wtp = min(wtp, multiple * self._numeraire_price(actor, market, cache))
         # Ceil so the ceiling meets sellers' ceiled cost floor. Truncating
         # would leave a permanent 1-credit gap that blocks trade between
         # actors with identical costs.

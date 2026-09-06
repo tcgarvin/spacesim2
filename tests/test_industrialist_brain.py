@@ -63,9 +63,6 @@ class _StubDrive:
     def deprivation_stake(self):
         return self._stake
 
-    def max_numeraire_multiple(self):
-        return math.inf
-
     def marginal_welfare(self):
         return self._stake * (1.0 - self._buffer)
 
