@@ -650,6 +650,7 @@ class ActorBrain:
         depth: int,
         visiting: frozenset[str],
         memo: Dict[str, float],
+        make_only: bool = False,
     ) -> float:
         """Per-unit cost to acquire ``commodity``, by buying or else making it.
 
@@ -659,19 +660,25 @@ class ActorBrain:
         ``math.inf`` when the commodity can be neither bought nor produced:
         no recipe, a production cycle, or the depth bound is hit. Callers
         treat that as not viable.
+
+        ``make_only`` skips the buy branch for this commodity (its inputs
+        are still priced off the market), so the answer does not move with
+        the good's own quotes. A bid cap anchored on the market average
+        would otherwise rise with every fill it caused.
         """
         # 1. Buy it: a live ask is the truest cost, else the last-traded avg.
         #    Only trust the avg when a real trade set it. Otherwise
         #    get_avg_price returns its fabricated default of 10, which would
         #    short-circuit the recursive make-it branch for never-traded goods
         #    with a bogus price and deadlock the cold start.
-        _, ask = market.get_bid_ask_spread(commodity)
-        if ask is not None:
-            return float(ask)
-        if market.has_price_signal(commodity):
-            avg = market.get_avg_price(commodity)
-            if avg > 0:
-                return float(avg)
+        if not make_only:
+            _, ask = market.get_bid_ask_spread(commodity)
+            if ask is not None:
+                return float(ask)
+            if market.has_price_signal(commodity):
+                avg = market.get_avg_price(commodity)
+                if avg > 0:
+                    return float(avg)
 
         if commodity.id in memo:
             return memo[commodity.id]

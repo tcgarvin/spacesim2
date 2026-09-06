@@ -1,3 +1,4 @@
+import math
 from unittest.mock import Mock
 
 import pytest
@@ -5,6 +6,8 @@ import pytest
 from spacesim2.core.actor import Actor, ActorType
 from spacesim2.core.actor_brain import GOVERNMENT_WAGE, ActorBrain
 from spacesim2.core.brains.industrialist import (
+    BUILD_INPUT_CEILING_CAP,
+    ENTRY_MARGIN,
     RECIPE_COOLDOWN_TURNS,
     RECIPE_STUCK_TURNS,
     IndustrialistBrain,
@@ -1249,3 +1252,373 @@ class TestIndustrialistLiquidation:
         sells = self._sell_orders(brain.decide_market_actions(actor))
 
         assert [(s.commodity_type, s.quantity) for s in sells] == [(food, 4)]
+
+
+class TestNetbackInputBids:
+    """Recipe inputs are bid against the value of the recipe's own output.
+
+    Without this an input bid is priced off the input's own thin history, so
+    a producer bidding 100 for medicine still rests 28 for the chemicals it
+    needs and the tier below never starts. See _input_price_ceiling.
+    """
+
+    @pytest.fixture
+    def brain(self):
+        return IndustrialistBrain()
+
+    @staticmethod
+    def _commodity(cid):
+        return CommodityDefinition(id=cid, name=cid, transportable=True, description="")
+
+    @staticmethod
+    def _participant(money=1_000_000, stock=1000):
+        participant = Mock()
+        participant.name = "Counterparty"
+        participant.money = money
+        participant.reserved_money = 0
+        participant.active_orders = {}
+        participant.inventory = Mock(spec=Inventory)
+        participant.inventory.get_available_quantity.return_value = stock
+        return participant
+
+    def _actor(self, money=100_000):
+        actor = Mock(spec=Actor)
+        actor.name = "TestIndustrialist"
+        actor.actor_type = ActorType.REGULAR
+        actor.money = money
+        actor.planet = Mock()
+        actor.sim = Mock()
+        actor.drives = []
+        _wire_producer_index(actor.sim)
+        actor.inventory = Mock(spec=Inventory)
+        actor.inventory.get_quantity.return_value = 0
+        actor.inventory.get_available_quantity.return_value = 0
+        actor.inventory.has_quantity.return_value = False
+        return actor
+
+    @staticmethod
+    def _process(pid, inputs, outputs, facilities=()):
+        process = Mock(spec=ProcessDefinition)
+        process.id = pid
+        process.inputs = dict(inputs)
+        process.outputs = dict(outputs)
+        process.tools_required = []
+        process.facilities_required = list(facilities)
+        process.resource_attribute = None
+        process.requirements = list(inputs.items())
+        return process
+
+    def _medicine_chain(self, actor, market):
+        """make_medicine from 2 refined_chemicals, itself made from 3 chemicals.
+
+        chemicals rests an ask at 4, so imputed refined_chemicals is
+        labor 10 + 3 * 4 = 22 and one run of make_medicine imputes to
+        10 + 2 * 22 = 54.
+        """
+        medicine = self._commodity("medicine")
+        refined = self._commodity("refined_chemicals")
+        chemicals = self._commodity("chemicals")
+
+        make_medicine = self._process("make_medicine", {refined: 2}, {medicine: 1})
+        refine = self._process("refine_chemicals", {chemicals: 3}, {refined: 1})
+        actor.sim.process_registry.all_processes.return_value = [make_medicine, refine]
+        actor.sim.process_registry.get_process.side_effect = lambda pid: {
+            "make_medicine": make_medicine,
+            "refine_chemicals": refine,
+        }.get(pid)
+        actor.sim.commodity_registry.get_commodity.return_value = None
+
+        market.place_sell_order(self._participant(), chemicals, 100, 4)
+        return medicine, refined, chemicals, make_medicine
+
+    @staticmethod
+    def _demand_for(market, commodity, quantity, price):
+        buyer = Mock()
+        buyer.name = "Buyer"
+        buyer.money = 10_000_000
+        buyer.reserved_money = 0
+        buyer.active_orders = {}
+        market.place_buy_order(buyer, commodity, quantity, price)
+
+    def test_resting_ask_is_lifted_at_the_ask(self, brain):
+        """Supply that is already there is taken, ceiling or no ceiling."""
+        actor = self._actor()
+        market = Market()
+        _, refined, _, process = self._medicine_chain(actor, market)
+        self._demand_for(market, self._commodity("medicine"), 20, 100)
+        market.place_sell_order(self._participant(), refined, 5, 9)
+
+        ceiling = brain._input_price_ceiling(
+            actor, market, refined, 2.0, 100.0, 54.0, {}
+        )
+        commands = brain._buy_command(actor, market, refined, 2, None, ceiling)
+
+        assert not math.isinf(ceiling)
+        assert [(c.price, c.quantity) for c in commands] == [(9, 2)]
+
+    def test_ceiling_matches_the_netback_formula(self, brain):
+        """The ceiling is (output value - other costs) / (qty * ENTRY_MARGIN)."""
+        actor = self._actor()
+        market = Market()
+        medicine, refined, _, process = self._medicine_chain(actor, market)
+        self._demand_for(market, medicine, 20, 100)
+
+        memo = {}
+        output_value = brain._recipe_output_value(actor, market, process, memo)
+        recipe_cost = brain._impute_recipe_cost(
+            actor, market, process, 0, frozenset(), memo
+        )
+        unit = brain._imputed_unit_cost(actor, market, refined, 0, frozenset(), memo)
+
+        assert output_value == pytest.approx(100.0)
+        assert recipe_cost == pytest.approx(54.0)
+        assert unit == pytest.approx(22.0)
+
+        expected = (output_value - (recipe_cost - 2 * unit)) / (2 * ENTRY_MARGIN)
+        ceiling = brain._input_price_ceiling(
+            actor, market, refined, 2.0, output_value, recipe_cost, memo
+        )
+
+        assert ceiling == pytest.approx(expected)
+        assert ceiling == pytest.approx(37.5)
+
+    def test_never_traded_input_opens_at_the_bootstrap_bid(self, brain):
+        """With no pressure the bid is today's ceil(imputed * 1.25), under the ceiling."""
+        actor = self._actor()
+        market = Market()
+        medicine, refined, _, process = self._medicine_chain(actor, market)
+        self._demand_for(market, medicine, 20, 100)
+
+        ceiling = brain._input_price_ceiling(
+            actor, market, refined, 2.0, 100.0, 54.0, {}
+        )
+        commands = brain._buy_command(actor, market, refined, 2, None, ceiling)
+
+        assert len(commands) == 1
+        assert commands[0].price == 28  # ceil(22 * PROCUREMENT_BOOTSTRAP_MARGIN)
+        assert commands[0].price <= ceiling
+
+    def test_scarcity_pressure_escalates_the_bid_up_to_the_ceiling(self, brain):
+        """Unfilled demand walks the bid up, and the ceiling stops it."""
+        actor = self._actor()
+        market = Market()
+        medicine, refined, _, process = self._medicine_chain(actor, market)
+        self._demand_for(market, medicine, 20, 100)
+
+        ceiling = brain._input_price_ceiling(
+            actor, market, refined, 2.0, 100.0, 54.0, {}
+        )
+
+        market.scarcity_pressure[refined] = 0.2
+        mild = brain._buy_command(actor, market, refined, 2, None, ceiling)[0].price
+
+        market.scarcity_pressure[refined] = 3.0
+        starved = brain._buy_command(actor, market, refined, 2, None, ceiling)[0].price
+
+        assert mild == 33  # ceil(27.5 * 1.2)
+        assert starved == 37  # capped at the ceiling of 37.5
+        assert starved <= ceiling
+
+    def test_ceiling_falls_when_the_output_bid_falls(self, brain):
+        """Recomputed from live market state every turn, never carried over."""
+        actor = self._actor()
+        market = Market()
+        medicine, refined, _, process = self._medicine_chain(actor, market)
+        self._demand_for(market, medicine, 20, 100)
+
+        rich = brain._input_price_ceiling(
+            actor,
+            market,
+            refined,
+            2.0,
+            brain._recipe_output_value(actor, market, process, {}),
+            54.0,
+            {},
+        )
+
+        for order in list(market.buy_orders[medicine]):
+            market.cancel_order(order.order_id)
+        self._demand_for(market, medicine, 20, 60)
+
+        poor = brain._input_price_ceiling(
+            actor,
+            market,
+            refined,
+            2.0,
+            brain._recipe_output_value(actor, market, process, {}),
+            54.0,
+            {},
+        )
+
+        assert rich == pytest.approx(37.5)
+        assert poor == pytest.approx((60 - 10) / 2.4)
+        assert poor < rich
+
+    def test_no_ceiling_keeps_the_older_pricing(self, brain):
+        """An un-netbackable input still gets today's bootstrap bid."""
+        actor = self._actor()
+        market = Market()
+        _, refined, _, _ = self._medicine_chain(actor, market)
+
+        commands = brain._buy_command(actor, market, refined, 2, None, math.inf)
+
+        assert commands[0].price == 28
+
+    def test_facility_build_input_uses_the_amortization_horizon(self, brain):
+        """Glass for a chemistry lab is netbacked over the horizon it is amortized over.
+
+        A longer horizon spreads the build over more runs, so each run's glass
+        draw is smaller and one unit of glass can carry a higher price.
+        """
+        actor = self._actor()
+        market = Market()
+        medicine = self._commodity("medicine")
+        glass = self._commodity("glass")
+        lab = CommodityDefinition(
+            id="chemistry_lab", name="lab", transportable=False, description=""
+        )
+
+        make_medicine = self._process("make_medicine", {}, {medicine: 1}, [lab])
+        build_lab = self._process("build_chemistry_lab", {glass: 20}, {lab: 1})
+        actor.sim.process_registry.all_processes.return_value = [
+            make_medicine,
+            build_lab,
+        ]
+        actor.sim.process_registry.get_process.side_effect = lambda pid: {
+            "make_medicine": make_medicine,
+            "build_chemistry_lab": build_lab,
+        }.get(pid)
+        market.place_sell_order(self._participant(), glass, 1000, 5)
+        self._demand_for(market, medicine, 20, 100)
+
+        ceilings = []
+        for horizon in (200, 400):
+            brain.facility_amortization_horizon = horizon
+            memo = {}
+            output_value = brain._recipe_output_value(
+                actor, market, make_medicine, memo
+            )
+            recipe_cost = brain._impute_recipe_cost(
+                actor, market, make_medicine, 0, frozenset(), memo
+            )
+            ceilings.append(
+                brain._input_price_ceiling(
+                    actor,
+                    market,
+                    glass,
+                    20 / horizon,
+                    output_value,
+                    recipe_cost,
+                    memo,
+                )
+            )
+
+        assert ceilings[1] > ceilings[0]
+        # horizon 200: build cost 10 + 20*5 = 110, so one run costs
+        # 10 + 110/200 = 10.55 and draws 0.1 glass.
+        assert ceilings[0] == pytest.approx((100 - (10.55 - 0.1 * 5)) / (0.1 * 1.2))
+
+    def test_facility_build_input_ceiling_is_capped_at_a_cost_multiple(self, brain):
+        """A build material's netback is bounded by BUILD_INPUT_CEILING_CAP.
+
+        The uncapped figure divides a whole run's margin by a fractional draw
+        and lands in the hundreds per brick; the cap keeps the bid within a
+        small multiple of what the material itself costs.
+        """
+        actor = self._actor()
+        market = Market()
+        medicine = self._commodity("medicine")
+        glass = self._commodity("glass")
+        lab = CommodityDefinition(
+            id="chemistry_lab", name="lab", transportable=False, description=""
+        )
+        make_medicine = self._process("make_medicine", {}, {medicine: 1}, [lab])
+        build_lab = self._process("build_chemistry_lab", {glass: 20}, {lab: 1})
+        actor.sim.process_registry.all_processes.return_value = [
+            make_medicine,
+            build_lab,
+        ]
+        actor.sim.process_registry.get_process.side_effect = lambda pid: {
+            "make_medicine": make_medicine,
+            "build_chemistry_lab": build_lab,
+        }.get(pid)
+        market.place_sell_order(self._participant(), glass, 1000, 5)
+        self._demand_for(market, medicine, 20, 100)
+        brain.facility_amortization_horizon = 200
+
+        memo = {}
+        output_value = brain._recipe_output_value(actor, market, make_medicine, memo)
+        recipe_cost = brain._impute_recipe_cost(
+            actor, market, make_medicine, 0, frozenset(), memo
+        )
+        args = (actor, market, glass, 20 / 200, output_value, recipe_cost, memo)
+        uncapped = brain._input_price_ceiling(*args)
+        capped = brain._input_price_ceiling(*args, BUILD_INPUT_CEILING_CAP)
+
+        assert uncapped > 100
+        assert capped == pytest.approx(5 * BUILD_INPUT_CEILING_CAP)
+
+    def test_build_input_cap_anchors_on_recipe_cost_not_market_average(self, brain):
+        """The cap follows what the material costs to make, not its quotes.
+
+        A cap on the market average rose with every fill the bid caused. With
+        a make_glass recipe present, the cap is a multiple of that recipe's
+        unit cost even while the market quotes glass far higher.
+        """
+        actor = self._actor()
+        market = Market()
+        medicine = self._commodity("medicine")
+        glass = self._commodity("glass")
+        silica = self._commodity("silica")
+        lab = CommodityDefinition(
+            id="chemistry_lab", name="lab", transportable=False, description=""
+        )
+        make_medicine = self._process("make_medicine", {}, {medicine: 1}, [lab])
+        build_lab = self._process("build_chemistry_lab", {glass: 20}, {lab: 1})
+        make_glass = self._process("make_glass", {silica: 3}, {glass: 2})
+        registry = {
+            "make_medicine": make_medicine,
+            "build_chemistry_lab": build_lab,
+            "make_glass": make_glass,
+        }
+        actor.sim.process_registry.all_processes.return_value = list(registry.values())
+        actor.sim.process_registry.get_process.side_effect = registry.get
+        market.place_sell_order(self._participant(), silica, 1000, 2)
+        market.place_sell_order(self._participant(), glass, 1000, 50)
+        self._demand_for(market, medicine, 20, 100)
+        brain.facility_amortization_horizon = 200
+
+        memo = {}
+        output_value = brain._recipe_output_value(actor, market, make_medicine, memo)
+        recipe_cost = brain._impute_recipe_cost(
+            actor, market, make_medicine, 0, frozenset(), memo
+        )
+        capped = brain._input_price_ceiling(
+            actor,
+            market,
+            glass,
+            20 / 200,
+            output_value,
+            recipe_cost,
+            memo,
+            BUILD_INPUT_CEILING_CAP,
+        )
+
+        # make_glass: 10 labor + 3 silica at 2 = 16 per run, 2 glass per run.
+        assert capped == pytest.approx(8 * BUILD_INPUT_CEILING_CAP)
+        assert capped < 50
+
+    def test_output_value_helper_matches_the_recipe_score(self, brain):
+        """The extracted helper reproduces what the score computes."""
+        actor = self._actor()
+        market = Market()
+        medicine, refined, _, process = self._medicine_chain(actor, market)
+        self._demand_for(market, medicine, 20, 100)
+
+        memo = {}
+        output_value = brain._recipe_output_value(actor, market, process, memo)
+        cost = brain._impute_recipe_cost(actor, market, process, 0, frozenset(), memo)
+        score = brain._calculate_recipe_score(actor, market, process)
+
+        assert score == pytest.approx(output_value - cost)
+        assert score == pytest.approx(46.0)

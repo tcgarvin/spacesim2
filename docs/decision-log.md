@@ -4,6 +4,55 @@ Append-only record of closed decisions, postmortems, and landed campaigns.
 Newest first. Open work lives in `TODO.md`; current reference docs live
 alongside this file.
 
+## 2026-09-06 - Recipe inputs bid at netback value, not their own history
+
+An industrialist priced each input off that input's own market: the
+cheapest ask, else the 30-day average, else imputed cost times the 1.25
+bootstrap margin. The recipe's output never entered the input bid. A
+medicine maker on a lab-poor planet could therefore bid 130-145 for
+medicine while its bid for refined_chemicals rested at a stale average
+below every refiner's 1.2x entry threshold, so the tier below never
+started. The same held for the glass needed to build a chemistry lab.
+Demand existed one tier up and stopped there.
+
+Decision: procurement bids get the two-layer shape the consumer side
+already has in `ActorBrain._drive_buy_commands`.
+
+| Layer | Value |
+|-------|-------|
+| Ceiling | `(output_value - (recipe_cost - q * unit_c)) / (q * ENTRY_MARGIN)` |
+| Posted bid | `min(ceiling, ceil(reference * (1 + scarcity_pressure)))` |
+
+`output_value` is one run's output, from `_recipe_output_value`, factored
+out of `_calculate_recipe_score` so entry and procurement price the same
+run the same way. `recipe_cost` is `_impute_recipe_cost` for one run,
+`unit_c` this actor's imputed unit cost for the input, and `q` its draw
+per run: the input quantity, or for a facility build material the build
+quantity over the amortization horizon, matching how the build is
+charged. Dividing by `ENTRY_MARGIN` (1.2) keeps the recipe
+entry-profitable after paying the ceiling. `reference` is the 30-day
+average, or imputed cost times the bootstrap margin for a never-traded
+good.
+
+A resting ask is still lifted at the ask and is not bounded by the
+ceiling; callers rely on taking supply that is already there. When the
+output value or the recipe cost cannot be computed there is no ceiling
+and the older single-layer pricing applies unchanged, including the
+one-shot `_market_is_stalled` premium, so the change is strictly
+additive. The ceiling is recomputed every turn from live market state; it
+is never carried across turns.
+
+Build tools, which the build needs but does not consume, have no per-run
+draw and keep the older pricing.
+
+A build material's ceiling is further capped at `BUILD_INPUT_CEILING_CAP`
+(2.0) times its imputed unit cost. Uncapped, the build branch divides a
+run's whole margin by a draw of a few bricks over a 150-600 run horizon
+and yields ceilings in the hundreds. In the first A/B that let scarcity
+pressure carry simple_building_materials from about 25 to 46-110 in most
+changed runs, and that good is also the shelter material. Two matches the
+most a consumer drive pays over replacement cost at full deprivation.
+
 ## 2026-09-05 - Idle ships round 2: fuel geography, distress exit, no self-trades
 
 Done (fb694f9, 903360e, 5cf3eee, 6a4b0be, 5e04fc8). After round 1 the

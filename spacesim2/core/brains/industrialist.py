@@ -34,18 +34,40 @@ FACILITY_NOTIONAL_VALUE = 50.0
 # into one recipe during a cold start.
 FACILITY_HORIZON_MIN = 150
 FACILITY_HORIZON_MAX = 600
-# Turns between checks that the chosen recipe is still profitable. Entry
-# requires a 20% margin and exit waits for an outright loss; the band between
-# is hysteresis so producers do not thrash on price noise.
+# Margin a recipe must clear over its imputed cost before an actor will enter
+# it. Exit waits for an outright loss; the band between is hysteresis so
+# producers do not thrash on price noise.
+ENTRY_MARGIN = 1.2
+# Turns between checks that the chosen recipe is still profitable.
 EXIT_CHECK_INTERVAL = 10
+# Procurement bids for recipe inputs have two layers, mirroring the
+# consumer-side design in ActorBrain._drive_buy_commands:
+#
+# 1. A ceiling, the netback value of the input. It is what one unit can be
+#    worth to this actor given what the recipe's output sells for: the run's
+#    output value, less every other cost of the run, divided by the units
+#    consumed and by ENTRY_MARGIN so the recipe still clears its entry
+#    threshold after paying the ceiling. This is what carries a demand signal
+#    down a tier: a medicine maker bidding 140 for medicine can pay far more
+#    for refined_chemicals than the chemicals' own stale average says.
+# 2. A posted bid that starts at a reference price and escalates toward the
+#    ceiling as the market's scarcity pressure grows, so a bid only rises
+#    where demand is actually going unfilled.
+#
+# The ceiling needs both an output value and an imputed recipe cost. When
+# either is unavailable the bid falls back to the older single-layer pricing
+# below, so the netback layer is strictly additive.
+#
 # Premium over imputed cost when resting a procurement bid for a never-traded
-# input. Must exceed the 1.2 entry margin: suppliers impute about the same
-# cost we do, so a lower bid never triggers supplier entry and the cold-start
-# standoff moves one tier up the chain.
+# input. Must exceed ENTRY_MARGIN: suppliers impute about the same cost we do,
+# so a lower bid never triggers supplier entry and the cold-start standoff
+# moves one tier up the chain.
 PROCUREMENT_BOOTSTRAP_MARGIN = 1.25
-# Gate for paying that premium on a good that HAS traded before. Once a good
-# has any trade history the bid would otherwise rest at the stale average,
-# which can sit below every potential supplier's entry threshold, so the tier
+# Gate for paying that premium on a good that HAS traded before. It applies
+# only on the fallback path; where a netback ceiling exists, scarcity pressure
+# escalates the bid continuously instead. Once a good has any trade history
+# the bid would otherwise rest at the stale average, which can sit below every
+# potential supplier's entry threshold, so the tier
 # stays dead even though the average says a price exists. The premium is
 # applied again only where the market itself says the good is unobtainable:
 # no resting ask, chronic unmet demand, and essentially no recent turnover.
@@ -78,6 +100,17 @@ MIN_OUTPUT_DEPTH_UNITS = 3
 # rests to bootstrap a cold-start intermediate would be capped below itself
 # and no supplier would ever enter.
 NEVER_TRADED_VALUE_CAP = 1.5
+# Cap on the netback ceiling for a facility build material, as a multiple of
+# its imputed unit cost. A build's ceiling divides the recipe's whole margin
+# by the material's draw per run, which is the build quantity over a horizon
+# of 150-600 runs, so the raw figure is in the hundreds per brick. Bids that
+# high are entry-consistent but they let scarcity pressure run to its full
+# range on goods with inelastic supply, and simple_building_materials is also
+# the shelter material, so colonists were outbid for housing. Two matches the
+# most a consumer drive pays over replacement cost at full deprivation. The
+# multiple applies to the material's recipe cost, not its market average: a
+# cap on the average rose with every fill the bid caused.
+BUILD_INPUT_CEILING_CAP = 2.0
 # Working buffer the liquidation sweep retains for goods not backed by a
 # drive. Mirrors ColonistBrain.NON_DRIVE_KEEP_LEVELS: an industrialist also
 # falls back on make_clothing and make_simple_tools for its own needs, which
@@ -464,22 +497,51 @@ class IndustrialistBrain(ActorBrain):
         if math.isinf(total_input_cost):
             return 0.0
 
+        total_output_value = self._recipe_output_value(actor, market, process, memo)
+        if math.isnan(total_output_value):
+            return 0.0
+
+        # Entry requires ENTRY_MARGIN over costs, which include labor. Exit
+        # checks skip the margin.
+        if (
+            require_entry_margin
+            and total_output_value < total_input_cost * ENTRY_MARGIN
+        ):
+            return 0.0
+
+        return total_output_value - total_input_cost
+
+    def _recipe_output_value(
+        self,
+        actor: "Actor",
+        market: "Market",
+        process: "ProcessDefinition",
+        memo: Dict[str, float],
+    ) -> float:
+        """Value of one run's outputs, scaled by local resource availability.
+
+        Outputs are not imputed. Value is realized only if a real buyer bids,
+        and the market maker bids on every transportable good, so an
+        unsellable output is worthless to this actor. Returns ``math.nan``
+        when any transportable output prices at or below zero, which callers
+        read as "this recipe produces nothing worth having here".
+
+        Shared by ``_calculate_recipe_score`` and the netback ceiling on
+        procurement bids, so an actor pays for inputs on the same valuation
+        that made it pick the recipe.
+        """
         attribute_modifier = 1.0
         if process.resource_attribute and actor.planet:
-            attr_value = actor.planet.attributes.get_availability(
+            attribute_modifier = actor.planet.attributes.get_availability(
                 process.resource_attribute.commodity
             )
-            attribute_modifier = attr_value
 
-        # Outputs are not imputed. Value is realized only if a real buyer
-        # bids, and the market maker bids on every transportable good, so an
-        # unsellable output is worthless to this actor.
-        total_output_value = 0.0
+        total = 0.0
         for commodity, quantity in process.outputs.items():
             # Non-transportable outputs are facilities for personal use; give
             # them a notional value for enabling other recipes.
             if not commodity.transportable:
-                total_output_value += FACILITY_NOTIONAL_VALUE * quantity
+                total += FACILITY_NOTIONAL_VALUE * quantity
                 continue
 
             expected_quantity = quantity * attribute_modifier
@@ -487,15 +549,9 @@ class IndustrialistBrain(ActorBrain):
                 actor, market, commodity, expected_quantity, memo
             )
             if price <= 0:
-                return 0.0
-            total_output_value += price * expected_quantity
-
-        # Entry requires a 20% margin over costs, which include labor. Exit
-        # checks skip the margin.
-        if require_entry_margin and total_output_value < total_input_cost * 1.2:
-            return 0.0
-
-        return total_output_value - total_input_cost
+                return math.nan
+            total += price * expected_quantity
+        return total
 
     def _output_unit_value(
         self,
@@ -598,14 +654,27 @@ class IndustrialistBrain(ActorBrain):
         commodity: "CommodityDefinition",
         quantity_to_buy: int,
         cache: Optional[BrainCache] = None,
+        ceiling: float = math.inf,
     ) -> List[MarketCommand]:
         """Acquire ``quantity_to_buy`` units of ``commodity``.
 
-        Lifts the cheapest resting ask, or, if none exists, rests a bid at
-        the reference price so a seller can find us. Resting a bid without a
-        pre-existing ask breaks the producer/consumer standoff on
-        never-traded intermediates: a medicine maker must signal demand for
-        refined_chemicals before any refiner will produce them.
+        Lifts the cheapest resting ask, or, if none exists, rests a bid so a
+        seller can find us. Resting a bid without a pre-existing ask breaks
+        the producer/consumer standoff on never-traded intermediates: a
+        medicine maker must signal demand for refined_chemicals before any
+        refiner will produce them.
+
+        ``ceiling`` is the netback value of one unit to this actor, from
+        ``_input_price_ceiling``. With one, the resting bid starts at the
+        reference price and escalates toward the ceiling with the market's
+        scarcity pressure, and never exceeds it. ``math.inf`` means the
+        netback could not be computed, and the older single-layer pricing
+        applies: the reference price, bumped once by
+        ``PROCUREMENT_BOOTSTRAP_MARGIN`` for a never-traded good or a stalled
+        market.
+
+        A resting ask is lifted at the ask either way. The ceiling does not
+        bound it: callers rely on this to take supply that is already there.
         """
         if quantity_to_buy <= 0:
             return []
@@ -619,6 +688,11 @@ class IndustrialistBrain(ActorBrain):
         )
         if asks:
             price = asks[0].price
+        elif not math.isinf(ceiling):
+            memo = cache.imputed_cost if cache is not None else {}
+            reference = self._procurement_reference(actor, market, commodity, memo)
+            pressure = market.scarcity_pressure_for(commodity)
+            price = min(int(ceiling), math.ceil(reference * (1.0 + pressure)))
         elif market.has_price_signal(commodity):
             # A real trade price exists, possibly stale. Anchor to it.
             price = market.get_avg_price(commodity)
@@ -662,6 +736,87 @@ class IndustrialistBrain(ActorBrain):
         if affordable <= 0:
             return []
         return [PlaceBuyOrderCommand(commodity, affordable, price)]
+
+    def _procurement_reference(
+        self,
+        actor: "Actor",
+        market: "Market",
+        commodity: "CommodityDefinition",
+        memo: Dict[str, float],
+    ) -> float:
+        """Price a resting procurement bid escalates from.
+
+        The trade average where one exists. A never-traded good has none, and
+        ``get_avg_price`` would return its fabricated default of 10, which
+        sits below a rational seller's replacement-cost floor; that case
+        anchors on our own imputed cost plus the bootstrap margin instead, so
+        even at zero pressure the opening bid clears a supplier's entry
+        threshold. Falls back to the fabricated default when the good cannot
+        be imputed at all.
+        """
+        if market.has_price_signal(commodity):
+            return float(market.get_avg_price(commodity))
+        imputed = self._imputed_unit_cost(
+            actor, market, commodity, 0, frozenset(), memo
+        )
+        if math.isinf(imputed):
+            return float(market.get_avg_price(commodity))
+        return imputed * PROCUREMENT_BOOTSTRAP_MARGIN
+
+    def _input_price_ceiling(
+        self,
+        actor: "Actor",
+        market: "Market",
+        commodity: "CommodityDefinition",
+        quantity_per_run: float,
+        output_value: float,
+        recipe_cost: float,
+        memo: Dict[str, float],
+        max_cost_multiple: float = math.inf,
+    ) -> float:
+        """Most this actor can pay per unit of ``commodity`` and still enter.
+
+        ``output_value`` and ``recipe_cost`` are one run of the chosen recipe,
+        from ``_recipe_output_value`` and ``_impute_recipe_cost``.
+        ``quantity_per_run`` is how much of ``commodity`` that run consumes;
+        for a material of a facility build it is the build quantity divided by
+        the amortization horizon, matching how ``_impute_recipe_cost``
+        amortizes the build.
+
+        Substituting our own imputed unit cost out of the recipe cost leaves
+        every other cost of the run, so the difference from the output value
+        is what the whole input draw can be worth. Dividing by
+        ``ENTRY_MARGIN`` keeps the recipe entry-profitable after paying it.
+        ``max_cost_multiple`` bounds the result at that multiple of the
+        input's recipe cost, imputed from its own recipe rather than its
+        market quotes so the bound does not rise with the bids it permits;
+        facility build materials pass ``BUILD_INPUT_CEILING_CAP``. A good
+        with no recipe here falls back to its market-imputed cost.
+
+        Returns ``math.inf`` when the netback cannot be computed or comes out
+        non-positive; ``_buy_command`` reads that as "no ceiling" and prices
+        the bid the older way.
+        """
+        if quantity_per_run <= 0 or math.isnan(output_value):
+            return math.inf
+        if math.isinf(recipe_cost):
+            return math.inf
+        unit_cost = self._imputed_unit_cost(
+            actor, market, commodity, 0, frozenset(), memo
+        )
+        if math.isinf(unit_cost):
+            return math.inf
+        other_costs = recipe_cost - quantity_per_run * unit_cost
+        ceiling = (output_value - other_costs) / (quantity_per_run * ENTRY_MARGIN)
+        if ceiling <= 0:
+            return math.inf
+        if math.isinf(max_cost_multiple):
+            return ceiling
+        make_cost = self._imputed_unit_cost(
+            actor, market, commodity, 0, frozenset(), memo, make_only=True
+        )
+        anchor = unit_cost if math.isinf(make_cost) else make_cost
+        return min(ceiling, anchor * max_cost_multiple)
 
     @staticmethod
     def _market_is_stalled(market: "Market", commodity: "CommodityDefinition") -> bool:
@@ -761,11 +916,33 @@ class IndustrialistBrain(ActorBrain):
                             )
                         )
 
+        # Netback inputs to the recipe's own economics, recomputed every turn
+        # from live market state. Both terms are one run of the recipe.
+        memo: Dict[str, float] = cache.imputed_cost if cache is not None else {}
+        output_value = self._recipe_output_value(actor, market, process, memo)
+        recipe_cost = self._impute_recipe_cost(
+            actor, market, process, 0, frozenset(), memo
+        )
+
         for commodity, needed_quantity in process.inputs.items():
             current_quantity = actor.inventory.get_quantity(commodity)
+            ceiling = self._input_price_ceiling(
+                actor,
+                market,
+                commodity,
+                float(needed_quantity),
+                output_value,
+                recipe_cost,
+                memo,
+            )
             commands.extend(
                 self._buy_command(
-                    actor, market, commodity, needed_quantity - current_quantity, cache
+                    actor,
+                    market,
+                    commodity,
+                    needed_quantity - current_quantity,
+                    cache,
+                    ceiling,
                 )
             )
 
@@ -792,6 +969,23 @@ class IndustrialistBrain(ActorBrain):
                 build_requirements.setdefault(tool, 1)
             for commodity, needed_quantity in build_requirements.items():
                 current_quantity = actor.inventory.get_quantity(commodity)
+                # A build material's share of one run is its build quantity
+                # spread over the amortization horizon, matching how
+                # _impute_recipe_cost charges the build, capped at
+                # BUILD_INPUT_CEILING_CAP times the material's own cost. Tools
+                # the build needs but does not consume have no such share and
+                # keep the older pricing.
+                build_quantity = build_process.inputs.get(commodity, 0)
+                ceiling = self._input_price_ceiling(
+                    actor,
+                    market,
+                    commodity,
+                    build_quantity / self.facility_amortization_horizon,
+                    output_value,
+                    recipe_cost,
+                    memo,
+                    BUILD_INPUT_CEILING_CAP,
+                )
                 commands.extend(
                     self._buy_command(
                         actor,
@@ -799,6 +993,7 @@ class IndustrialistBrain(ActorBrain):
                         commodity,
                         needed_quantity - current_quantity,
                         cache,
+                        ceiling,
                     )
                 )
 

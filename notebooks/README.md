@@ -30,6 +30,7 @@ the others read the latest export through `dev analyze`.
 | `health_latch_probe.py` | Actors with health debt and no medicine: no local supply, priced out, broke, or stale metric? | yes |
 | `medicine_stage_probe.py` | Where do actors who chose `make_medicine` spend their turns, and where does the output go? | yes |
 | `tier3_probe.py` | Why are the prefab_housing, luxury_goods, computers and advanced_medicine recipes never selected? Score decomposition. | yes |
+| `chain_propagation_probe.py` | Does demand at the top of the medicine chain propagate down to its inputs (refined_chemicals, glass, chemicals, silica)? Fixed config for before/after comparison. | yes |
 
 ## Marimo dashboard
 
