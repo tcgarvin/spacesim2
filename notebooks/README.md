@@ -27,6 +27,9 @@ the others read the latest export through `dev analyze`.
 | `medicine_probe.py` | Why is medicine stockpiled while actors go without it? | yes |
 | `ship_medicine_probe.py` | Why do ships never haul medicine between planets? | yes |
 | `starved_medicine_probe.py` | Why does no local industrialist enter `make_medicine` on medicine-starved planets? | yes |
+| `health_latch_probe.py` | Actors with health debt and no medicine: no local supply, priced out, broke, or stale metric? | yes |
+| `medicine_stage_probe.py` | Where do actors who chose `make_medicine` spend their turns, and where does the output go? | yes |
+| `tier3_probe.py` | Why are the prefab_housing, luxury_goods, computers and advanced_medicine recipes never selected? Score decomposition. | yes |
 
 ## Marimo dashboard
 
