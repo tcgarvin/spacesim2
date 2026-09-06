@@ -30,11 +30,14 @@ def _wire_producer_index(sim_mock):
     Mirrors the id-keyed producer index in ProcessRegistry.
     """
     registry = sim_mock.process_registry
-    registry.get_processes_producing.side_effect = lambda commodity: [
-        p
-        for p in registry.all_processes.return_value
-        if any(out.id == commodity.id for out in p.outputs)
-    ]
+
+    def producing(commodity):
+        processes = registry.all_processes.return_value
+        if not isinstance(processes, list):
+            return []  # a test that never set the list has no recipes
+        return [p for p in processes if any(o.id == commodity.id for o in p.outputs)]
+
+    registry.get_processes_producing.side_effect = producing
 
 
 class _StubDrive:
@@ -818,6 +821,43 @@ class TestDepthAwareOutputValuation:
         )
 
         assert raw == pytest.approx(-5.0)
+
+    def test_real_bids_over_a_discovery_floor_are_not_discarded(self, brain):
+        """Two bids at 300 over a 1-credit floor value a 3-unit run near 200.
+
+        Valuing at the last level hit scored this book at 1 and kept every
+        producer out of a good with live downstream demand.
+        """
+        actor = self._actor()
+        medicine = self._commodity("medicine")
+        market = Market()
+        bidder = self._bidder()
+
+        market.place_buy_order(bidder, medicine, 2, 300)  # downstream demand
+        market.place_buy_order(bidder, medicine, 20, 1)  # discovery floor
+        process = self._process(medicine)
+        actor.sim.process_registry.all_processes.return_value = [process]
+
+        raw = brain._calculate_recipe_score(
+            actor, market, process, require_entry_margin=False
+        )
+
+        # Make cost is a turn of labor (10), so each level is clipped at 15
+        # and the sweep is (15 + 15 + 1) / 3 = 10.33, minus labor. The old
+        # last-level valuation gave 1 - 10 = -9.
+        assert raw == pytest.approx((15 + 15 + 1) / 3 - 10.0)
+
+    def test_sweep_average_clips_each_level(self):
+        market = Market()
+        bidder = self._bidder()
+        widget = self._commodity("widget")
+        market.place_buy_order(bidder, widget, 1, 150)
+        market.place_buy_order(bidder, widget, 5, 20)
+
+        assert market.get_bid_sweep_average(widget, 3) == pytest.approx(190 / 3)
+        assert market.get_bid_sweep_average(widget, 3, 20.0) == pytest.approx(20.0)
+        assert market.get_bid_sweep_average(widget, 7) is None
+        assert market.get_bid_sweep_average(widget, 0) is None
 
     def test_never_traded_good_scores_via_reference_price(self, brain):
         """With no bids and no history, fall back to the reference price."""

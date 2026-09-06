@@ -975,6 +975,52 @@ class Market:
                 return price
         return None
 
+    def get_bid_sweep_average(
+        self,
+        commodity_type: "CommodityDefinition",
+        quantity: int,
+        price_clip: float = math.inf,
+    ) -> Optional[float]:
+        """Mean fill price for selling ``quantity`` units into the resting bids.
+
+        The revenue a seller sweeping the top of the book actually gets,
+        per unit, with each level's price clipped at ``price_clip`` so a
+        caller can discount a discovery probe without discarding the levels
+        under it. ``get_bid_price_at_depth`` returns the last level hit,
+        which is the floor of that revenue: two real bids at 300 over a
+        1-credit discovery bid value a three-unit run at 1 there and at 200
+        here. Returns ``None`` when the resting bids cannot absorb
+        ``quantity`` at all. Same bounded partial selection as the depth
+        price.
+        """
+        if quantity <= 0:
+            return None
+
+        levels = self._bid_levels_cache.get(commodity_type)
+        if levels is None:
+            levels = [
+                (o.price, o.quantity)
+                for o in heapq.nlargest(
+                    quantity,
+                    (
+                        o
+                        for o in self.buy_orders.get(commodity_type, ())
+                        if not o.cancelled
+                    ),
+                    key=_order_price,
+                )
+            ]
+
+        remaining = quantity
+        revenue = 0.0
+        for price, level_quantity in levels:
+            take = min(level_quantity, remaining)
+            revenue += min(float(price), price_clip) * take
+            remaining -= take
+            if remaining <= 0:
+                return revenue / quantity
+        return None
+
     def get_30_day_average_price(self, commodity_type: "CommodityDefinition") -> float:
         """Mean per-turn price over the last 30 turns; 10.0 with no history."""
         cached = self._avg30_price_cache.get(commodity_type)

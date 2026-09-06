@@ -575,8 +575,13 @@ class IndustrialistBrain(ActorBrain):
 
         1. Liquid good, one whose recent turnover already exceeds this run's
            output: the top bid is backed by flow, and is used as is.
-        2. Thin good: value at the bid level deep enough to absorb the run.
-           A lone probe sits above that level and is ignored.
+        2. Thin good: the mean fill price of sweeping the book for the run,
+           with each level clipped at the higher of the level that absorbs
+           the run and ``NEVER_TRADED_VALUE_CAP`` over make cost. A lone
+           discovery probe far above cost is clipped to the real demand
+           under it; two real bids from a downstream producer over a
+           1-credit floor are not thrown away, which valuing at the last
+           level hit did (rare earth scored -273 under a live 321 bid).
         3. Thin good with a book too shallow to absorb a run at all: recent
            traded price. It sells, just not this much right now.
         4. Never traded: the only demand signal is a buyer's resting
@@ -599,7 +604,14 @@ class IndustrialistBrain(ActorBrain):
 
         depth_price = market.get_bid_price_at_depth(commodity, horizon)
         if depth_price is not None:
-            return float(depth_price)
+            imputed = self._imputed_unit_cost(
+                actor, market, commodity, 0, frozenset(), memo, make_only=True
+            )
+            clip = float(depth_price)
+            if not math.isinf(imputed):
+                clip = max(clip, imputed * NEVER_TRADED_VALUE_CAP)
+            sweep_price = market.get_bid_sweep_average(commodity, horizon, clip)
+            return float(depth_price) if sweep_price is None else sweep_price
 
         if market.has_price_signal(commodity):
             return market.get_30_day_average_price(commodity)
