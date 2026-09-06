@@ -27,8 +27,19 @@ The WTP ceiling and phantom-bid entry are fixed (`FoodDrive.security`,
   the tier is never reached. Give ships a standing supplies buffer.
 - nova_fuel clears at 58-287 for ships while they resell at ~50. Probe the
   refiner side: is the t50-150 spike a supply gap?
-- Tier 3 goods (electronics, computers, ship parts, prefab housing,
-  advanced medicine) still barely appear by turn 600.
+- Prosperity (post 2026-09-06 surplus money discount; see the decision
+  log): processed food, quality clothing, prefab housing, and luxury goods
+  trade; advanced medicine (coverage ~0.03) and computers (~0.01) do not.
+  Electronics is 55-85% of their cost and is imputed at 1.6-2.5x its own
+  thin ask. Rare-earth miners never enter because a miner scores ore at
+  the ore's own thin price, never the refiner's netback
+  (`notebooks/rare_earth_chain_probe.py`); a netback output valuation for
+  raw materials is the next lever. Shelter need lost ~0.04 health to
+  prefab makers absorbing building materials on wood-poor planets
+  (`notebooks/substitute_bound_probe.py`); a 9x substitute bound did not
+  fix it, supply on wood-poor planets is the question. Processed-food
+  coverage fell 0.45 -> 0.20 under its 3x food bound.
+- Prosperity UI tiers (phase 3 of `docs/prosperity-design.md`) not started.
 
 ## Dev-loop improvements (from the retired roadmap)
 

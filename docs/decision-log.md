@@ -4,6 +4,63 @@ Append-only record of closed decisions, postmortems, and landed campaigns.
 Newest first. Open work lives in `TODO.md`; current reference docs live
 alongside this file.
 
+## 2026-09-06 - Prosperity demand: surplus money discount, substitute bound on processed food
+
+Four of six prosperity goods never traded. The probe
+(`notebooks/prosperity_blockers_probe.py`) put the cause on the demand
+side: prosperity willingness-to-pay was welfare-bound at about four times
+the food price (~43 credits) for every actor however rich, because the
+food-security floor on lambda is fixed and the prosperity stake (0.1) is
+half the food stake (0.2). Prefab housing, luxury goods, advanced medicine,
+and computers cost 66-285 to make. Gated actors held a median 920 credits.
+
+Decision: phase 4 of `docs/prosperity-design.md`. Prosperity drives price
+with lambda scaled by `SURPLUS_REFERENCE_DAYS / affordable_days` beyond 30
+days of food money, floored at 0.1 (`ActorBrain._surplus_money_discount`,
+f17e74a). Need drives keep the undiscounted lambda. Posted bids stay bounded
+by the reference price under scarcity pressure, so the discount raises the
+ceiling, not the opening bid.
+
+That moved staple food into processing: rich actors bid processed food up
+to ~139, its makers netback-bid food at ~38 against consumers capped at
+their own make cost (~17), and missed meals rose 65%, concentrated on
+biomass-poor planets where an actor cannot cook its way out
+(`notebooks/missed_meal_probe.py`). Two consumer-side fixes were neutral
+and were dropped: the industrialist food restock trigger 2 -> 4, and a
+1.5x lead-time premium on the make-cost cap when no producing recipe is
+executable. The price level was the problem, so processed food, a
+nutritional substitute made from food, is bounded at 3x the food price
+(`ProsperityCategory.bound_commodity_id`, cd76cf7). The same bound on
+prefab housing at 9x building materials was neutral on shelter health and
+only cut prefab coverage, so shelter carries no bound. A clipped bid-sweep
+valuation for thin goods (b0cb7dd) landed as a correction, neutral on
+every KPI.
+
+A/B, 12 planets, 450 turns, cd76cf7 vs 1620630 (4 reps):
+
+| kpi | before | after | verdict |
+|-----|--------|-------|---------|
+| prosperity.index_mean | 0.146 ± 0.012 | 0.193 ± 0.017 | IMPROVE |
+| prosperity.coverage.shelter | 0 | 0.244 ± 0.042 | IMPROVE |
+| prosperity.coverage.luxury | 0 | 0.162 ± 0.010 | IMPROVE |
+| prosperity.coverage.health | 0 | 0.026 ± 0.003 | IMPROVE |
+| prosperity.coverage.computing | 0 | 0.008 ± 0.004 | IMPROVE |
+| prosperity.coverage.food | 0.453 ± 0.025 | 0.204 ± 0.029 | REGRESS |
+| prosperity.coverage.clothing | 0.426 ± 0.094 | 0.512 ± 0.067 | neutral |
+| prosperity.gate_pass_share | 0.697 ± 0.038 | 0.617 ± 0.089 | neutral |
+| drives.food.mean_health | 0.940 ± 0.015 | 0.916 ± 0.028 | neutral |
+| drives.clothing.mean_health | 0.944 ± 0.022 | 0.907 ± 0.069 | neutral |
+| drives.shelter.mean_health | 0.975 ± 0.009 | 0.964 ± 0.018 | neutral |
+| drives.health.mean_health | 0.845 ± 0.029 | 0.841 ± 0.045 | neutral |
+| money.mean | 1500 ± 70 | 1230 ± 97 | |
+
+Open: shelter need lost ~0.04 health to prefab makers absorbing building
+materials on wood-poor planets (`notebooks/substitute_bound_probe.py`);
+advanced medicine and computers still cost 2-4x what anyone bids,
+electronics being 55-85% of their cost; rare-earth miners never enter
+because the ore's own thin price, not the refiner's netback, is what a
+miner scores against (`notebooks/rare_earth_chain_probe.py`).
+
 ## 2026-09-06 - Recipe inputs bid at netback value, not their own history
 
 An industrialist priced each input off that input's own market: the
