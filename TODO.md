@@ -39,6 +39,11 @@ The WTP ceiling and phantom-bid entry are fixed (`FoodDrive.security`,
   (`notebooks/substitute_bound_probe.py`); a 9x substitute bound did not
   fix it, supply on wood-poor planets is the question. Processed-food
   coverage fell 0.45 -> 0.20 under its 3x food bound.
+- Revisit the processed-food substitute bound (`PROCESSED_FOOD_MAX_FOOD_MULTIPLE`
+  in `core/drives/prosperity_drive.py`): a flat 3x-food-price cap on the bid
+  stopped processed-food makers from bidding staple food away from hungry
+  consumers, but it also cut processed-food coverage 0.45 -> 0.20. User
+  wants a different mechanism than a hardcoded multiple; not yet designed.
 - Prosperity UI tiers (phase 3 of `docs/prosperity-design.md`) not started.
 
 ## Dev-loop improvements (from the retired roadmap)
