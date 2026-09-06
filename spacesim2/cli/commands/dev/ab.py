@@ -61,8 +61,8 @@ class Kpi:
     direction: Direction
 
 
-# Trade KPIs the hand-built harness tracked, plus money. Drive KPIs are added
-# per batch from the drive names the summaries actually contain.
+# Trade KPIs the hand-built harness tracked, money, and the prosperity block.
+# Drive KPIs are added per batch from the drive names the summaries contain.
 DEFAULT_KPIS: tuple[Kpi, ...] = (
     Kpi("verdict.status", Direction.UNKNOWN),
     Kpi("money.mean", Direction.UNKNOWN),
@@ -72,6 +72,14 @@ DEFAULT_KPIS: tuple[Kpi, ...] = (
     Kpi("trade.ship_delivered_total", Direction.HIGHER),
     Kpi("trade.fuel_ask_planets", Direction.HIGHER),
     Kpi("trade.fuel_sold_by_service_window", Direction.HIGHER),
+    Kpi("prosperity.index_mean", Direction.HIGHER),
+    Kpi("prosperity.gate_pass_share", Direction.HIGHER),
+    Kpi("prosperity.coverage.food", Direction.HIGHER),
+    Kpi("prosperity.coverage.clothing", Direction.HIGHER),
+    Kpi("prosperity.coverage.shelter", Direction.HIGHER),
+    Kpi("prosperity.coverage.health", Direction.HIGHER),
+    Kpi("prosperity.coverage.luxury", Direction.HIGHER),
+    Kpi("prosperity.coverage.computing", Direction.HIGHER),
 )
 
 # Directions for the per-drive keys under ``drives.<name>``.
