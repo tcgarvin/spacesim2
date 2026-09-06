@@ -135,6 +135,8 @@ def wtp_terms(brain: Any, actor: Any, market: Any, drive: Any, commodity: Any):
     """Return (wtp, welfare_wtp, replacement_cap) for one drive material."""
     cache = BrainCache()
     lam = brain._value_of_money(actor, market, cache)
+    if not drive.WELLBEING:
+        lam *= brain._surplus_money_discount(actor, market, cache)
     if lam <= 0:
         return 0, 0.0, None
     welfare = drive.marginal_welfare() / lam
