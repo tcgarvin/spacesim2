@@ -6,6 +6,7 @@ it at a rate scaled by the actor's taste for the category. Design and
 rationale in ``docs/prosperity-design.md``.
 """
 
+import math
 import random
 from dataclasses import dataclass
 from typing import Dict, List, Mapping
@@ -56,10 +57,22 @@ class ProsperityCategory:
     commodity_id: str
     base_event_prob: float  # consumption events per turn at taste 1.0
     base_target_units: int  # stock kept on hand at taste 1.0
+    # Ceiling on the bid as a multiple of the basic food price. Processed
+    # food is a nutritional substitute for food and is made from it, so a
+    # bid far above the food price pulls staple food into processing and
+    # starves the planet's poor. inf means no substitute bound.
+    max_food_price_multiple: float = math.inf
 
+
+# Processed food costs about 2.2x food to make (2 food, 1 refined chemical,
+# labor, per 2 units), so 3x leaves an entry margin without letting the
+# surplus money discount bid it to ten times the staple.
+PROCESSED_FOOD_MAX_FOOD_MULTIPLE = 3.0
 
 PROSPERITY_CATEGORIES: tuple[ProsperityCategory, ...] = (
-    ProsperityCategory("food", "processed_food", 1.0 / 3.0, 3),
+    ProsperityCategory(
+        "food", "processed_food", 1.0 / 3.0, 3, PROCESSED_FOOD_MAX_FOOD_MULTIPLE
+    ),
     ProsperityCategory("clothing", "quality_clothing", 1.0 / 60.0, 2),
     ProsperityCategory("shelter", "prefab_housing", 1.0 / 120.0, 2),
     ProsperityCategory("health", "advanced_medicine", 1.0 / 90.0, 1),
@@ -151,6 +164,9 @@ class ProsperityDrive(ActorDrive):
 
     def can_purchase(self, actor: Actor) -> bool:
         return needs_are_met(actor)
+
+    def max_numeraire_multiple(self) -> float:
+        return self.category.max_food_price_multiple
 
     def tick(self, actor: Actor) -> DriveMetrics:
         stock = actor.inventory.get_available_quantity(self.good)

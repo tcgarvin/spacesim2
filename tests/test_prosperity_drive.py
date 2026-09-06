@@ -18,6 +18,7 @@ from spacesim2.core.drives.prosperity_drive import (
     DEBT_MISS_PENALTY,
     GATE_MAX_DEBT,
     GATE_MIN_BUFFER,
+    PROCESSED_FOOD_MAX_FOOD_MULTIPLE,
     PROSPERITY_CATEGORIES,
     TASTE_BASE,
     TASTE_FAVORITE,
@@ -454,3 +455,45 @@ class TestSurplusMoneyDiscount:
         need_hi, want_hi = ceilings(int(price_food * PANTRY_MAX * 20))
         assert need_hi == need_lo
         assert want_hi >= want_lo * 4
+
+
+class TestSubstituteCap:
+    """Processed food bids are bounded by a multiple of the basic food price."""
+
+    @pytest.fixture(scope="class")
+    def sim(self) -> Simulation:
+        sim = Simulation()
+        sim.setup_simple(
+            num_planets=1, num_regular_actors=4, num_market_makers=1, num_ships=0
+        )
+        return sim
+
+    def test_only_food_category_has_a_bound(self):
+        bounded = [
+            c.name
+            for c in PROSPERITY_CATEGORIES
+            if math.isfinite(c.max_food_price_multiple)
+        ]
+        assert bounded == ["food"]
+
+    def test_processed_food_ceiling_is_capped_and_luxury_is_not(self, sim):
+        actor = next(a for a in sim.actors if a.actor_type == ActorType.REGULAR)
+        market = actor.planet.market
+        _satisfy_needs(actor)
+        price_food = actor.brain._numeraire_price(actor, market)
+        actor.money = int(price_food * PANTRY_MAX * 50)
+        lam = actor.brain._value_of_money(actor, market)
+        surplus_lam = lam * actor.brain._surplus_money_discount(actor, market)
+        by_name = {d.metrics.get_name(): d for d in actor.drives}
+        food_want = by_name["prosperity_food"]
+        luxury = by_name["prosperity_luxury"]
+        food_want.metrics.buffer = 0.0
+        luxury.metrics.buffer = 0.0
+        food_wtp = actor.brain._drive_willingness_to_pay(
+            actor, market, food_want, food_want.materials()[0], surplus_lam
+        )
+        luxury_wtp = actor.brain._drive_willingness_to_pay(
+            actor, market, luxury, luxury.materials()[0], surplus_lam
+        )
+        assert food_wtp <= math.ceil(PROCESSED_FOOD_MAX_FOOD_MULTIPLE * price_food)
+        assert luxury_wtp > food_wtp

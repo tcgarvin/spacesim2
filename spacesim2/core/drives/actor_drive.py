@@ -3,6 +3,7 @@
 Drives keep memory, so each instance is attached to one actor.
 """
 
+import math
 from dataclasses import dataclass
 from math import log1p
 from typing import List
@@ -72,6 +73,15 @@ class ActorDrive:
         met, so surplus is spent only after subsistence is secure.
         """
         return True
+
+    def max_numeraire_multiple(self) -> float:
+        """Ceiling on this drive's bid as a multiple of the food price.
+
+        Infinite by default. A drive whose good substitutes for the
+        numeraire bounds itself so its bids cannot pull the staple away
+        from actors who need it.
+        """
+        return math.inf
 
     def deprivation_stake(self) -> float:
         """Welfare value of one consumed unit of this drive's material.
