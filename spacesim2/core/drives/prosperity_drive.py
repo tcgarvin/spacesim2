@@ -59,7 +59,11 @@ class ProsperityCategory:
 
 
 PROSPERITY_CATEGORIES: tuple[ProsperityCategory, ...] = (
-    ProsperityCategory("food", "food", 1.0 / 3.0, 3),
+    # Hand-cooked food is made by the actor itself, four per labor-turn, so
+    # the category runs at the clothing rate: at 1/3 per turn it drew 79% of
+    # all process runs and the slow chains lost their labor (decision log,
+    # 2026-09-07).
+    ProsperityCategory("food", "food", 1.0 / 60.0, 2),
     ProsperityCategory("clothing", "quality_clothing", 1.0 / 60.0, 2),
     ProsperityCategory("shelter", "prefab_housing", 1.0 / 120.0, 2),
     ProsperityCategory("health", "advanced_medicine", 1.0 / 90.0, 1),

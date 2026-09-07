@@ -46,7 +46,7 @@ per category on every regular actor. Design in `docs/prosperity-design.md`.
 
 | Category | Good | Base event rate | Base target units |
 |----------|------|-----------------|-------------------|
-| food | `food` | 1/3 per turn | 3 |
+| food | `food` | 1/60 | 2 |
 | clothing | `quality_clothing` | 1/60 | 2 |
 | shelter | `prefab_housing` | 1/120 | 2 |
 | health | `advanced_medicine` | 1/90 | 1 |
