@@ -4,6 +4,99 @@ Append-only record of closed decisions, postmortems, and landed campaigns.
 Newest first. Open work lives in `TODO.md`; current reference docs live
 alongside this file.
 
+## 2026-09-07 - Food refresh: two tracks, facility upkeep, heavy machinery
+
+After 6e82e07 removed the free food from the skill multiplier, honest food
+cost more than a planet's whole labor: gather 4 biomass x attribute per
+turn and 4 biomass -> 2 food, against 1 food per actor per turn, is 0.5(1 +
+1/a) labor-turns per meal, 133% of labor at the median attribute 0.6. A
+300-turn 12-planet run on 6e82e07 verdicted FAIL with money mean 151 and
+health drive 0.00. The old equilibrium had run on the bug.
+
+Decision: two tracks with a chosen labor share, about 46% of labor for
+food at the median planet on the hand track and about 8% on the
+industrial track. Design page: the "Two-Track Food Chain" artifact.
+
+| Process | Requires | Inputs | Outputs | Labor |
+|---------|----------|--------|---------|-------|
+| gather_biomass | nothing | none | 8 biomass x a | 1 |
+| make_food | nothing | 4 biomass | 4 food | 1 |
+| farm_biomass | farm, simple_tools, upkeep heavy_machinery 0.01 | 1 chemicals | 64 biomass x a | 1 |
+| process_food | chemical_plant, upkeep heavy_machinery 0.01 | 40 biomass, 1 chemicals | 60 processed_food | 1 |
+| make_heavy_machinery | metalworking_facility, simple_tools | 5 common_metal | 1 heavy_machinery | 3 |
+| build_farm | simple_tools | 5 building materials, 1 heavy_machinery | farm | 5 |
+| build_chemical_plant | simple_tools | 5 building materials, 2 common_metal, 1 heavy_machinery | chemical_plant | 5 |
+
+Choices, and why:
+
+- Heavy machinery is consumed as facility upkeep, not carried as a tool.
+  A process may declare `upkeep: {commodity: probability}`; each run rolls
+  it, a hit consumes one unit, and a hit with none on hand fails the run
+  without side effects, as a missing tool does. Expected upkeep enters
+  recipe cost imputation and the replacement quote, and the industrialist
+  keeps one unit of each upkeep good. The expected cost equals a 1% tool
+  break; the difference is that machinery demand now recurs per facility,
+  and machinery at 175-260 credits is cargo worth hauling where processed
+  food at 2 credits is not.
+- The plant is a generic `chemical_plant` (no glass in the build), not a
+  food-specific facility; the chemistry lab stays separate.
+- Plain chemicals, not refined, feed the farm and the plant, so the staple
+  chain never waits on glass.
+- Chemicals-only gathering was rejected: one unit of chemicals costs 1.5
+  biomass plus half a labor-turn, and a 2x boost on hand gathering is a
+  loss below attribute 0.45.
+- Processed food is the staple `FoodDrive` eats and bids for; hand-cooked
+  food is its fallback and the prosperity food good (entry below).
+- Landed one layer at a time: 3ac8f3f, 912d065, a5e3755, 637e296, d4be82d,
+  afe82f8, each verified with pytest and a 300-turn 12-planet summary.
+
+Found on the way:
+
+- `ActorBrain._get_build_process_for_facility` is a hardcoded map; a
+  facility missing from it imputes an infinite recipe cost and is never
+  built. `test_every_required_facility_has_a_build_process` now guards it.
+- `dev ab` launched the baseline arm without a working directory, and the
+  sim loads `data/` relative to the current directory, so the before arm
+  ran old code against the working tree's YAML (fixed in c3e57ec). Every
+  earlier A/B whose change touched `data/` is suspect.
+- Inside a git worktree, `uv run ... spacesim2 run` resolves the package
+  through the editable install and executes the primary checkout's code;
+  measure on main after merging, or set `PYTHONPATH` to the worktree.
+- The flip's health and shelter regression was labor, not the numeraire:
+  the prosperity food category kept a factory rate (1/3 per turn, target 3)
+  on a good every actor cooks by hand, and food work took 79% of process
+  runs. Retuned to 1/60 and target 2 (afe82f8); the probe is
+  `notebooks/food_flip_numeraire_probe.py`.
+
+A/B, 12 planets, 300 turns, 3 reps, 6e82e07 vs afe82f8, with the fixed
+baseline launch:
+
+| kpi | before | after | verdict |
+|-----|--------|-------|---------|
+| verdict.status | FAIL,FAIL,FAIL | PASS,PASS,PASS | |
+| money.mean | 163 ± 7 | 794 ± 58 | |
+| drives.food.mean_health | 0.941 ± 0.014 | 0.999 ± 0.001 | IMPROVE |
+| drives.health.mean_health | 0.024 ± 0.027 | 0.680 ± 0.090 | IMPROVE |
+| drives.shelter.mean_health | 0.278 ± 0.003 | 0.905 ± 0.053 | IMPROVE |
+| drives.clothing.mean_health | 0.388 ± 0.015 | 0.950 ± 0.041 | IMPROVE |
+| prosperity.index_mean | 0 | 0.193 ± 0.006 | IMPROVE |
+| prosperity.gate_pass_share | 0.010 ± 0.011 | 0.579 ± 0.093 | IMPROVE |
+| prosperity.coverage.food | 0 | 0.896 ± 0.002 | IMPROVE |
+| trade.ship_delivered_total | 11 ± 15 | 0.3 ± 0.6 | neutral |
+
+Table in `tmp/ab_food_final/table.txt`. A single 600-turn run on 12
+planets shows the transition under way: 137 chemical plants and 162 farms,
+money mean 1715, prosperity index 0.214, processed food at 2.8 credits;
+the health drive at 0.25 (WARN) with medicine at 71 credits and common
+metal at 217, since each machinery unit takes five metal.
+
+Open, in `TODO.md`: the transition takes until well past turn 300 (plants
+on 2-5 of 12 planets at 300, most planets by 600), metal is the
+bottleneck once machinery demand arrives, a plant out-produces its planet
+and the surplus is not exported, and the numeraire anchored on the
+cheapest food will cut every need drive's credit WTP as the staple settles
+near 2-3 credits.
+
 ## 2026-09-07 - Food flip: processed food is the staple, hand-cooked food the premium
 
 Layer 3 of the food-system refresh. Layers 1 and 2 made hand food cheap

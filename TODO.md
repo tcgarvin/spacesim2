@@ -39,18 +39,23 @@ The WTP ceiling and phantom-bid entry are fixed (`FoodDrive.security`,
   (`notebooks/substitute_bound_probe.py`); a 9x substitute bound did not
   fix it, supply on wood-poor planets is the question. Prosperity food
   coverage is now coverage of hand-cooked `food`, the premium good.
-- The food/processed-food drive flip has landed (see the decision log):
-  `processed_food` is the staple `FoodDrive` eats and bids for, hand-cooked
-  `food` is the premium good of the prosperity food category. The
-  substitute-bound question is closed; the flip was the mechanism. Two
-  follow-ups. First, the prosperity food category now consumes hand-cooked
-  food at 1/3 per turn on top of the daily staple meal, and the isolated
-  A/B charges that to the slower chains: health -0.37, shelter -0.09,
-  clothing -0.06, gate pass share -0.36, all REGRESS at 3 reps. Re-tune the
-  category's event rate and target units, which were set for a factory-made
-  good. Second, the staple glut has not cleared: 50,777 units at turn 300,
-  concentrated on plant planets, staple at 2.1 credits against hand food at
-  5.8.
+- Food refresh (2026-09-07, see the decision log): the industrial track
+  exists but barely runs at 300 turns on 12 planets. `process_food` is
+  0.1-0.3% of process runs and chemical plants stand on 2-5 of 12 planets;
+  heavy machinery trades at 175-260 credits, so a plant is a 200+ credit
+  build plus upkeep. Hand food carries the staple almost everywhere. Open:
+  (1) the transition is slow, not blocked: a 600-turn run had 137 plants
+  and 162 farms on 12 planets, but common metal reached 217 credits and
+  the health drive fell to 0.25 (WARN), so metal supply under machinery
+  demand and the medicine chain are the next bottlenecks; 100 planets
+  unchecked; (2) a plant out-produces its planet (one held
+  16,990 processed food at turn 300) and the surplus is not exported, since
+  processed food at ~2 credits is not worth hauling; (3) latent numeraire
+  risk: `_cheapest_effective_price` anchors lambda on the cheapest food, so
+  when plants become common and the staple reaches ~2 credits every need
+  drive's credit WTP falls in proportion while seller floors stay
+  wage-denominated. Anchoring lambda on the hand-food make cost is the
+  candidate fix; re-measure once `process_food` has real volume.
 - Prosperity UI tiers (phase 3 of `docs/prosperity-design.md`) not started.
 
 ## Dev-loop improvements (from the retired roadmap)
