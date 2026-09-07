@@ -47,6 +47,7 @@ a spiky reference across 134 orders, not a price the fleet pays.
 
 12 planets, 200 turns: PASS. Fuel purchase price did not move; the win is
 that ships keep their tanks and their money.
+
 ## 2026-09-07 - Staple demand bid: bid for a drive material nobody sells here
 
 Importer planets never posted a `processed_food` bid, so 1.9M units of
