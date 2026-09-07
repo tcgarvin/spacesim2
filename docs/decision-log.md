@@ -37,8 +37,27 @@ Three changes in `core/ship.py`:
 12-planet 200-turn A/B, 3 reps per arm (`tmp/ab_tank12`): every drive,
 money and prosperity KPI neutral; departures 24 -> 17 and idle ships 4 ->
 5.7 with delivered units flat (86 -> 88), consistent with fewer, fuller
-trips. Fuel geography does not bind at 12 planets; the 100-planet check is
-the next entry.
+trips. Fuel geography does not bind at 12 planets.
+
+100 planets, one 400-turn run each, before (`run_20260907_142956`, turns
+0-399) and after (`run_20260907_163218`):
+
+| KPI (last 50 turns) | before | after |
+|---|---|---|
+| ship-delivered units | 131 | 371 |
+| departures | 51 | 231 |
+| stranded ships | 41 | 27 |
+| idle ships | 65 | 32 |
+| cargo gross margin, turns 0-399 | 223k | 326k |
+| fleet fuel spend, turns 0-399 | 599k | 727k |
+| spike premium over reference, turns 0-399 | 237k | 362k |
+
+Mobility and trade roughly tripled and the rescue-bid channel shrank
+(ship-to-ship spiked fills 118k -> 51k credits, 15x -> 5.9x reference), but
+total spiked fuel spend rose with the trip count: industrialist asks at
+about 4x reference sold ships 1271 units for 347k. The tank lets a ship
+skip a spiked market; nothing yet makes it do so. The price discipline on
+the survival top-up and the plan fuel step is the open item in `TODO.md`.
 
 ## 2026-09-07 - Fleet fuel sell-off: value the tank, not the cheapest ask
 
