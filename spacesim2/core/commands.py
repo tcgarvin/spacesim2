@@ -42,8 +42,9 @@ class ProcessCommand(EconomicCommand):
     def execute(self, actor: "Actor") -> bool:
         """Run the process; True on success.
 
-        Fails without side effects when requirements are missing or the skill
-        check fails. Tools may break after a successful run.
+        Fails without side effects when requirements are missing, an upkeep
+        draw hits a good the actor does not hold, or the skill check fails.
+        Tools may break after a successful run.
         """
         process = actor.sim.process_registry.get_process(self.process_id)
         if not process:
@@ -59,6 +60,18 @@ class ProcessCommand(EconomicCommand):
 
         for facility in process.facilities_required:
             if not actor.inventory.has_quantity(facility, 1):
+                return False
+
+        # Facility upkeep: each entry is rolled once per run. A hit demands
+        # one unit on hand, and a missing unit fails the run the same way a
+        # missing tool does, before anything is consumed.
+        upkeep_hits = [
+            commodity
+            for commodity, probability in process.upkeep.items()
+            if random.random() < probability
+        ]
+        for commodity in upkeep_hits:
+            if not actor.inventory.has_quantity(commodity, 1):
                 return False
 
         success = True
@@ -119,6 +132,14 @@ class ProcessCommand(EconomicCommand):
                     f"{commodity.id} after the availability check passed"
                 )
 
+        # Upkeep is a flat per-run draw, never scaled by the skill multiplier.
+        for commodity in upkeep_hits:
+            if not actor.inventory.remove_commodity(commodity, 1):
+                raise RuntimeError(
+                    f"Upkeep {commodity} vanished mid-run of process "
+                    f"{process.id!r} for actor {actor.name}"
+                )
+
         for commodity, quantity in process.outputs.items():
             output_quantity = max(1, round(quantity * multiplier * planet_multiplier))
             actor.inventory.add_commodity(commodity, output_quantity)
@@ -148,6 +169,10 @@ class ProcessCommand(EconomicCommand):
             modifiers.append(f"skill ×{multiplier}")
         if planet_multiplier < 1.0:
             modifiers.append(f"planet {planet_multiplier:.0%}")
+        if upkeep_hits:
+            modifiers.append(
+                f"upkeep {', '.join(str(commodity) for commodity in upkeep_hits)}"
+            )
         modifier_text = f" ({', '.join(modifiers)})" if modifiers else ""
         actor.last_action = f"Executed process: {process.name}{modifier_text}"
         return True

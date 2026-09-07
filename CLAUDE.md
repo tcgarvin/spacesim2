@@ -250,6 +250,27 @@ builds the facilities and acquires the tools its chosen recipe needs.
 When changing requirements, use the `commodity-process-design` skill and keep
 the bootstrap path viable.
 
+#### Upkeep
+
+A process may also carry an `upkeep` mapping of commodity id to a per-run
+probability:
+
+```yaml
+upkeep:
+  heavy_machinery: 0.01
+```
+
+Each entry is rolled once per run, after the input, tool, and facility checks
+and before anything is consumed. A hit consumes 1 unit of that commodity; if
+the actor does not hold it, the run fails with no side effects, the same way a
+missing tool fails. The skill multiplier never doubles an upkeep draw.
+
+Upkeep is not a precondition, so `can_execute_process` ignores it. Recipe
+valuation charges the expected cost, probability times the imputed unit cost,
+in both `_impute_recipe_cost` and the replacement-cost path. The industrialist
+keeps 1 unit of each upkeep good its chosen recipe needs and does not sell that
+unit off.
+
 ### Drives (Needs)
 
 Drives live in `core/drives/` and inherit from `ActorDrive`.

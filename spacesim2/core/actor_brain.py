@@ -514,7 +514,8 @@ class ActorBrain:
         Considers only processes the actor could run now: required
         facilities must already be owned, since a lump-sum facility build is
         not a substitute for one purchase. Missing tools are charged an
-        amortized share of their market price. Inputs are valued at local
+        amortized share of their market price, and upkeep goods their
+        expected per-run draw. Inputs are valued at local
         ask or average prices. Labor is one turn at the government wage
         scaled by expected skill throughput, and yield is discounted by
         planet resource availability. Skill and planet attributes make this
@@ -578,8 +579,9 @@ class ActorBrain:
         """Quote-derived, actor-independent halves of ``_replacement_cost``.
 
         Returns ``(base_input_cost, tool_amortizations)`` for one process:
-        the summed quoted cost of its inputs, ask or else rolling average,
-        and the amortized quoted price of every required tool in
+        the summed quoted cost of its inputs plus its expected upkeep draw,
+        ask or else rolling average, and the amortized quoted price of every
+        required tool in
         ``tools_required`` order. Ownership is inventory-dependent and must
         not bake into this per-turn cache, so all tools are included.
         Callers add the amortizations for tools the actor lacks, which
@@ -601,6 +603,16 @@ class ActorBrain:
                 else _get_avg_price(market, input_commodity, cache)
             )
             base_cost += price * qty
+        # Expected upkeep draw for one run. It does not depend on what the
+        # actor owns, so it belongs in the actor-independent half.
+        for upkeep_commodity, probability in process.upkeep.items():
+            _, ask = _get_bid_ask(market, upkeep_commodity, cache)
+            price = (
+                ask
+                if ask is not None
+                else _get_avg_price(market, upkeep_commodity, cache)
+            )
+            base_cost += price * probability
         tool_amortizations: List[Tuple["CommodityDefinition", float]] = []
         for tool in process.tools_required:
             _, ask = _get_bid_ask(market, tool, cache)
@@ -785,8 +797,8 @@ class ActorBrain:
         """Total imputed cost to execute ``process`` once.
 
         A turn of labor at the government wage, recursively valued inputs,
-        and amortized tool and facility costs. ``math.inf`` if any component
-        cannot be valued.
+        the expected upkeep draw, and amortized tool and facility costs.
+        ``math.inf`` if any component cannot be valued.
         """
         total = float(GOVERNMENT_WAGE)
 
@@ -797,6 +809,17 @@ class ActorBrain:
             if math.isinf(unit):
                 return math.inf
             total += unit * quantity
+
+        # Facility upkeep is consumed with a fixed probability per run, so one
+        # run costs the probability-weighted unit cost whether or not the good
+        # is on hand.
+        for commodity, probability in process.upkeep.items():
+            unit = self._imputed_unit_cost(
+                actor, market, commodity, depth + 1, visiting, memo
+            )
+            if math.isinf(unit):
+                return math.inf
+            total += unit * probability
 
         # Tools the actor lacks must be acquired; amortize over their lifespan.
         for tool in process.tools_required:

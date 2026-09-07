@@ -122,6 +122,12 @@ NON_DRIVE_KEEP_LEVELS = {
     "biomass": 4,  # one make_food batch; see ColonistBrain
     "fiber": 4,  # one make_clothing batch
 }
+# Units of each required tool the industrialist keeps on hand, so a break
+# does not idle the recipe for a turn.
+TOOL_BUFFER = 2
+# Units of each upkeep good kept on hand. One is enough: at most one unit per
+# upkeep entry is drawn per run, and the stock is replaced the same turn.
+UPKEEP_BUFFER = 1
 
 
 class IndustrialistBrain(ActorBrain):
@@ -855,6 +861,7 @@ class IndustrialistBrain(ActorBrain):
         market: "Market",
         commodity: "CommodityDefinition",
         cache: Optional[BrainCache] = None,
+        keep: int = 0,
     ) -> List[MarketCommand]:
         """Sell the surplus of ``commodity``, floored at replacement cost.
 
@@ -864,15 +871,61 @@ class IndustrialistBrain(ActorBrain):
         ``_drive_buy_commands`` bid for food it was short of, and the two
         orders crossed against each other.
 
+        Holds ``keep`` units back, which is how an upkeep good the chosen
+        recipe consumes stays in stock even when the recipe also produces it.
         Skips non-transportable goods; facilities are not tradable.
         """
         if not commodity.transportable:
             return []
         available = actor.inventory.get_available_quantity(commodity)
-        keep = self._keep_levels_by_commodity(actor).get(commodity.id, 0)
+        keep = max(keep, self._keep_levels_by_commodity(actor).get(commodity.id, 0))
+        if available - keep <= 0:
+            return []
         return self._sell_at_or_above_cost(
             actor, market, commodity, available - keep, cache
         )
+
+    def _restock_command(
+        self,
+        actor: "Actor",
+        market: "Market",
+        commodity: "CommodityDefinition",
+        buffer_level: int,
+        willingness_to_pay: int,
+    ) -> List[MarketCommand]:
+        """Top ``commodity`` back up to ``buffer_level`` units.
+
+        Lifts the cheapest resting ask when it is within ``willingness_to_pay``,
+        otherwise rests a bid at that price so a seller can find us. Used for
+        the tools and upkeep goods the chosen recipe consumes.
+        """
+        quantity_to_buy = buffer_level - actor.inventory.get_quantity(commodity)
+        if quantity_to_buy <= 0:
+            return []
+
+        market_sell_orders = sorted(
+            [
+                o
+                for o in market.sell_orders.get(commodity, [])
+                if o.actor != actor and not o.cancelled
+            ],
+            key=lambda o: (o.price, o.timestamp),
+        )
+
+        if market_sell_orders:
+            best_sell_order = market_sell_orders[0]
+            if best_sell_order.price > willingness_to_pay:
+                return []
+            price = best_sell_order.price
+        elif willingness_to_pay > 0:
+            price = willingness_to_pay
+        else:
+            return []
+
+        max_affordable = min(quantity_to_buy, actor.money // price)
+        if max_affordable <= 0:
+            return []
+        return [PlaceBuyOrderCommand(commodity, max_affordable, price)]
 
     def _get_recipe_trading_commands(
         self, actor: "Actor", market: "Market", cache: Optional[BrainCache] = None
@@ -892,46 +945,25 @@ class IndustrialistBrain(ActorBrain):
         )
 
         # Keep a buffer of 2 of each required tool.
-        TOOL_BUFFER = 2
         for tool in process.tools_required:
-            current_quantity = actor.inventory.get_quantity(tool)
-            if current_quantity < TOOL_BUFFER:
-                quantity_to_buy = TOOL_BUFFER - current_quantity
-
-                market_sell_orders = sorted(
-                    [
-                        o
-                        for o in market.sell_orders.get(tool, [])
-                        if o.actor != actor and not o.cancelled
-                    ],
-                    key=lambda o: (o.price, o.timestamp),
+            commands.extend(
+                self._restock_command(
+                    actor, market, tool, TOOL_BUFFER, tool_willingness_to_pay
                 )
+            )
 
-                if market_sell_orders:
-                    best_sell_order = market_sell_orders[0]
-                    if best_sell_order.price <= tool_willingness_to_pay:
-                        max_affordable = min(
-                            quantity_to_buy, actor.money // best_sell_order.price
-                        )
-
-                        if max_affordable > 0:
-                            commands.append(
-                                PlaceBuyOrderCommand(
-                                    tool, max_affordable, best_sell_order.price
-                                )
-                            )
-                elif tool_willingness_to_pay > 0:
-                    # No sellers: rest a bid at willingness to pay.
-                    max_affordable = min(
-                        quantity_to_buy, actor.money // tool_willingness_to_pay
-                    )
-
-                    if max_affordable > 0:
-                        commands.append(
-                            PlaceBuyOrderCommand(
-                                tool, max_affordable, tool_willingness_to_pay
-                            )
-                        )
+        # Keep one unit of each upkeep good on hand. Upkeep hits are random,
+        # and a run that draws one without the unit in stock is wasted.
+        for upkeep_commodity in process.upkeep:
+            commands.extend(
+                self._restock_command(
+                    actor,
+                    market,
+                    upkeep_commodity,
+                    UPKEEP_BUFFER,
+                    tool_willingness_to_pay,
+                )
+            )
 
         # Netback inputs to the recipe's own economics, recomputed every turn
         # from live market state. Both terms are one run of the recipe.
@@ -1015,6 +1047,7 @@ class IndustrialistBrain(ActorBrain):
                 )
 
         for commodity, _ in process.outputs.items():
-            commands.extend(self._sell_command(actor, market, commodity, cache))
+            keep = UPKEEP_BUFFER if commodity in process.upkeep else 0
+            commands.extend(self._sell_command(actor, market, commodity, cache, keep))
 
         return commands

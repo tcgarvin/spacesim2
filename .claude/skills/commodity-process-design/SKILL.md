@@ -44,6 +44,8 @@ How to edit the simulation's commodities and production processes.
   resource_attribute:        # Optional: for gathering/mining processes only
     commodity: attribute_id  # Planet attribute to check (see CLAUDE.md)
     effect: output|success   # output=reduced yield, success=may fail
+  upkeep:                    # Optional: per-run chance of consuming 1 unit
+    commodity_id: 0.01       # Probability in (0, 1]
 ```
 
 ## Constraints
@@ -55,6 +57,10 @@ How to edit the simulation's commodities and production processes.
   planet resource needs an attribute on `PlanetAttributes` in
   `core/planet_attributes.py` and a `resource_attribute` field on the
   process.
+- **Upkeep.** An `upkeep` entry is rolled once per run. A hit needs 1 unit
+  on hand or the run fails with no side effects, so upkeep goods must be
+  buyable on the planets that run the process. Keep the probability low
+  enough that the expected cost per run stays below the recipe's margin.
 - **Drives.** Changing the commodity a drive consumes means updating that
   drive class in `core/drives/`.
 

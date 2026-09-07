@@ -59,6 +59,7 @@ def _mining_process(ore: Mock, effect: str, out_qty: int = 1) -> Mock:
     process.outputs = {ore: out_qty}
     process.tools_required = []
     process.facilities_required = []
+    process.upkeep = {}
     process.resource_attribute = ResourceAttribute(
         commodity="nova_fuel_ore", effect=effect
     )
