@@ -152,6 +152,11 @@
   transportable: true
   description: High-quality tools for advanced manufacturing requiring fine tolerances.
 
+- id: heavy_machinery
+  name: Heavy Machinery
+  transportable: true
+  description: Industrial machinery that keeps farms and plants running; consumed as upkeep.
+
 # --- Tier 2 Consumer Goods ---
 
 - id: processed_food

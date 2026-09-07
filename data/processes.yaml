@@ -130,6 +130,22 @@
     - simple_manufacturing
   description: Forges simple tools from refined metal using metalworking equipment.
 
+- id: make_heavy_machinery
+  name: Make Heavy Machinery
+  inputs:
+    common_metal: 5
+  outputs:
+    heavy_machinery: 1
+  tools_required:
+    - simple_tools
+  facilities_required:
+    - metalworking_facility
+  labor: 3
+  relevant_skills:
+    - advanced_manufacturing
+    - simple_manufacturing
+  description: Machines heavy industrial equipment from refined metal.
+
 - id: make_simple_tools_wood
   name: Make Simple Tools (Wood)
   inputs:
@@ -331,6 +347,7 @@
   inputs:
     simple_building_materials: 5
     common_metal: 2
+    heavy_machinery: 1
   outputs:
     chemical_plant: 1
   tools_required:
@@ -497,6 +514,8 @@
     - culinary
     - chemistry
   description: Bulk conversion of biomass into preserved processed food.
+  upkeep:
+    heavy_machinery: 0.01
 
 - id: make_quality_clothing
   name: Make Quality Clothing

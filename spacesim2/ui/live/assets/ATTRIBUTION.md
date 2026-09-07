@@ -18,6 +18,7 @@ Generated offline by tools/assetgen. Provider + prompt per asset:
 - `good/fiber.png` — pixellab: A loose bundle of pale cream-coloured raw plant fibers, soft and stringy like combed flax.
 - `good/food.png` — pixellab: A fresh ration on a small tray: a round brown bread loaf beside a red fruit, simple and wholesome.
 - `good/glass.png` — pixellab: A single upright rectangular pane of pale translucent blue-white glass, thin and flat, with a bright diagonal white glare streak across it.
+- `good/heavy_machinery.png` — copy of `good/precision_tools.png`; no separate art yet.
 - `good/luxury_goods.png` — pixellab: A jewelled golden ornament set with a large sparkling gemstone, resting in an open velvet case.
 - `good/medicine.png` — pixellab: A white pill bottle with a red cross on the label beside a small syringe.
 - `good/metalworking_facility.png` — pixellab: A heavy black iron anvil beneath a mechanical press arm, with a few orange sparks flying off.

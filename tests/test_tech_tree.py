@@ -179,12 +179,17 @@ class TestFullTechTree:
 
         Total inputs across the 5 builds:
           building_materials: 25, 5 each
-          common_metal: 9, as 2 + 3 + 2 + 2
+          common_metal: 9, as 2 + 3 + 2 + 2, plus 5 for the chemical plant's
+            heavy_machinery input, 14 total
           glass: 4, as 2 + 2, needing 12 silica
           chemicals: 2, for chemistry_lab
+
+        mine_common_metal_ore 100 -> refine_common_metal 25 nets 50 common_metal
+        (75 ore consumed), covering the 25 for building materials plus the 14
+        for facilities and machinery with margin.
         """
-        _run("mine_common_metal_ore", actor, 80)
-        _run("refine_common_metal", actor, 20)
+        _run("mine_common_metal_ore", actor, 100)
+        _run("refine_common_metal", actor, 25)
         _run("make_building_materials_metal", actor, 25)
 
         # make_glass uses 3 silica each.
@@ -207,6 +212,9 @@ class TestFullTechTree:
         assert _has("electronics_workshop", actor, sim), (
             "Should have built electronics workshop"
         )
+
+        _run("make_heavy_machinery", actor, 1)
+        assert _has("heavy_machinery", actor, sim), "Should have made heavy machinery"
 
         _run("build_chemical_plant", actor, 1)
         assert _has("chemical_plant", actor, sim), "Should have built chemical plant"
@@ -387,9 +395,30 @@ class TestProcessedFoodRecipe:
         build = sim.process_registry.get_process("build_chemical_plant")
         assert build is not None
         inputs = {c.id: q for c, q in build.inputs.items()}
-        assert inputs == {"simple_building_materials": 5, "common_metal": 2}
+        assert inputs == {
+            "simple_building_materials": 5,
+            "common_metal": 2,
+            "heavy_machinery": 1,
+        }
         assert [t.id for t in build.tools_required] == ["simple_tools"]
         assert build.facilities_required == []
+
+    def test_process_food_declares_heavy_machinery_upkeep(self):
+        sim = self._registry()
+        process = sim.process_registry.get_process("process_food")
+        assert process is not None
+        upkeep = {c.id: p for c, p in process.upkeep.items()}
+        assert upkeep == {"heavy_machinery": 0.01}
+
+    def test_heavy_machinery_is_reachable_from_the_metal_bootstrap(self):
+        """make_heavy_machinery needs only smelting + metalworking, no chemical plant."""
+        sim = self._registry()
+        make = sim.process_registry.get_process("make_heavy_machinery")
+        assert make is not None
+        inputs = {c.id: q for c, q in make.inputs.items()}
+        assert inputs == {"common_metal": 5}
+        assert [t.id for t in make.tools_required] == ["simple_tools"]
+        assert [f.id for f in make.facilities_required] == ["metalworking_facility"]
 
     def test_every_required_facility_has_a_build_process(self):
         """Brains reach a facility only through _get_build_process_for_facility."""

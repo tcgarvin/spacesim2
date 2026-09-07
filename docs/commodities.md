@@ -56,6 +56,11 @@ The tier-2 facilities are `textile_mill`, `chemistry_lab`, `chemical_plant`,
 `precision_forge` and `electronics_workshop`; each has a `build_*` process
 taking simple building materials and tier-1 inputs.
 
+`heavy_machinery` is a tier-1-to-2 industrial good, transportable and
+consumed, not a facility itself: `build_chemical_plant` takes it as a build
+input, and `process_food` draws on it as upkeep (a 0.01 per-run chance of
+consuming 1 unit; see "Upkeep" in CLAUDE.md).
+
 ## Adding commodities or processes
 
 Use the `commodity-process-design` skill. It covers the schemas, validation,
