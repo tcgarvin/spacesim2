@@ -100,10 +100,24 @@ class ProcessCommand(EconomicCommand):
                 # Low availability scales output down.
                 planet_multiplier = availability
 
+        # The skill multiplier buys labor, not materials: a doubled run
+        # consumes doubled inputs, so it needs them on hand. Otherwise the
+        # run proceeds at single scale. Removal after that check cannot
+        # fail; a False here would mean output created from nothing.
+        if multiplier > 1 and not all(
+            actor.inventory.has_quantity(commodity, quantity * multiplier)
+            for commodity, quantity in process.inputs.items()
+        ):
+            multiplier = 1
+
         # Inputs scale with the skill multiplier; outputs with the skill
         # multiplier (1 or 2) and the planet multiplier (0-1), min 1 unit.
         for commodity, quantity in process.inputs.items():
-            actor.inventory.remove_commodity(commodity, quantity * multiplier)
+            if not actor.inventory.remove_commodity(commodity, quantity * multiplier):
+                raise RuntimeError(
+                    f"{process.id}: could not consume {quantity * multiplier} "
+                    f"{commodity.id} after the availability check passed"
+                )
 
         for commodity, quantity in process.outputs.items():
             output_quantity = max(1, round(quantity * multiplier * planet_multiplier))

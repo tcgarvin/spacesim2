@@ -119,6 +119,8 @@ NON_DRIVE_KEEP_LEVELS = {
     "simple_tools": 2,
     "wood": 2,
     "common_metal": 2,
+    "biomass": 4,  # one make_food batch; see ColonistBrain
+    "fiber": 4,  # one make_clothing batch
 }
 
 
@@ -196,7 +198,10 @@ class IndustrialistBrain(ActorBrain):
             if actor.can_execute_process("make_food"):
                 return ProcessCommand("make_food")
             if biomass_commodity:
-                biomass_quantity = actor.inventory.get_quantity(biomass_commodity)
+                # Available, not total: reserved units cannot be cooked.
+                biomass_quantity = actor.inventory.get_available_quantity(
+                    biomass_commodity
+                )
                 if biomass_quantity < 4 and actor.can_execute_process("gather_biomass"):
                     return ProcessCommand("gather_biomass")
 
@@ -205,7 +210,7 @@ class IndustrialistBrain(ActorBrain):
             if clothing_quantity < 1:
                 if actor.can_execute_process("make_clothing"):
                     return ProcessCommand("make_clothing")
-                fiber_quantity = actor.inventory.get_quantity(fiber_commodity)
+                fiber_quantity = actor.inventory.get_available_quantity(fiber_commodity)
                 if fiber_quantity < 4 and actor.can_execute_process("gather_fiber"):
                     return ProcessCommand("gather_fiber")
 

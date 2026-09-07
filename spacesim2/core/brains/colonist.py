@@ -57,7 +57,9 @@ class ColonistBrain(ActorBrain):
             if actor.can_execute_process("make_food"):
                 return ProcessCommand("make_food")
 
-            biomass_quantity = actor.inventory.get_quantity(biomass_commodity)
+            # Available, not total: units reserved in the actor's own sell
+            # order cannot be cooked, so they must not satisfy the gate.
+            biomass_quantity = actor.inventory.get_available_quantity(biomass_commodity)
             if biomass_quantity < 4 and actor.can_execute_process("gather_biomass"):
                 return ProcessCommand("gather_biomass")
 
@@ -67,7 +69,7 @@ class ColonistBrain(ActorBrain):
                 if actor.can_execute_process("make_clothing"):
                     return ProcessCommand("make_clothing")
 
-                fiber_quantity = actor.inventory.get_quantity(fiber_commodity)
+                fiber_quantity = actor.inventory.get_available_quantity(fiber_commodity)
                 if fiber_quantity < 4 and actor.can_execute_process("gather_fiber"):
                     return ProcessCommand("gather_fiber")
 
@@ -325,11 +327,18 @@ class ColonistBrain(ActorBrain):
         return input_cost + opportunity_cost
 
     # Inventory to retain when selling surplus, for goods not backed by a
-    # drive. Drive goods derive their keep level from target_units.
+    # drive. Drive goods derive their keep level from target_units. Biomass
+    # and fiber are kept at one batch of make_food and make_clothing: with
+    # no keep level, gathered units were listed for sale the same turn, and
+    # the reserved stock counted toward the need gate's "enough to cook"
+    # check while the recipe could not touch it, so a hungry actor neither
+    # gathered nor cooked.
     NON_DRIVE_KEEP_LEVELS = {
         "simple_tools": 2,  # tools for production
         "wood": 2,  # raw input for tools/building materials
         "common_metal": 2,  # alternate building-material input
+        "biomass": 4,  # one make_food batch
+        "fiber": 4,  # one make_clothing batch
     }
 
     def decide_market_actions(self, actor: "Actor") -> List[MarketCommand]:
