@@ -100,6 +100,11 @@
   transportable: false
   description: Laboratory for refining chemicals and synthesizing advanced compounds.
 
+- id: chemical_plant
+  name: Chemical Plant
+  transportable: false
+  description: Industrial-scale plant for bulk chemical and food processing.
+
 - id: precision_forge
   name: Precision Forge
   transportable: false

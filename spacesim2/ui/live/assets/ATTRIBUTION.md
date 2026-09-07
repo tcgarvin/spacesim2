@@ -6,6 +6,7 @@ Generated offline by tools/assetgen. Provider + prompt per asset:
 - `good/advanced_factory.png` — pixellab: A large automated factory block with articulated robotic arms and glowing cyan indicator lights.
 - `good/advanced_medicine.png` — pixellab: A high-tech medical injector device holding a glowing blue vial, sleek white and chrome.
 - `good/biomass.png` — pixellab: A damp clump of green-and-brown organic plant matter: tangled leaves, moss, and vines bundled together.
+- `good/chemical_plant.png` — copy of `good/chemistry_lab.png`; no separate art yet.
 - `good/chemicals.png` — pixellab: A round-bottomed glass flask holding bubbling amber chemical liquid with a faint rising vapour.
 - `good/chemistry_lab.png` — pixellab: A laboratory bench with a distillation column, connected glass flasks, and a faint blue glow.
 - `good/clothing.png` — pixellab: A folded plain grey shirt with simple stitching, humble and utilitarian.

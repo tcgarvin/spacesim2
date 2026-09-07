@@ -326,6 +326,22 @@
     - chemistry
   description: Constructs a laboratory for chemical refinement and synthesis.
 
+- id: build_chemical_plant
+  name: Build Chemical Plant
+  inputs:
+    simple_building_materials: 5
+    common_metal: 2
+  outputs:
+    chemical_plant: 1
+  tools_required:
+    - simple_tools
+  facilities_required: []
+  labor: 5
+  relevant_skills:
+    - advanced_manufacturing
+    - simple_manufacturing
+  description: Constructs an industrial plant for bulk chemical and food processing.
+
 - id: build_precision_forge
   name: Build Precision Forge
   inputs:
@@ -466,21 +482,21 @@
 
 # === Tier 2 Consumer Goods ===
 
-- id: make_processed_food
-  name: Make Processed Food
+- id: process_food
+  name: Process Food
   inputs:
-    food: 2
-    refined_chemicals: 1
+    biomass: 40
+    chemicals: 1
   outputs:
-    processed_food: 2
+    processed_food: 60
   tools_required: []
   facilities_required:
-    - chemistry_lab
+    - chemical_plant
   labor: 1
   relevant_skills:
     - culinary
     - chemistry
-  description: Preserves and enriches food using refined chemical processes.
+  description: Bulk conversion of biomass into preserved processed food.
 
 - id: make_quality_clothing
   name: Make Quality Clothing

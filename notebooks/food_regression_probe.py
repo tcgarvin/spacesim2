@@ -7,7 +7,8 @@ records, per window, the things that discriminate the candidate mechanisms:
   b) buyers priced out of food  money quantiles, food bids, unfilled bids,
                                 prosperity spend per actor
   c) processed_food fallback    basic eats vs quality eats vs missed meals
-  d) food consumed as an input  make_processed_food runs (2 food -> 2 pf)
+  d) food consumed as an input  process_food no longer takes food; it runs
+                                40 biomass + 1 chemicals -> 60 processed_food
 
     uv run python notebooks/food_regression_probe.py --turns 450 --tag after
     uv run python notebooks/food_regression_probe.py --turns 450 --tag before \
@@ -45,7 +46,7 @@ DEFAULT_TURNS = 450
 DEFAULT_PLANETS = 12
 DEFAULT_ACTORS = 100
 SAMPLES = (150, 300, 450)
-FOOD_PROCS = ("gather_biomass", "make_food", "make_processed_food")
+FOOD_PROCS = ("gather_biomass", "make_food", "process_food")
 PROSPERITY_GOODS = tuple(c.commodity_id for c in PROSPERITY_CATEGORIES)
 
 RUNS: Counter = Counter()

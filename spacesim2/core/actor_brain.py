@@ -688,6 +688,7 @@ class ActorBrain:
             "metalworking_facility": "build_metalworking_facility",
             "textile_mill": "build_textile_mill",
             "chemistry_lab": "build_chemistry_lab",
+            "chemical_plant": "build_chemical_plant",
             "precision_forge": "build_precision_forge",
             "electronics_workshop": "build_electronics_workshop",
             "advanced_factory": "build_advanced_factory",

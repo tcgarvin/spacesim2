@@ -33,6 +33,10 @@ instances per regular actor:
 
 Rates and targets are starting values for the first probe.
 
+`processed_food` is made by `process_food`: 40 biomass + 1 chemicals ->
+60 processed_food at a chemical plant. It consumes no `food`, so
+processed-food makers do not compete with hungry consumers for the staple.
+
 Each prosperity drive owns its good. Need drives stop preferring quality
 goods: `ShelterDrive.materials()` and its siblings return the basic good
 only. A need drive may still consume the quality good as a last resort when

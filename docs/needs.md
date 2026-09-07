@@ -51,6 +51,10 @@ per category on every regular actor. Design in `docs/prosperity-design.md`.
 | luxury | `luxury_goods` | 1/45 | 2 |
 | computing | `computers` | 1/180 | 1 |
 
+`processed_food` comes from `process_food`: 40 biomass + 1 chemicals -> 60
+processed_food at a chemical plant. No process turns `food` into
+`processed_food`.
+
 - `WELLBEING = False`: excluded from planet wellbeing, the summary `drives`
   block, and the verdict. Reported in the summary `prosperity` block.
 - Miss penalty 0.1, below every need, and `ActorBrain._drives_by_priority`

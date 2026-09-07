@@ -19,7 +19,7 @@ from collections import Counter
 from spacesim2.cli.common import create_and_setup_simulation
 from spacesim2.core.actor import ActorType
 
-TURNS = 600
+TURNS = 300
 PLANETS = 3
 ACTORS = 100
 
@@ -31,9 +31,10 @@ TARGET_RECIPES = [
     "refine_chemicals",
     "make_medicine",
     "make_polymers",
-    "make_processed_food",
+    "process_food",
     "make_quality_clothing",
     "build_chemistry_lab",
+    "build_chemical_plant",
 ]
 
 WATCH_COMMODITIES = [
@@ -61,7 +62,6 @@ def run() -> None:
         actors=ACTORS,
         makers=2,
         ships=1,
-        enable_planet_attributes=True,
     )
     # run_turn() prints a per-turn summary; swallow it so only the diagnostic
     # dump reaches stdout.
@@ -90,6 +90,7 @@ def run() -> None:
     for fac in [
         "textile_mill",
         "chemistry_lab",
+        "chemical_plant",
         "smelting_facility",
         "metalworking_facility",
     ]:

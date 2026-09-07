@@ -48,6 +48,14 @@ Orders, transactions and price histories are keyed by `CommodityDefinition`.
 Market makers quote liquidity from their inventory levels. Sellers reserve
 inventory while an order rests and unreserve on cancel.
 
+## Facilities
+
+Facilities are commodities with `transportable: false` that appear in a
+process's `facilities_required`. They are not consumed when the process runs.
+The tier-2 facilities are `textile_mill`, `chemistry_lab`, `chemical_plant`,
+`precision_forge` and `electronics_workshop`; each has a `build_*` process
+taking simple building materials and tier-1 inputs.
+
 ## Adding commodities or processes
 
 Use the `commodity-process-design` skill. It covers the schemas, validation,

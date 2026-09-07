@@ -175,16 +175,16 @@ class TestFullTechTree:
     # -----------------------------------------------------------------------
 
     def _phase_t2_facilities(self, sim, actor):
-        """Build all four T2 facilities.
+        """Build all five T2 facilities.
 
-        Total inputs across the 4 builds:
-          building_materials: 20, 5 each
-          common_metal: 7, as 2 + 3 + 2
+        Total inputs across the 5 builds:
+          building_materials: 25, 5 each
+          common_metal: 9, as 2 + 3 + 2 + 2
           glass: 4, as 2 + 2, needing 12 silica
           chemicals: 2, for chemistry_lab
         """
-        _run("mine_common_metal_ore", actor, 60)
-        _run("refine_common_metal", actor, 15)
+        _run("mine_common_metal_ore", actor, 80)
+        _run("refine_common_metal", actor, 20)
         _run("make_building_materials_metal", actor, 25)
 
         # make_glass uses 3 silica each.
@@ -207,6 +207,9 @@ class TestFullTechTree:
         assert _has("electronics_workshop", actor, sim), (
             "Should have built electronics workshop"
         )
+
+        _run("build_chemical_plant", actor, 1)
+        assert _has("chemical_plant", actor, sim), "Should have built chemical plant"
 
     # -----------------------------------------------------------------------
     # T2: Intermediate production
@@ -267,8 +270,15 @@ class TestFullTechTree:
         _run("make_glass", actor, 3)
         _run("make_building_materials_metal", actor, 3)
 
-        _run("make_processed_food", actor, 2)
-        assert _has("processed_food", actor, sim)
+        # process_food takes 40 biomass + 1 chemicals -> 60 processed_food.
+        _run("gather_biomass", actor, 6)
+        _run("make_chemicals", actor, 1)
+        food_before = _qty("food", actor, sim)
+        _run("process_food", actor, 1)
+        assert _qty("processed_food", actor, sim) >= 60
+        assert _qty("food", actor, sim) == food_before, (
+            "process_food must not consume plain food"
+        )
 
         _run("make_quality_clothing", actor, 2)
         assert _has("quality_clothing", actor, sim)
@@ -335,3 +345,62 @@ class TestFullTechTree:
 
         _run("make_ship_components", actor, 2)
         assert _has("ship_components", actor, sim)
+
+
+class TestProcessedFoodRecipe:
+    """process_food is an industrial biomass recipe, not a food consumer."""
+
+    def _registry(self):
+        sim = Simulation()
+        sim.setup_simple(
+            num_planets=1,
+            num_regular_actors=1,
+            num_market_makers=0,
+            num_ships=0,
+        )
+        return sim
+
+    def test_process_food_consumes_biomass_not_food(self):
+        sim = self._registry()
+        process = sim.process_registry.get_process("process_food")
+        assert process is not None
+        inputs = {c.id: q for c, q in process.inputs.items()}
+        outputs = {c.id: q for c, q in process.outputs.items()}
+        assert inputs == {"biomass": 40, "chemicals": 1}
+        assert outputs == {"processed_food": 60}
+        assert [f.id for f in process.facilities_required] == ["chemical_plant"]
+        assert process.tools_required == []
+
+    def test_no_process_consumes_food_to_make_processed_food(self):
+        sim = self._registry()
+        for process in sim.process_registry.all_processes():
+            output_ids = {c.id for c in process.outputs}
+            if "processed_food" not in output_ids:
+                continue
+            input_ids = {c.id for c in process.inputs}
+            assert "food" not in input_ids, (
+                f"{process.id} still consumes food to make processed food"
+            )
+
+    def test_chemical_plant_is_buildable_from_the_metal_bootstrap(self):
+        sim = self._registry()
+        build = sim.process_registry.get_process("build_chemical_plant")
+        assert build is not None
+        inputs = {c.id: q for c, q in build.inputs.items()}
+        assert inputs == {"simple_building_materials": 5, "common_metal": 2}
+        assert [t.id for t in build.tools_required] == ["simple_tools"]
+        assert build.facilities_required == []
+
+    def test_every_required_facility_has_a_build_process(self):
+        """Brains reach a facility only through _get_build_process_for_facility."""
+        from spacesim2.core.actor_brain import ActorBrain
+
+        sim = self._registry()
+        brain = ActorBrain()
+        for process in sim.process_registry.all_processes():
+            for facility in process.facilities_required:
+                build_id = brain._get_build_process_for_facility(facility)
+                assert build_id is not None, (
+                    f"{facility.id} (required by {process.id}) has no build process"
+                )
+                assert sim.process_registry.get_process(build_id) is not None
