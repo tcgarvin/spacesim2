@@ -104,9 +104,7 @@ def report(sim: Simulation) -> None:
             dn = drive.metrics.get_name()
             if dn in ("health", "food"):
                 rows[bk][f"{dn}_h"].append(drive.metrics.health)
-                rows[bk][f"{dn}_dep"].append(
-                    1.0 if drive.metrics.health < 0.5 else 0.0
-                )
+                rows[bk][f"{dn}_dep"].append(1.0 if drive.metrics.health < 0.5 else 0.0)
 
     def med(bk: str, k: str) -> float:
         vals = rows[bk][k]

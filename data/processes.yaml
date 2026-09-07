@@ -2,7 +2,7 @@
   name: Gather Biomass
   inputs: {}
   outputs:
-    biomass: 4
+    biomass: 8
   tools_required: []
   facilities_required: []
   labor: 1
@@ -46,7 +46,7 @@
   inputs:
     biomass: 4
   outputs:
-    food: 2
+    food: 4
   tools_required: []
   facilities_required: []
   labor: 1

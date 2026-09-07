@@ -196,9 +196,7 @@ def install_patches(disable_discount: bool, sim_box: Dict[str, Any]) -> None:
 
         market = planet.market
         best_bid, best_ask = market.get_bid_ask_spread(food)
-        _, bio_ask = (
-            market.get_bid_ask_spread(biomass_c) if biomass_c else (None, None)
-        )
+        _, bio_ask = market.get_bid_ask_spread(biomass_c) if biomass_c else (None, None)
         cons_bids: List[int] = []
         ind_bids: List[int] = []
         for order in market.buy_orders.get(food, []):
@@ -422,8 +420,6 @@ def report(tag: str, turns: int) -> None:
         print("  " + json.dumps(row, sort_keys=True))
 
 
-
-
 WAGE = 10  # spacesim2/core/commands.py:142
 
 
@@ -446,11 +442,7 @@ def followup() -> None:
             continue
         with_ask = [r for r in rows if r["bio_ask"] >= 0]
         mk = [(4 * r["bio_ask"] + WAGE) / 2.0 for r in with_ask]
-        cheaper = sum(
-            1
-            for r, m in zip(with_ask, mk)
-            if m < r["best_ask"]
-        )
+        cheaper = sum(1 for r, m in zip(with_ask, mk) if m < r["best_ask"])
         print(
             f"{name:<8}{len(rows):>7}{pct(len(with_ask), len(rows)):>10}"
             f"{(statistics.median([r['bio_ask'] for r in with_ask]) if with_ask else -1):>9.0f}"
@@ -486,6 +478,7 @@ def followup() -> None:
         )
 
     print("\n[F3] economic action taken on the miss turn (shares)")
+
     def group(action: str) -> str:
         if action == "make_food":
             return "make_food"
@@ -509,7 +502,9 @@ def followup() -> None:
         if not rows:
             continue
         counts = Counter(group(r["action"]) for r in rows)
-        print(f"{name:<8}" + "".join(f"{pct(counts[l], len(rows)):>21}" for l in labels))
+        print(
+            f"{name:<8}" + "".join(f"{pct(counts[l], len(rows)):>21}" for l in labels)
+        )
 
 
 def main(argv: List[str]) -> int:

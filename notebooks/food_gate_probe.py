@@ -30,8 +30,10 @@ def snap(actor: Actor, brain_tag: str, cmd: Any) -> Dict[str, Any]:
     reg = actor.sim.commodity_registry
     food = reg.get_commodity("food")
     bio = reg.get_commodity("biomass")
-    name = cmd.process_id if isinstance(cmd, ProcessCommand) else (
-        "idle" if cmd is None else cmd.__class__.__name__
+    name = (
+        cmd.process_id
+        if isinstance(cmd, ProcessCommand)
+        else ("idle" if cmd is None else cmd.__class__.__name__)
     )
     return {
         "brain": brain_tag,
@@ -128,14 +130,18 @@ def report() -> None:
         print(f"[G3] brain={tag}  command actually returned (top 8)")
         for cmd, n in Counter(r["cmd"] for r in rows).most_common(8):
             print(f"  {cmd:<32}{n:>7}{pct(n, len(rows)):>9}")
-        print(f"[G4] brain={tag}  joint (food_qty>=5, can_make, bio_qty>=4, can_gather)")
+        print(
+            f"[G4] brain={tag}  joint (food_qty>=5, can_make, bio_qty>=4, can_gather)"
+        )
         joint = Counter(
             (r["food_qty"] >= 5, r["can_make"], r["bio_qty"] >= 4, r["can_gather"])
             for r in rows
         )
         for key, n in joint.most_common(8):
-            print(f"  f>=5={key[0]!s:<5} mk={key[1]!s:<5} b>=4={key[2]!s:<5}"
-                  f" gath={key[3]!s:<5}{n:>7}{pct(n, len(rows)):>9}")
+            print(
+                f"  f>=5={key[0]!s:<5} mk={key[1]!s:<5} b>=4={key[2]!s:<5}"
+                f" gath={key[3]!s:<5}{n:>7}{pct(n, len(rows)):>9}"
+            )
 
 
 def main(argv: List[str]) -> int:

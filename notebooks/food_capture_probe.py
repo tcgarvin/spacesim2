@@ -89,7 +89,8 @@ print(prem)
 print("\n[E] food price vs processed_food price, galaxy mean by 50-turn block")
 blk = (
     snap.filter(
-        pl.col("commodity_id").is_in(["food", "processed_food"]) & pl.col("volume").gt(0)
+        pl.col("commodity_id").is_in(["food", "processed_food"])
+        & pl.col("volume").gt(0)
     )
     .with_columns((pl.col("turn") // 50 * 50).alias("blk"))
     .group_by("blk", "commodity_id")

@@ -47,7 +47,7 @@ def test_doubled_run_with_doubled_inputs_consumes_and_produces_double(cook):
     actor.inventory.add_commodity(biomass, 8)
     assert _run_doubled(actor)
     assert actor.inventory.get_available_quantity(biomass) == 0
-    assert actor.inventory.get_available_quantity(food) == 4
+    assert actor.inventory.get_available_quantity(food) == 8
 
 
 def test_doubled_run_without_doubled_inputs_falls_back_to_single_scale(cook):
@@ -55,4 +55,4 @@ def test_doubled_run_without_doubled_inputs_falls_back_to_single_scale(cook):
     actor.inventory.add_commodity(biomass, 5)
     assert _run_doubled(actor)
     assert actor.inventory.get_available_quantity(biomass) == 1
-    assert actor.inventory.get_available_quantity(food) == 2
+    assert actor.inventory.get_available_quantity(food) == 4

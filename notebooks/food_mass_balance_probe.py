@@ -120,8 +120,10 @@ def install() -> None:
             reg = actor.sim.commodity_registry
             food = reg.get_commodity("food")
             gate = actor.inventory.get_quantity(food) < 5
-            branch = "profit_scan" if STATE.get("scan_hit") else (
-                "need_gate" if gate else "other"
+            branch = (
+                "profit_scan"
+                if STATE.get("scan_hit")
+                else ("need_gate" if gate else "other")
             )
             note_branch(actor, cmd, branch, actor.planet.market)
         return cmd
@@ -327,7 +329,9 @@ def report(sim: Simulation) -> None:
             f"{pct(matched, len(rows)):>8}"
         )
 
-    print("\n[7] realized per-unit food cost (make_food: 4 biomass + 1 labor -> 2 food)")
+    print(
+        "\n[7] realized per-unit food cost (make_food: 4 biomass + 1 labor -> 2 food)"
+    )
     print(
         f"{'bucket':<9}{'bio_px':>9}{'bio_cost/u':>12}{'labor/u':>10}"
         f"{'succ_rate':>11}{'cost/u':>9}{'food_px':>9}"
@@ -342,11 +346,7 @@ def report(sim: Simulation) -> None:
         bio_cost = 4 * bio_px / out_per_ok if out_per_ok else -1.0
         labor = GOVERNMENT_WAGE / (out_per_ok * succ) if out_per_ok and succ else -1.0
         food_px = statistics.fmean(
-            [
-                p.market.get_avg_price(food)
-                for p in sim.planets
-                if bucket_of(p) == bk
-            ]
+            [p.market.get_avg_price(food) for p in sim.planets if bucket_of(p) == bk]
         )
         print(
             f"{bk:<9}{bio_px:>9.1f}{bio_cost:>12.1f}{labor:>10.1f}"

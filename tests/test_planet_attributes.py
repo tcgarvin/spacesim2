@@ -197,8 +197,8 @@ class TestProcessCommandIntegration:
 
         new_biomass = actor.inventory.get_quantity(biomass)
         gained = new_biomass - initial_biomass
-        # Base output 4 * 0.25 = 1, or 2 if the skill multiplier doubled it.
-        assert gained in (1, 2), f"Expected 1 or 2 biomass, got {gained}"
+        # Base output 8 * 0.25 = 2, or 4 if the skill multiplier doubled it.
+        assert gained in (2, 4), f"Expected 2 or 4 biomass, got {gained}"
 
     def test_process_with_success_effect_can_fail(self):
         """The success effect fails the process on a zero-availability planet."""
@@ -259,9 +259,9 @@ class TestProcessCommandIntegration:
         result = cmd.execute(actor)
 
         assert result is True
-        # make_food outputs 2 food; the skill multiplier may double it.
+        # make_food outputs 4 food; the skill multiplier may double it.
         gained = actor.inventory.get_quantity(food) - initial_food
-        assert gained >= 2
+        assert gained >= 4
 
 
 def test_setup_guarantees_a_fuel_rich_planet():
