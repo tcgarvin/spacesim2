@@ -388,6 +388,7 @@ def supports_summary_json(project: Path) -> bool:
         ["uv", "run", "--project", str(project), "spacesim2", "run", "--help"],
         capture_output=True,
         text=True,
+        cwd=project,
     )
     if result.returncode != 0:
         raise AbSetupError(
@@ -418,6 +419,10 @@ def run_one(
     """Run one sim in ``project`` and leave its summary at ``json_path``.
 
     Returns wall seconds. Combined stdout and stderr go to ``log_path``.
+
+    The sim loads ``data/`` relative to the current directory, so the run
+    is launched from ``project``; without that the baseline arm ran its own
+    code against the working tree's YAML.
     """
     cmd = [
         "uv",
@@ -438,7 +443,7 @@ def run_one(
     else:
         cmd.append("--summary")
     start = time.monotonic()
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=project)
     elapsed = time.monotonic() - start
     log_path.write_text((result.stdout or "") + (result.stderr or ""))
     if result.returncode != 0:
@@ -466,7 +471,7 @@ def _finish(out: Path, manifest: dict[str, object], code: int) -> int:
 
 def execute(args: argparse.Namespace) -> int:
     """Execute the ab command. Returns 0 when every run completed."""
-    out = Path(args.out)
+    out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     done = out / DONE_FILE
     if done.exists():
