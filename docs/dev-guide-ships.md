@@ -152,6 +152,27 @@ Counting as load is not permission to sell here: the plan lifecycle in
 destination, and `decide_travel` still gates the departure on the one-way
 burn plus `_fuel_safe_destination`.
 
+The other exception is a scarcity-priced local bid.
+`_local_fuel_bid_is_scarcity_priced` is true when the best local fuel bid
+reaches `FUEL_BID_MARGIN` (30%) over `_fuel_value_reference()`, the same
+median believable valuation the bunker rule uses. With no believable
+valuation anywhere, before any fuel has traded, the gate is **closed**.
+
+That anchor used to be `Navigator.cheapest_fuel_ask()`, the galaxy minimum,
+and it made the gate a fleet-wide sell signal: a ship listing surplus fuel
+on a planet that had never traded it rested the remainder at 1 credit, that
+ask pinned the galaxy minimum at 1, and every local bid cleared the
+threshold. Over the first 120 turns of a 100-planet run, 100% of ship fuel
+sell orders passed the gate, the fleet sold its starting tanks at 1-15
+credits and re-bought at 200-500, and median ship money fell from 1481 at
+t100 to 33 at t300.
+
+The 1-credit ask itself is gone too. `_sell_floor_price` gives `nova_fuel` a
+floor at the replacement reference, `ceil(_fuel_value_reference())` or
+`FUEL_BID_FALLBACK_FLOOR` (15) before anything has traded, and
+`_place_flow_sell_orders` applies it to both the bid-level asks and the
+resting remainder. Other cargo has no floor there.
+
 ### Where fuel can actually be bought
 
 `Navigator.fuel_purchasable_at` means a **live resting ask**, nothing else.

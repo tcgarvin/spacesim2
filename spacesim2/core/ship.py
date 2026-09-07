@@ -735,11 +735,25 @@ class TraderBrain(ShipBrain):
     def _local_fuel_bid_is_scarcity_priced(self) -> bool:
         """Whether the local fuel bid clearly rewards offloading tank fuel.
 
-        True when a standing local bid meets the delivery-margin markup over
-        the cheapest ask anywhere in the galaxy, or the fallback floor when
-        no ask exists. Such a bid can only rest in a book with no matching
-        asks, typically another ship's standing rescue bid, so selling into
-        it cannot create a sell-at-bid, re-buy-at-ask churn loop.
+        True when a standing local bid meets the delivery-margin markup,
+        FUEL_BID_MARGIN, over the galaxy fuel reference price: the median
+        believable per-planet valuation from
+        :meth:`Navigator.fuel_value_reference`. The same markup a delivery
+        bid pays, applied to the same central statistic the rest of the fuel
+        code values a tank at, so the gate opens only for a bid that beats
+        what the fuel is worth.
+
+        The anchor was the galaxy *minimum* ask, and that made the gate a
+        fleet-wide sell signal in the launch window. A ship listing surplus
+        fuel on a planet that has never traded it rested the remainder at 1
+        credit, which pinned the minimum at 1, which put every local bid over
+        the threshold. Measured over the first 120 turns of a 100-planet run,
+        100% of ship fuel sell orders passed this gate; the fleet sold its
+        starting tanks at 1-15 credits and re-bought at 200-500.
+
+        With no believable valuation anywhere, at turn 0 before any fuel has
+        traded, the gate is closed: no evidence is not evidence of scarcity,
+        and the old fallback floor let the launch turn through.
         """
         planet = self.ship.planet
         fuel_commodity = self._fuel_commodity()
@@ -748,13 +762,10 @@ class TraderBrain(ShipBrain):
         highest_bid, _ = planet.market.get_bid_ask_spread(fuel_commodity)
         if highest_bid is None:
             return False
-        cheapest_ask = self._nav.cheapest_fuel_ask()
-        threshold = (
-            math.ceil(cheapest_ask * (1.0 + FUEL_BID_MARGIN))
-            if cheapest_ask is not None
-            else FUEL_BID_FALLBACK_FLOOR
-        )
-        return highest_bid >= threshold
+        reference = self._fuel_value_reference()
+        if reference is None:
+            return False
+        return highest_bid >= math.ceil(reference * (1.0 + FUEL_BID_MARGIN))
 
     def _committed_fuel_floor(self) -> int:
         """Fuel the departure this ship is committed to from here will need.
@@ -867,6 +878,28 @@ class TraderBrain(ShipBrain):
         }
         self._local_sale_planet_name = planet.name
 
+    def _sell_floor_price(self, commodity: CommodityDefinition) -> int:
+        """Lowest price the ship will list ``commodity`` at locally.
+
+        Only fuel has a floor: the galaxy fuel reference price, the median
+        believable per-planet valuation, which is what the ship pays to
+        refill the tank. Listing below it books a guaranteed loss on the
+        round trip, and on a planet that has never traded fuel the resting
+        price came out at 1 credit, which is also what pinned
+        :meth:`Navigator.cheapest_fuel_ask` and opened the sell gate for the
+        whole fleet.
+
+        Before any fuel has traded anywhere the reference is unknown and the
+        floor is FUEL_BID_FALLBACK_FLOOR, the same fabricated-price guard the
+        rest of the fuel code uses. Non-fuel cargo returns 0, no floor.
+        """
+        if commodity.id != "nova_fuel":
+            return 0
+        reference = self._fuel_value_reference()
+        if reference is None:
+            return FUEL_BID_FALLBACK_FLOOR
+        return max(1, math.ceil(reference))
+
     def _place_flow_sell_orders(
         self, market: "Market", commodity: CommodityDefinition, quantity: int
     ) -> List[str]:
@@ -879,14 +912,18 @@ class TraderBrain(ShipBrain):
         remainder rests near the recent clearing price to be absorbed by the
         turn flow.
 
+        Fuel additionally never rests below what the ship replaces it at; see
+        :meth:`_sell_floor_price`. Other cargo has no floor here.
+
         Returns action strings for the placed orders.
         """
         actions: List[str] = []
         flow_value = self._flow_value(market, commodity)
         flow_px = int(flow_value * SELL_PRICE_HAIRCUT) if flow_value else 0
+        floor_px = self._sell_floor_price(commodity)
         remaining = quantity
         for price, level_qty in market.get_bid_levels(commodity):
-            if remaining <= 0 or price <= flow_px:
+            if remaining <= 0 or price <= flow_px or price < floor_px:
                 break
             take = min(level_qty, remaining)
             order_id = market.place_sell_order(self.ship, commodity, take, price)
@@ -900,6 +937,7 @@ class TraderBrain(ShipBrain):
             else:
                 best_bid, _ = market.get_bid_ask_spread(commodity)
                 rest_price = max(1, best_bid or market.get_avg_price(commodity) or 1)
+            rest_price = max(rest_price, floor_px)
             order_id = market.place_sell_order(
                 self.ship, commodity, remaining, rest_price
             )

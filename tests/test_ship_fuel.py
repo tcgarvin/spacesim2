@@ -20,6 +20,7 @@ from spacesim2.core.planet import Planet
 from spacesim2.core.ship import (
     ACCUMULATION_PATIENCE,
     DISTRESS_PATIENCE,
+    FUEL_BID_FALLBACK_FLOOR,
     FUEL_BID_MARGIN,
     Ship,
     TradePlan,
@@ -217,7 +218,10 @@ def test_tank_fuel_is_not_trade_cargo_at_ordinary_prices():
 
 def test_tank_fuel_sold_into_scarcity_bid():
     sim, fuel, _, (a, b) = _make_world([("A", 0, 0), ("B", 60, 0)])
-    # A stranded neighbor's standing rescue bid, well above the floor.
+    # Fuel is worth 20 in this galaxy: one believable producer ask.
+    supplier = _make_ship(sim, a, fuel_units=200, name="Supplier")
+    a.market.place_sell_order(supplier, fuel, 100, 20)
+    # A stranded neighbor's standing rescue bid, above 20 * (1 + margin).
     stranded = _make_ship(sim, b, fuel_units=0, money=2000, name="Stranded")
     b.market.place_buy_order(stranded, fuel, 20, 30)
 
@@ -1070,3 +1074,77 @@ def test_rationed_escape_hop_clears_the_departure_gate():
     assert on_hand == leg
     assert on_hand >= ship.brain._departure_fuel_requirement(b)
     assert ship.brain._fuel_safe_destination(b, a, on_hand - leg)
+
+
+def test_scarcity_gate_ignores_a_one_credit_galaxy_minimum():
+    """A 1-credit probe ask elsewhere does not open the sell gate.
+
+    The gate anchors on the median believable valuation, not the galaxy
+    minimum ask. Anchored on the minimum, one ship's 1-credit remainder ask
+    made every local bid look scarcity-priced and the whole fleet sold its
+    tanks at the launch window's low prices.
+    """
+    specs = [(f"P{i}", 100 * i, 0) for i in range(4)]
+    sim, fuel, _, planets = _make_world(specs)
+    home = planets[0]
+    # Fuel is worth 40 across the galaxy: believable asks with real depth.
+    for planet in planets[1:3]:
+        supplier = _make_ship(sim, planet, fuel_units=200, name=f"S{planet.name}")
+        planet.market.place_sell_order(supplier, fuel, 100, 40)
+    # One single-unit ask at 1 credit pins the galaxy minimum.
+    probe = _make_ship(sim, planets[3], fuel_units=5, name="Probe")
+    planets[3].market.place_sell_order(probe, fuel, 1, 1)
+    # An ordinary local bid, far below what fuel is worth.
+    buyer = _make_ship(sim, home, money=2000, name="Buyer")
+    home.market.place_buy_order(buyer, fuel, 20, 10)
+
+    ship = _make_ship(sim, home, fuel_units=40, name="Trader")
+    brain = ship.brain
+    brain._nav.refresh_market_facts()
+
+    assert brain._nav.cheapest_fuel_ask() == 1
+    assert brain._fuel_value_reference() == 40
+    assert not brain._local_fuel_bid_is_scarcity_priced()
+
+    brain.decide_trade_actions()
+    assert not [o for o in home.market.sell_orders[fuel] if o.actor is ship]
+
+
+def test_fuel_remainder_never_rests_below_replacement_cost():
+    """Surplus fuel on a market that has never traded it rests at the reference.
+
+    Without the floor the remainder rested at ``max(1, best_bid or avg)``,
+    which is 1 credit on a planet with no fuel book at all.
+    """
+    specs = [(f"P{i}", 100 * i, 0) for i in range(3)]
+    sim, fuel, _, planets = _make_world(specs)
+    home = planets[0]
+    for planet in planets[1:]:
+        supplier = _make_ship(sim, planet, fuel_units=200, name=f"S{planet.name}")
+        planet.market.place_sell_order(supplier, fuel, 100, 40)
+
+    ship = _make_ship(sim, home, fuel_units=40, name="Trader")
+    brain = ship.brain
+    brain._nav.refresh_market_facts()
+    assert brain._fuel_value_reference() == 40
+
+    actions = brain._place_flow_sell_orders(home.market, fuel, 10)
+
+    assert actions
+    sells = [o for o in home.market.sell_orders[fuel] if o.actor is ship]
+    assert sum(o.quantity for o in sells) == 10
+    assert all(o.price >= 40 for o in sells)
+
+
+def test_fuel_remainder_floor_falls_back_before_any_fuel_trades():
+    """With no believable valuation anywhere the floor is the fallback price."""
+    sim, fuel, _, (a, _) = _make_world([("A", 0, 0), ("B", 100, 0)])
+    ship = _make_ship(sim, a, fuel_units=40, name="Trader")
+    brain = ship.brain
+    brain._nav.refresh_market_facts()
+    assert brain._fuel_value_reference() is None
+
+    brain._place_flow_sell_orders(a.market, fuel, 10)
+
+    sells = [o for o in a.market.sell_orders[fuel] if o.actor is ship]
+    assert [o.price for o in sells] == [FUEL_BID_FALLBACK_FLOOR]

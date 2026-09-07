@@ -4,6 +4,50 @@ Append-only record of closed decisions, postmortems, and landed campaigns.
 Newest first. Open work lives in `TODO.md`; current reference docs live
 alongside this file.
 
+## 2026-09-07 - Fleet fuel sell-off: value the tank, not the cheapest ask
+
+The fleet sold its starting tanks in the launch window and re-bought the
+same fuel at spike prices. `_local_fuel_bid_is_scarcity_priced` anchored on
+`Navigator.cheapest_fuel_ask()`, the galaxy minimum, and
+`_place_flow_sell_orders` rested a fuel remainder at
+`max(1, best_bid or avg or 1)`, which is 1 credit on a planet that has never
+traded fuel. That 1-credit ask pinned the minimum at 1, so every local fuel
+bid cleared the gate for every ship. The two defects fed each other: the same
+1-credit asks were the believable producer asks, so the value reference read
+1-2 credits for the first 30 turns.
+
+Fix, both layers in `core/ship.py`:
+
+- The gate compares the local bid against `_fuel_value_reference()`, the
+  median believable per-planet valuation, marked up by `FUEL_BID_MARGIN`
+  (30%, unchanged). No believable valuation anywhere, the turn-0 state,
+  closes the gate; it used to fall back to `FUEL_BID_FALLBACK_FLOOR`.
+- `_sell_floor_price` floors `nova_fuel` asks at `ceil(reference)`, or
+  `FUEL_BID_FALLBACK_FLOOR` (15) before anything has traded, applied to both
+  the bid-level asks and the resting remainder. Other cargo is unfloored.
+
+Probe, `notebooks/fleet_fuel_launch_probe.py`, 100 planets, 120 turns, one
+run each:
+
+| metric | before | after |
+|--------|--------|-------|
+| ship fuel sell orders / units | 1197 / 5218 | 134 / 287 |
+| sells passing the scarcity gate | 100% | 76% |
+| sells while distressed | 1% | 17% |
+| median sell ask | 15 | 2543 |
+| median money t70 / t120 | 1671 / 1557 | 4537 / 2477 |
+| median tank fuel t70 / t120 | 2 / 2 | 4 / 3 |
+| median fuel buy price | 164 | 171 |
+| median value reference, first 30 turns | 1-2 | no fuel orders placed |
+
+The remaining sells are what the gate was meant to allow: a sixth of them
+are a distressed ship converting tank fuel to cash, and the rest are rescue
+bids that beat the reference. The high median sell ask is the floor tracking
+a spiky reference across 134 orders, not a price the fleet pays.
+
+12 planets, 200 turns: PASS. Fuel purchase price did not move; the win is
+that ships keep their tanks and their money.
+
 ## 2026-09-07 - Food refresh: two tracks, facility upkeep, heavy machinery
 
 After 6e82e07 removed the free food from the skill multiplier, honest food
