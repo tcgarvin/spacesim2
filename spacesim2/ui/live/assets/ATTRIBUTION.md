@@ -15,6 +15,7 @@ Generated offline by tools/assetgen. Provider + prompt per asset:
 - `good/computers.png` — pixellab: A compact computer terminal unit with a glowing cyan screen and a small keyboard face.
 - `good/electronics.png` — pixellab: A green circuit board with copper traces, tiny black chips, and a few coloured components.
 - `good/electronics_workshop.png` — pixellab: A workbench with a soldering iron resting on a green circuit board and a small magnifier lamp.
+- `good/farm.png` — copy of `good/biomass.png`; no separate art yet.
 - `good/fiber.png` — pixellab: A loose bundle of pale cream-coloured raw plant fibers, soft and stringy like combed flax.
 - `good/food.png` — pixellab: A fresh ration on a small tray: a round brown bread loaf beside a red fruit, simple and wholesome.
 - `good/glass.png` — pixellab: A single upright rectangular pane of pale translucent blue-white glass, thin and flat, with a bright diagonal white glare streak across it.

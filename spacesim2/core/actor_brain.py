@@ -704,6 +704,7 @@ class ActorBrain:
             "precision_forge": "build_precision_forge",
             "electronics_workshop": "build_electronics_workshop",
             "advanced_factory": "build_advanced_factory",
+            "farm": "build_farm",
         }
         return facility_to_process.get(facility.id)
 

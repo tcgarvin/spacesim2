@@ -175,22 +175,22 @@ class TestFullTechTree:
     # -----------------------------------------------------------------------
 
     def _phase_t2_facilities(self, sim, actor):
-        """Build all five T2 facilities.
+        """Build all six T2 facilities.
 
-        Total inputs across the 5 builds:
-          building_materials: 25, 5 each
-          common_metal: 9, as 2 + 3 + 2 + 2, plus 5 for the chemical plant's
-            heavy_machinery input, 14 total
+        Total inputs across the 6 builds:
+          building_materials: 30, 5 each
+          common_metal: 9, as 2 + 3 + 2 + 2, plus 5 each for the chemical
+            plant's and the farm's heavy_machinery input, 19 total
           glass: 4, as 2 + 2, needing 12 silica
           chemicals: 2, for chemistry_lab
 
-        mine_common_metal_ore 100 -> refine_common_metal 25 nets 50 common_metal
-        (75 ore consumed), covering the 25 for building materials plus the 14
+        mine_common_metal_ore 120 -> refine_common_metal 30 nets 60 common_metal
+        (90 ore consumed), covering the 30 for building materials plus the 19
         for facilities and machinery with margin.
         """
-        _run("mine_common_metal_ore", actor, 100)
-        _run("refine_common_metal", actor, 25)
-        _run("make_building_materials_metal", actor, 25)
+        _run("mine_common_metal_ore", actor, 120)
+        _run("refine_common_metal", actor, 30)
+        _run("make_building_materials_metal", actor, 30)
 
         # make_glass uses 3 silica each.
         _run("mine_silica", actor, 60)
@@ -213,11 +213,23 @@ class TestFullTechTree:
             "Should have built electronics workshop"
         )
 
-        _run("make_heavy_machinery", actor, 1)
-        assert _has("heavy_machinery", actor, sim), "Should have made heavy machinery"
+        _run("make_heavy_machinery", actor, 2)
+        assert _qty("heavy_machinery", actor, sim) >= 2, (
+            "Should have made heavy machinery for the plant and the farm"
+        )
 
         _run("build_chemical_plant", actor, 1)
         assert _has("chemical_plant", actor, sim), "Should have built chemical plant"
+
+        _run("build_farm", actor, 1)
+        assert _has("farm", actor, sim), "Should have built farm"
+
+        _run("make_chemicals", actor, 1)
+        farm_biomass_before = _qty("biomass", actor, sim)
+        _run("farm_biomass", actor, 1)
+        assert _qty("biomass", actor, sim) - farm_biomass_before == 64, (
+            "farm_biomass should yield 64 biomass at full attribute"
+        )
 
     # -----------------------------------------------------------------------
     # T2: Intermediate production
@@ -433,3 +445,100 @@ class TestProcessedFoodRecipe:
                     f"{facility.id} (required by {process.id}) has no build process"
                 )
                 assert sim.process_registry.get_process(build_id) is not None
+
+
+class TestFarmBiomassRecipe:
+    """farm_biomass is a bulk gather at a farm, scaled by the biomass attribute."""
+
+    def _registry(self):
+        sim = Simulation()
+        sim.setup_simple(
+            num_planets=1,
+            num_regular_actors=1,
+            num_market_makers=0,
+            num_ships=0,
+        )
+        return sim
+
+    def test_build_farm_is_buildable_from_the_metal_bootstrap(self):
+        sim = self._registry()
+        build = sim.process_registry.get_process("build_farm")
+        assert build is not None
+        inputs = {c.id: q for c, q in build.inputs.items()}
+        assert inputs == {"simple_building_materials": 5, "heavy_machinery": 1}
+        assert [t.id for t in build.tools_required] == ["simple_tools"]
+        assert build.facilities_required == []
+
+    def test_farm_biomass_declares_heavy_machinery_upkeep(self):
+        sim = self._registry()
+        process = sim.process_registry.get_process("farm_biomass")
+        assert process is not None
+        upkeep = {c.id: p for c, p in process.upkeep.items()}
+        assert upkeep == {"heavy_machinery": 0.01}
+
+    def test_farm_biomass_yields_64_at_full_attribute(self):
+        """At biomass attribute 1.0, one run outputs the full base yield."""
+        from unittest.mock import patch
+
+        from spacesim2.core.planet_attributes import PlanetAttributes
+
+        sim = self._registry()
+        actor = sim.actors[0]
+        actor.planet.attributes = PlanetAttributes(biomass=1.0)
+
+        farm = sim.commodity_registry.get_commodity("farm")
+        simple_tools = sim.commodity_registry.get_commodity("simple_tools")
+        chemicals = sim.commodity_registry.get_commodity("chemicals")
+        assert farm is not None and simple_tools is not None and chemicals is not None
+        actor.inventory.add_commodity(farm, 1)
+        actor.inventory.add_commodity(simple_tools, 1)
+        actor.inventory.add_commodity(chemicals, 1)
+
+        biomass = sim.commodity_registry.get_commodity("biomass")
+        assert biomass is not None
+        before = actor.inventory.get_quantity(biomass)
+
+        with (
+            patch("spacesim2.core.skill.SkillCheck.success_check", return_value=True),
+            patch(
+                "spacesim2.core.skill.SkillCheck.multiplier_check", return_value=False
+            ),
+        ):
+            result = ProcessCommand("farm_biomass").execute(actor)
+
+        assert result is True, f"Process failed with action: {actor.last_action}"
+        assert actor.inventory.get_quantity(biomass) - before == 64
+
+    def test_farm_biomass_scales_with_biomass_attribute(self):
+        """The output effect scales yield like gather_biomass does."""
+        from unittest.mock import patch
+
+        from spacesim2.core.planet_attributes import PlanetAttributes
+
+        sim = self._registry()
+        actor = sim.actors[0]
+        actor.planet.attributes = PlanetAttributes(biomass=0.25)
+
+        farm = sim.commodity_registry.get_commodity("farm")
+        simple_tools = sim.commodity_registry.get_commodity("simple_tools")
+        chemicals = sim.commodity_registry.get_commodity("chemicals")
+        assert farm is not None and simple_tools is not None and chemicals is not None
+        actor.inventory.add_commodity(farm, 1)
+        actor.inventory.add_commodity(simple_tools, 1)
+        actor.inventory.add_commodity(chemicals, 1)
+
+        biomass = sim.commodity_registry.get_commodity("biomass")
+        assert biomass is not None
+        before = actor.inventory.get_quantity(biomass)
+
+        with (
+            patch("spacesim2.core.skill.SkillCheck.success_check", return_value=True),
+            patch(
+                "spacesim2.core.skill.SkillCheck.multiplier_check", return_value=False
+            ),
+        ):
+            result = ProcessCommand("farm_biomass").execute(actor)
+
+        assert result is True, f"Process failed with action: {actor.last_action}"
+        # Base output 64 * 0.25 = 16, matching gather_biomass's output scaling.
+        assert actor.inventory.get_quantity(biomass) - before == 16

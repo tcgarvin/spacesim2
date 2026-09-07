@@ -13,6 +13,26 @@
     commodity: biomass
     effect: output
 
+- id: farm_biomass
+  name: Farm Biomass
+  inputs:
+    chemicals: 1
+  outputs:
+    biomass: 64
+  tools_required:
+    - simple_tools
+  facilities_required:
+    - farm
+  labor: 1
+  relevant_skills:
+    - agriculture
+  description: Grows biomass at industrial scale in a powered farm.
+  resource_attribute:
+    commodity: biomass
+    effect: output
+  upkeep:
+    heavy_machinery: 0.01
+
 - id: make_building_materials_wood
   name: Make Building Materials (Wood)
   inputs:
@@ -390,6 +410,22 @@
   relevant_skills:
     - advanced_manufacturing
   description: Constructs a workshop equipped for electronics assembly and testing.
+
+- id: build_farm
+  name: Build Farm
+  inputs:
+    simple_building_materials: 5
+    heavy_machinery: 1
+  outputs:
+    farm: 1
+  tools_required:
+    - simple_tools
+  facilities_required: []
+  labor: 5
+  relevant_skills:
+    - advanced_manufacturing
+    - agriculture
+  description: Constructs an industrial farm for large-scale biomass growth.
 
 # === Tier 2 Production ===
 
