@@ -261,10 +261,18 @@ class ActorBrain:
         Drives are served in priority order: food first, then by marginal
         welfare. Each drive draws from a running budget, so higher-priority
         needs get first claim on the actor's money.
+
+        A second pass then bids for drive materials nobody sells here, so
+        remote demand is visible to ships. It runs after every drive has
+        claimed budget for goods it can actually buy today, so an import
+        signal never outbids a shelf purchase for a lower-priority need.
         """
         if cache is None:
             cache = BrainCache()
         commands: List[MarketCommand] = []
+        absent: List[
+            Tuple[List["CommodityDefinition"], "CommodityDefinition", int, int, int]
+        ] = []
         available = actor.money
 
         lam = self._value_of_money(actor, market, cache)
@@ -310,7 +318,80 @@ class ActorBrain:
                 commands.append(PlaceBuyOrderCommand(target_commodity, qty, bid))
                 available -= qty * bid
 
+            if ask is not None:
+                absent.append((mats, target_commodity, need, wtp, ask))
+
+        for mats, target_commodity, need, wtp, ask in absent:
+            available = self._add_absent_material_bids(
+                actor,
+                market,
+                mats,
+                target_commodity,
+                need,
+                wtp,
+                ask,
+                available,
+                commands,
+                cache,
+            )
+
         return commands
+
+    def _add_absent_material_bids(
+        self,
+        actor: "Actor",
+        market: "Market",
+        materials: List["CommodityDefinition"],
+        target_commodity: "CommodityDefinition",
+        need: int,
+        wtp: int,
+        ask: int,
+        available: int,
+        commands: List[MarketCommand],
+        cache: Optional[BrainCache],
+    ) -> int:
+        """Bid for a drive's materials that nobody sells here. Returns the budget left.
+
+        A drive bids for the cheapest material that has a local ask, so a
+        material with no local seller draws no bid and the planet's demand
+        for it is invisible off-world. Ships read the destination book, so a
+        planet that imports nothing shows nothing to import. This posts one
+        extra bid per absent material, priced at or below what the actor
+        would pay for the material it can actually buy.
+
+        Price: ``min(wtp, ask, reference * (1 + scarcity_pressure))``. The
+        ceiling is the drive's own willingness to pay; ``ask`` bounds it by
+        the substitute on the shelf, since no buyer pays more for an absent
+        good than for one it can carry home today; the escalating reference
+        starts the bid at a level the market can supply and raises it while
+        the bid goes unfilled.
+
+        Budget: the caller's running ``available`` is threaded through, so
+        every bid an actor places in a turn together reserves no more than
+        its money, and the caller runs this pass last so a speculative
+        import bid never outbids a shelf purchase for a lower-priority
+        need. Quantity is the same restock ``need``, so an actor with cash
+        can end a turn holding up to twice its target. Consumption then
+        keeps it out of the market until stock falls back below target.
+
+        Cost is one dict lookup per material: ``_cheapest_material_ask``
+        already populated the quote cache this turn.
+        """
+        for material in materials:
+            if material is target_commodity:
+                continue
+            if _get_bid_ask(market, material, cache)[1] is not None:
+                continue  # somebody sells it here, including possibly the actor
+            ref = self._drive_bid_reference(actor, market, material, cache)
+            pressure = market.scarcity_pressure_for(material)
+            price = min(wtp, ask, int(round(ref * (1.0 + pressure))))
+            if price <= 0:
+                continue
+            qty = min(need, available // price)
+            if qty > 0:
+                commands.append(PlaceBuyOrderCommand(material, qty, price))
+                available -= qty * price
+        return available
 
     def _drive_bid_reference(
         self,

@@ -47,6 +47,72 @@ a spiky reference across 134 orders, not a price the fleet pays.
 
 12 planets, 200 turns: PASS. Fuel purchase price did not move; the win is
 that ships keep their tanks and their money.
+## 2026-09-07 - Staple demand bid: bid for a drive material nobody sells here
+
+Importer planets never posted a `processed_food` bid, so 1.9M units of
+staple sat on the plant planets at 1-2 credits and no ship ever loaded
+one. `ActorBrain._drive_buy_commands` bids for the cheapest drive material
+that has a *local ask*; a biomass-poor planet with no plant sees only hand
+`food` for sale and bids 11-19 for that. Ships plan against the
+destination order book, so the demand was invisible off-world.
+
+Decision: after every drive has placed its primary bid,
+`ActorBrain._add_absent_material_bids` posts one more bid per drive
+material with no live local ask, at
+`min(wtp, ask, reference * (1 + scarcity_pressure))` for the drive's
+restock `need`. No hardcoded commodity: it iterates `materials()`, and
+only `FoodDrive` lists two, so today it fires only for `processed_food`.
+
+- `wtp` is the unchanged `_drive_willingness_to_pay`; `ask` is the
+  cheapest local ask across the drive's materials, so nobody pays more for
+  an absent good than for the substitute on the shelf; unfilled bids raise
+  `scarcity_pressure` toward 3.0, so the bid ratchets from a level the
+  market can supply up to the ceiling.
+- The pass runs last and shares the caller's running budget. Placing it
+  inside the per-drive loop instead cost shelter 0.82 -> 0.70 across two
+  reps and flagged the verdict WARN: food is first in
+  `_drives_by_priority`, so a second food bid claimed budget ahead of
+  shelter's first. Running it after all primary bids removed the drift.
+- Cost is one dict lookup per material; `_cheapest_material_ask` has
+  already filled the quote cache for that turn.
+
+`notebooks/processed_food_export_probe.py`, 100 planets, 300 turns,
+sampled every 50 from turn 150, surplus threshold 300, one rep each arm.
+The probe gained a `dest_bid_depth` field for this.
+
+| processed_food, median over 56/58 surplus-planet observations | before | after |
+|---|---|---|
+| destination bid depth (units) | 29 | 1007 |
+| sellable quantity of the best plan | 1 | 9 |
+| destination best bid | 15 | 16 |
+| expected sell price | 15 | 6.5 |
+| gate `pair_infeasible_fuel_or_cash` | 93% | 91% |
+| gate `no_dest_demand_or_budget` | 0% | 2% |
+| staple stock held at a surplus planet | 5392 | 3913 |
+
+The fleet is broke in both arms, so `pair_infeasible_fuel_or_cash` still
+blocks 9 in 10 evaluations and ships hauled 0 units of staple either way;
+that fix is separate. What moved is the demand side: a ship that can reach
+a destination now finds about a thousand units bid for instead of thirty.
+
+12 planets, 200 turns, 3 reps each arm, against d5758f6:
+
+| kpi | before | after |
+|-----|--------|-------|
+| verdict | PASS, PASS, WARN | WARN, PASS, PASS |
+| drives.food.mean_health | 0.998 ± 0.001 | 0.999 ± 0.000 |
+| drives.clothing.mean_health | 0.795 ± 0.193 | 0.858 ± 0.053 |
+| drives.shelter.mean_health | 0.712 ± 0.186 | 0.728 ± 0.052 |
+| drives.health.mean_health | 0.244 ± 0.157 | 0.423 ± 0.117 |
+| prices.food | 6.5 ± 0.4 | 5.3 ± 0.7 |
+| money.mean | 597 ± 30 | 567 ± 54 |
+
+No KPI drifts down beyond the ±0.05 the population means are stable to.
+The WARN in each arm is the same 12-planet flakiness, shelter below 0.70.
+
+Open: hand `food`'s median best-plan quantity fell 76 -> 8.5 in the same
+probe on 5 feasible observations either side, which is too small a sample
+to call. Worth rechecking once the fleet can move.
 
 ## 2026-09-07 - Food refresh: two tracks, facility upkeep, heavy machinery
 
