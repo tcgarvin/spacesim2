@@ -16,6 +16,7 @@ from spacesim2.core.commands import (
     PlaceBuyOrderCommand,
     ProcessCommand,
 )
+from spacesim2.core.drives.food_drive import food_pantry_units
 
 if TYPE_CHECKING:
     from spacesim2.core.commodity import CommodityDefinition
@@ -51,9 +52,9 @@ class ColonistBrain(ActorBrain):
         if not food_commodity or not biomass_commodity:
             return GovernmentWorkCommand()
 
-        # Food is most urgent.
-        food_quantity = actor.inventory.get_quantity(food_commodity)
-        if food_quantity < 5:
+        # Food is most urgent. The pantry counts the bought staple as well as
+        # hand-cooked food, so an actor living on processed food does not cook.
+        if food_pantry_units(actor) < 5:
             if actor.can_execute_process("make_food"):
                 return ProcessCommand("make_food")
 

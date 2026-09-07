@@ -18,9 +18,21 @@ from spacesim2.core.commands import (
     PlaceSellOrderCommand,
     ProcessCommand,
 )
-from spacesim2.core.commodity import CommodityDefinition, Inventory
+from spacesim2.core.commodity import (
+    CommodityDefinition,
+    CommodityRegistry,
+    Inventory,
+)
+from spacesim2.core.drives.food_drive import FoodDrive
 from spacesim2.core.market import Market
 from spacesim2.core.process import ProcessDefinition
+
+
+def _real_registry() -> CommodityRegistry:
+    """Registry loaded from the project's commodity data."""
+    registry = CommodityRegistry()
+    registry.load_from_file("data/commodities.yaml")
+    return registry
 
 
 def _wire_producer_index(sim_mock):
@@ -156,6 +168,9 @@ class TestIndustrialistBrain:
         )
         mock_actor.inventory.get_quantity.return_value = 10
         mock_actor.inventory.has_quantity.return_value = True
+        # The food gate reads the FoodDrive pantry, so this actor needs one.
+        mock_actor.inventory.get_available_quantity.return_value = 10
+        mock_actor.drives = [FoodDrive(_real_registry())]
         mock_actor.can_execute_process.return_value = True
 
         mock_process = Mock(spec=ProcessDefinition)
@@ -181,6 +196,9 @@ class TestIndustrialistBrain:
         )
         mock_actor.inventory.get_quantity.return_value = 10
         mock_actor.inventory.has_quantity.return_value = True
+        # The food gate reads the FoodDrive pantry, so this actor needs one.
+        mock_actor.inventory.get_available_quantity.return_value = 10
+        mock_actor.drives = [FoodDrive(_real_registry())]
         mock_actor.can_execute_process.return_value = False
 
         mock_process = Mock(spec=ProcessDefinition)

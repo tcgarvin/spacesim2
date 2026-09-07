@@ -11,6 +11,9 @@ PANTRY_MAX = 30.0
 URGENCY = 1
 DRIVE_NAME = "food"
 
+STAPLE_COMMODITY_ID = "processed_food"
+QUALITY_COMMODITY_ID = "food"
+
 
 class FoodDriveMetrics(DriveMetrics):
     def get_name(self) -> str:
@@ -22,6 +25,14 @@ class FoodDriveMetrics(DriveMetrics):
 
 
 class FoodDrive(ActorDrive):
+    """The daily meal.
+
+    The staple is ``processed_food``, made in bulk at a chemical plant. The
+    quality good is ``food``, cooked by hand from biomass; it is more
+    expensive per unit and eating it decays debt faster. Both are bid for,
+    both count toward the pantry, and the cheaper ask wins each purchase.
+    """
+
     MISS_PENALTY = DEBT_MISS_PENALTY
     TARGET_UNITS = 6
 
@@ -30,16 +41,23 @@ class FoodDrive(ActorDrive):
         self.metrics = FoodDriveMetrics(
             health=1.0, debt=0.0, buffer=0.0, urgency=URGENCY
         )
-        food_commodity = commodity_registry.get_commodity("food")
-        if food_commodity is None:
-            raise ValueError("FoodDrive requires a registered 'food' commodity")
-        self.food_commodity = food_commodity
-        self.quality_commodity = commodity_registry.get_commodity("processed_food")
+        staple = commodity_registry.get_commodity(STAPLE_COMMODITY_ID)
+        if staple is None:
+            raise ValueError(
+                f"FoodDrive requires a registered '{STAPLE_COMMODITY_ID}' commodity"
+            )
+        quality = commodity_registry.get_commodity(QUALITY_COMMODITY_ID)
+        if quality is None:
+            raise ValueError(
+                f"FoodDrive requires a registered '{QUALITY_COMMODITY_ID}' commodity"
+            )
+        self.staple_commodity = staple
+        self.quality_commodity = quality
 
     def materials(self) -> list[CommodityDefinition]:
-        # The prosperity food drive owns processed_food; here it is only an
-        # emergency fallback, so it is not bid for or kept as a need.
-        return [self.food_commodity]
+        # Staple first: it is the cheaper unit and the default target when
+        # neither good is for sale locally.
+        return [self.staple_commodity, self.quality_commodity]
 
     def target_units(self) -> int:
         return self.TARGET_UNITS
@@ -61,18 +79,18 @@ class FoodDrive(ActorDrive):
 
     def pantry_units(self, actor: Actor) -> int:
         """Units of food of either quality the actor holds."""
-        units = actor.inventory.get_available_quantity(self.food_commodity)
-        if self.quality_commodity:
-            units += actor.inventory.get_available_quantity(self.quality_commodity)
-        return units
+        return actor.inventory.get_available_quantity(
+            self.staple_commodity
+        ) + actor.inventory.get_available_quantity(self.quality_commodity)
 
     def tick(self, actor: Actor) -> DriveMetrics:
-        # Basic food first; processed food only when the pantry is empty.
+        # Staple first; the hand-cooked good is eaten only when the staple
+        # has run out, and it decays debt faster.
         did_eat = False
         ate_quality = False
-        if actor.inventory.remove_commodity(self.food_commodity, DAILY_CONSUMPTION):
+        if actor.inventory.remove_commodity(self.staple_commodity, DAILY_CONSUMPTION):
             did_eat = True
-        elif self.quality_commodity and actor.inventory.remove_commodity(
+        elif actor.inventory.remove_commodity(
             self.quality_commodity, DAILY_CONSUMPTION
         ):
             did_eat = True
@@ -91,3 +109,17 @@ class FoodDrive(ActorDrive):
         )
 
         return self.metrics
+
+
+def food_pantry_units(actor: Actor) -> int:
+    """Units of edible food the actor holds, staple plus hand-cooked.
+
+    The brains' cook-or-gather gates read this instead of the ``food``
+    commodity alone, so an actor living on bought staple does not also cook.
+    An actor with no food drive returns 0 and so keeps cooking; only actors
+    that eat carry the drive.
+    """
+    for drive in actor.drives:
+        if isinstance(drive, FoodDrive):
+            return drive.pantry_units(actor)
+    return 0

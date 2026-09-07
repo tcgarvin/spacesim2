@@ -24,7 +24,7 @@ instances per regular actor:
 
 | Category | Good | Base event rate | Base target units |
 |----------|------|-----------------|-------------------|
-| food | `processed_food` | 1/3 per turn | 3 |
+| food | `food` | 1/3 per turn | 3 |
 | clothing | `quality_clothing` | 1/60 | 2 |
 | shelter | `prefab_housing` | 1/120 | 2 |
 | health | `advanced_medicine` | 1/90 | 1 |
@@ -33,15 +33,17 @@ instances per regular actor:
 
 Rates and targets are starting values for the first probe.
 
-`processed_food` is made by `process_food`: 40 biomass + 1 chemicals ->
-60 processed_food at a chemical plant. It consumes no `food`, so
-processed-food makers do not compete with hungry consumers for the staple.
+The food category is the exception to the pattern below. `processed_food`
+is the staple `FoodDrive` eats, made by `process_food`: 40 biomass + 1
+chemicals -> 60 processed_food at a chemical plant. Hand-cooked `food` (4
+biomass -> 4 food) is the premium good, so the food category's prosperity
+good is `food` itself and `FoodDrive.materials()` returns both.
 
-Each prosperity drive owns its good. Need drives stop preferring quality
-goods: `ShelterDrive.materials()` and its siblings return the basic good
-only. A need drive may still consume the quality good as a last resort when
-the basic good is out of stock, so a hungry actor with processed food on
-hand still eats. That fallback is the only remaining coupling between the two
+Each other prosperity drive owns its good outright. Those need drives
+return the basic good only from `materials()`:
+`ShelterDrive.materials()` and its siblings do not bid for the quality
+good, though they still consume it as a last resort when the basic good is
+out of stock. That fallback is the only remaining coupling between the two
 families.
 
 Mechanics follow `ClothingDrive`: a Bernoulli consumption event per turn,

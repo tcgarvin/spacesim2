@@ -37,13 +37,20 @@ The WTP ceiling and phantom-bid entry are fixed (`FoodDrive.security`,
   raw materials is the next lever. Shelter need lost ~0.04 health to
   prefab makers absorbing building materials on wood-poor planets
   (`notebooks/substitute_bound_probe.py`); a 9x substitute bound did not
-  fix it, supply on wood-poor planets is the question. Processed-food
-  coverage fell 0.45 -> 0.20 under its 3x food bound.
-- Processed food no longer consumes staple food: `process_food` takes
-  40 biomass + 1 chemicals -> 60 processed_food at a chemical plant. The
-  substitute-bound question (a cap on the processed-food bid relative to the
-  food price) is moot as a food-competition fix; the food/processed-food
-  drive flip is the next layer.
+  fix it, supply on wood-poor planets is the question. Prosperity food
+  coverage is now coverage of hand-cooked `food`, the premium good.
+- The food/processed-food drive flip has landed (see the decision log):
+  `processed_food` is the staple `FoodDrive` eats and bids for, hand-cooked
+  `food` is the premium good of the prosperity food category. The
+  substitute-bound question is closed; the flip was the mechanism. Two
+  follow-ups. First, the prosperity food category now consumes hand-cooked
+  food at 1/3 per turn on top of the daily staple meal, and the isolated
+  A/B charges that to the slower chains: health -0.37, shelter -0.09,
+  clothing -0.06, gate pass share -0.36, all REGRESS at 3 reps. Re-tune the
+  category's event rate and target units, which were set for a factory-made
+  good. Second, the staple glut has not cleared: 50,777 units at turn 300,
+  concentrated on plant planets, staple at 2.1 credits against hand food at
+  5.8.
 - Prosperity UI tiers (phase 3 of `docs/prosperity-design.md`) not started.
 
 ## Dev-loop improvements (from the retired roadmap)

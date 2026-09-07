@@ -59,7 +59,7 @@ class ProsperityCategory:
 
 
 PROSPERITY_CATEGORIES: tuple[ProsperityCategory, ...] = (
-    ProsperityCategory("food", "processed_food", 1.0 / 3.0, 3),
+    ProsperityCategory("food", "food", 1.0 / 3.0, 3),
     ProsperityCategory("clothing", "quality_clothing", 1.0 / 60.0, 2),
     ProsperityCategory("shelter", "prefab_housing", 1.0 / 120.0, 2),
     ProsperityCategory("health", "advanced_medicine", 1.0 / 90.0, 1),

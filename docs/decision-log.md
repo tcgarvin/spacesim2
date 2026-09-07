@@ -4,6 +4,80 @@ Append-only record of closed decisions, postmortems, and landed campaigns.
 Newest first. Open work lives in `TODO.md`; current reference docs live
 alongside this file.
 
+## 2026-09-07 - Food flip: processed food is the staple, hand-cooked food the premium
+
+Layer 3 of the food-system refresh. Layers 1 and 2 made hand food cheap
+(`gather_biomass` 8 biomass, `make_food` 4 biomass -> 4 food) and added an
+industrial recipe (`process_food`: 40 biomass + 1 chemicals -> 60
+processed_food at a chemical plant). Processed food was still a prosperity
+good consumed at 1/3 per turn, so it piled up: 54,776 units held at turn
+300 on 12 planets.
+
+Decision: swap the two. `FoodDrive` eats and bids for `processed_food`
+first and `food` second; the food prosperity category owns `food`. Both
+goods are drive materials, so `_cheapest_material_ask` buys whichever is
+cheaper and the pantry counts both. Three supporting changes:
+
+- Numeraire. `_value_of_money` and `_surplus_money_discount` anchored on
+  `materials()[0]`, which is now the staple. On a planet with no chemical
+  plant the staple has no trades and only an imputed price, so lambda would
+  be anchored on a good nobody there sells. Both now take the cheapest
+  effective price across the drive's materials
+  (`ActorBrain._cheapest_effective_price`).
+- Willingness-to-pay cap. `_drive_willingness_to_pay` capped a need bid at
+  the actor's replacement cost for the target good. For a plant-less actor
+  that cost is None for the staple, leaving the bid unbounded. The cap is
+  now the cheapest self-supply across the drive's materials, which for that
+  actor is cooking by hand.
+- Cook-or-gather gates. `ColonistBrain` and `IndustrialistBrain` read the
+  `food` quantity alone to decide whether to cook. They now read
+  `food_pantry_units`, so an actor living on bought staple stops cooking.
+  The hand-cook fallback stands: an empty pantry still gathers and cooks.
+
+The substitute bound (`ProsperityCategory.bound_commodity_id`, reverted in
+7711088) is closed by this; the flip is the mechanism that stops processed
+food competing with the staple, because it is the staple.
+
+Plant-less planets do not go hungry. At 12 planets, 300 turns, the five
+planets with no chemical plant ran food health 0.97-1.00 on hand-cooked
+food trading at 3-7 credits, against 1.00 on plant planets.
+
+A/B, 12 planets, 300 turns, 3 reps, against a5e3755 (the facility-upkeep
+merge, so the flip is the only difference):
+
+| kpi | before | after | delta | verdict |
+|-----|--------|-------|-------|---------|
+| verdict.status | PASS,PASS,PASS | PASS,PASS,PASS | | |
+| prosperity.coverage.food | 0.344 ± 0.004 | 0.837 ± 0.046 | +0.493 | IMPROVE |
+| prosperity.index_mean | 0.075 ± 0.003 | 0.148 ± 0.010 | +0.073 | IMPROVE |
+| prosperity.gate_pass_share | 0.602 ± 0.013 | 0.245 ± 0.060 | -0.357 | REGRESS |
+| prosperity.coverage.clothing | 0.096 ± 0.015 | 0.047 ± 0.017 | -0.050 | REGRESS |
+| drives.food.mean_health | 0.999 ± 0.001 | 0.990 ± 0.003 | -0.008 | REGRESS |
+| drives.health.mean_health | 0.686 ± 0.025 | 0.316 ± 0.080 | -0.370 | REGRESS |
+| drives.shelter.mean_health | 0.867 ± 0.030 | 0.781 ± 0.015 | -0.087 | REGRESS |
+| drives.clothing.mean_health | 0.945 ± 0.030 | 0.882 ± 0.001 | -0.063 | REGRESS |
+| money.mean | 828 ± 65 | 851 ± 7 | +23 | |
+
+The prosperity food category is now hand-cooked food eaten at 1/3 per turn
+on top of the daily staple meal, so every actor has a new standing demand
+for labor-intensive food. Prosperity coverage of it goes to 0.84 and the
+index nearly doubles, but the labor comes out of the slower chains: health
+loses 0.37, shelter 0.09, clothing 0.06, and the prosperity gate passes
+less than half as often. Every run still verdicts PASS and food health
+stays at 0.99. The right follow-up is the food category's event rate and
+target, which were set when the category good was factory-made processed
+food at 1/3 per turn; hand food at that rate is a much larger claim on
+labor.
+
+An earlier 3-rep A/B against 912d065 read health as neutral (-0.248 with a
+0.18 spread), but that baseline predates the facility-upkeep merge and so
+mixed two changes. The table above is the isolated one.
+
+The staple glut has not cleared: 50,777 units at turn 300, concentrated on
+plant planets (one held 16,990). Processed food clears at 2.1 credits
+against hand food at 5.8, so the industrial recipe is far cheaper per unit
+than any plant can sell.
+
 ## 2026-09-06 - Prosperity demand: surplus money discount, substitute bound on processed food
 
 Four of six prosperity goods never traded. The probe

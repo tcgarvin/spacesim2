@@ -412,7 +412,7 @@ class ActorBrain:
             mats = drive.materials()
             if not mats:
                 return 0.0
-            return self._effective_food_price(actor, market, mats[0], cache)
+            return self._cheapest_effective_price(actor, market, mats, cache)
         return 0.0
 
     def _value_of_money(
@@ -440,7 +440,7 @@ class ActorBrain:
             mats = drive.materials()
             if not mats:
                 return 0.0
-            price_food = self._effective_food_price(actor, market, mats[0], cache)
+            price_food = self._cheapest_effective_price(actor, market, mats, cache)
             if price_food <= 0:
                 return 0.0
             # Floor the security discount so a wealthy actor can't zero lambda.
@@ -472,6 +472,26 @@ class ActorBrain:
             return min(candidates)
         return float(_get_avg_price(market, food, cache))
 
+    def _cheapest_effective_price(
+        self,
+        actor: "Actor",
+        market: "Market",
+        materials: List["CommodityDefinition"],
+        cache: Optional[BrainCache] = None,
+    ) -> float:
+        """Effective price of the cheapest of a drive's materials.
+
+        The food drive has two materials, a bulk staple and a hand-cooked
+        good, and the numeraire has to be whichever one the actor can
+        actually get. On a planet with no chemical plant the staple has no
+        trades and only an imputed price, so anchoring lambda on it alone
+        would price every other good off a good nobody there sells.
+        """
+        return min(
+            self._effective_food_price(actor, market, material, cache)
+            for material in materials
+        )
+
     def _drive_willingness_to_pay(
         self,
         actor: "Actor",
@@ -483,17 +503,30 @@ class ActorBrain:
     ) -> int:
         """Maximum price the actor pays for one unit of a drive material.
 
-        WTP = marginal_welfare / value_of_money, capped by the cost of making
-        the good locally. The cap relaxes as drive debt accumulates: making
-        it yourself is a long-run substitute, and an actor already going
-        without cannot produce fast enough for the cap to be real, so it
-        accepts a scarcity premium of up to 2x at full deprivation.
+        WTP = marginal_welfare / value_of_money, capped by the cheapest way
+        the actor has of making any of the drive's materials itself. The cap
+        is across materials, not on the target good alone: an actor with no
+        chemical plant cannot make processed food at any price, and capping
+        on that would leave the cap unset and the bid unbounded, when the
+        real alternative is cooking food by hand. The cap relaxes as drive
+        debt accumulates: making it yourself is a long-run substitute, and
+        an actor already going without cannot produce fast enough for the
+        cap to be real, so it accepts a scarcity premium of up to 2x at full
+        deprivation.
         """
         if lam <= 0:
             return 0
         welfare_wtp = drive.marginal_welfare() / lam
 
-        replacement = self._replacement_cost(actor, market, commodity, cache)
+        self_supply = [
+            cost
+            for cost in (
+                self._replacement_cost(actor, market, material, cache)
+                for material in (drive.materials() or [commodity])
+            )
+            if cost is not None
+        ]
+        replacement = min(self_supply) if self_supply else None
         if replacement is not None:
             replacement *= 1.0 + drive.metrics.debt
         wtp = welfare_wtp if replacement is None else min(welfare_wtp, replacement)

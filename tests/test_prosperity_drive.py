@@ -11,7 +11,13 @@ from spacesim2.core.actor import ActorType
 from spacesim2.core.actor_brain import SURPLUS_DISCOUNT_FLOOR, SURPLUS_REFERENCE_DAYS
 from spacesim2.core.commodity import CommodityRegistry
 from spacesim2.core.drives import ClothingDrive, FoodDrive, HealthDrive, ShelterDrive
-from spacesim2.core.drives.food_drive import PANTRY_MAX
+from spacesim2.core.drives.food_drive import (
+    DEBT_DECAY_FACTOR as FOOD_DEBT_DECAY_FACTOR,
+)
+from spacesim2.core.drives.food_drive import (
+    PANTRY_MAX,
+    QUALITY_DEBT_DECAY_FACTOR,
+)
 from spacesim2.core.drives.prosperity_drive import (
     CATEGORY_NAMES,
     DEBT_DECAY_FACTOR,
@@ -133,7 +139,7 @@ class TestGate:
         """
         actor = _actor_with_needs(registry)
         food = actor.drives[0]
-        actor.inventory.add_commodity(food.food_commodity, food.target_units())
+        actor.inventory.add_commodity(food.staple_commodity, food.target_units())
         food.tick(actor)
         assert food.metrics.buffer >= GATE_MIN_BUFFER
 
@@ -145,10 +151,10 @@ class TestGate:
         """
         actor = _actor_with_needs(registry)
         food = actor.drives[0]
-        actor.inventory.add_commodity(food.food_commodity, 4)
+        actor.inventory.add_commodity(food.staple_commodity, 4)
         food.tick(actor)
         assert food.metrics.buffer >= GATE_MIN_BUFFER
-        actor.inventory.remove_commodity(food.food_commodity, 1)
+        actor.inventory.remove_commodity(food.staple_commodity, 1)
         food.tick(actor)
         assert food.metrics.buffer < GATE_MIN_BUFFER
 
@@ -291,10 +297,12 @@ class TestBrainWiring:
 
 
 class TestNeedDriveMaterialsBasicGoodOnly:
-    """Need drives list only their basic good; the upgrade is a fallback."""
+    """Slow need drives list only their basic good; the upgrade is a fallback.
+
+    Food is the exception: it bids for both the staple and the premium good.
+    """
 
     NEED_DRIVES = [
-        (FoodDrive, "food"),
         (ClothingDrive, "clothing"),
         (ShelterDrive, "simple_building_materials"),
         (HealthDrive, "medicine"),
@@ -305,24 +313,45 @@ class TestNeedDriveMaterialsBasicGoodOnly:
             mats = Drive(registry).materials()
             assert [m.id for m in mats] == [basic_id]
 
-    def test_basic_good_consumed_before_quality(self, registry):
-        """With both goods on hand, the basic good is drawn down first."""
+    def test_food_materials_list_staple_then_premium(self, registry):
+        mats = FoodDrive(registry).materials()
+        assert [m.id for m in mats] == ["processed_food", "food"]
+
+    def test_staple_consumed_before_premium(self, registry):
+        """With both goods on hand, the staple is drawn down first."""
         drive = FoodDrive(registry)
         actor = get_actor("Stocked")
-        actor.inventory.add_commodity(drive.food_commodity, 2)
+        actor.inventory.add_commodity(drive.staple_commodity, 2)
         actor.inventory.add_commodity(drive.quality_commodity, 2)
         drive.tick(actor)
-        assert actor.inventory.get_available_quantity(drive.food_commodity) == 1
+        assert actor.inventory.get_available_quantity(drive.staple_commodity) == 1
         assert actor.inventory.get_available_quantity(drive.quality_commodity) == 2
 
-    def test_quality_good_used_as_fallback_when_basic_is_out(self, registry):
-        """A hungry actor holding only processed food still eats."""
+    def test_premium_good_used_as_fallback_when_staple_is_out(self, registry):
+        """A hungry actor holding only hand-cooked food still eats."""
         drive = FoodDrive(registry)
         actor = get_actor("QualityOnly")
         actor.inventory.add_commodity(drive.quality_commodity, 1)
         drive.tick(actor)
         assert actor.food_consumed_this_turn is True
         assert actor.inventory.get_available_quantity(drive.quality_commodity) == 0
+
+    def test_premium_meal_decays_debt_faster(self, registry):
+        """Eating the premium good uses QUALITY_DEBT_DECAY_FACTOR."""
+        staple_drive = FoodDrive(registry)
+        premium_drive = FoodDrive(registry)
+        staple_drive.metrics.debt = 0.4
+        premium_drive.metrics.debt = 0.4
+        staple_actor = get_actor("Staple")
+        premium_actor = get_actor("Premium")
+        staple_actor.inventory.add_commodity(staple_drive.staple_commodity, 1)
+        premium_actor.inventory.add_commodity(premium_drive.quality_commodity, 1)
+        staple_drive.tick(staple_actor)
+        premium_drive.tick(premium_actor)
+        assert staple_drive.metrics.debt == pytest.approx(0.4 * FOOD_DEBT_DECAY_FACTOR)
+        assert premium_drive.metrics.debt == pytest.approx(
+            0.4 * QUALITY_DEBT_DECAY_FACTOR
+        )
 
 
 class TestGateControlsPurchaseNotConsumption:

@@ -17,6 +17,7 @@ from spacesim2.core.commands import (
     PlaceBuyOrderCommand,
     ProcessCommand,
 )
+from spacesim2.core.drives.food_drive import food_pantry_units
 
 if TYPE_CHECKING:
     from spacesim2.core.actor import Actor
@@ -199,8 +200,8 @@ class IndustrialistBrain(ActorBrain):
         if not food_commodity:
             return GovernmentWorkCommand()
 
-        food_quantity = actor.inventory.get_quantity(food_commodity)
-        if food_quantity < 2:
+        # The pantry counts the bought staple as well as hand-cooked food.
+        if food_pantry_units(actor) < 2:
             if actor.can_execute_process("make_food"):
                 return ProcessCommand("make_food")
             if biomass_commodity:

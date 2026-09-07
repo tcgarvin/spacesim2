@@ -7,7 +7,7 @@ turn: it consumes satisfying goods from the actor's inventory and updates a
 
 | Drive | Consumption | Basic good | Fallback good | Miss penalty |
 |-------|-------------|------------|--------------|--------------|
-| Food (`food_drive.py`) | deterministic, 1/turn | `food` | `processed_food` | 0.2 |
+| Food (`food_drive.py`) | deterministic, 1/turn | `processed_food` | `food` | 0.2 |
 | Clothing (`clothing_drive.py`) | stochastic, p = 1/60 per turn | `clothing` | `quality_clothing` | 0.5 |
 | Shelter (`shelter_drive.py`) | stochastic, p = 1/120 per turn | `simple_building_materials` | `prefab_housing` | 0.5 |
 | Health (`health_drive.py`) | stochastic, p = 1/90 per turn | `medicine` | `advanced_medicine` | 0.4 |
@@ -33,9 +33,11 @@ Each `tick()` updates four values, all in [0, 1]:
 
 Every need drive consumes its basic good first and the fallback good only
 when the basic good is out of stock. Fallback consumption decays debt faster
-(0.5 vs 0.8). Both goods count toward buffer coverage, but `materials()`
-returns the basic good only, so a need never bids for or stockpiles the
-upgraded good. The upgraded goods are owned by the prosperity drives below.
+(0.5 vs 0.8). Both goods count toward buffer coverage. For clothing,
+shelter and health `materials()` returns the basic good only, so those needs
+never bid for or stockpile the upgraded good; the upgraded goods are owned
+by the prosperity drives below. Food is the exception: `FoodDrive` bids for
+both the staple `processed_food` and the premium `food`.
 
 ## Prosperity drives
 
@@ -44,7 +46,7 @@ per category on every regular actor. Design in `docs/prosperity-design.md`.
 
 | Category | Good | Base event rate | Base target units |
 |----------|------|-----------------|-------------------|
-| food | `processed_food` | 1/3 per turn | 3 |
+| food | `food` | 1/3 per turn | 3 |
 | clothing | `quality_clothing` | 1/60 | 2 |
 | shelter | `prefab_housing` | 1/120 | 2 |
 | health | `advanced_medicine` | 1/90 | 1 |
@@ -52,8 +54,10 @@ per category on every regular actor. Design in `docs/prosperity-design.md`.
 | computing | `computers` | 1/180 | 1 |
 
 `processed_food` comes from `process_food`: 40 biomass + 1 chemicals -> 60
-processed_food at a chemical plant. No process turns `food` into
-`processed_food`.
+processed_food at a chemical plant. Hand-cooked `food` comes from
+`make_food`: 4 biomass -> 4 food, no facility. Food is the one category
+whose prosperity good is also a need material: `FoodDrive.materials()`
+returns both goods and bids for whichever is cheaper.
 
 - `WELLBEING = False`: excluded from planet wellbeing, the summary `drives`
   block, and the verdict. Reported in the summary `prosperity` block.

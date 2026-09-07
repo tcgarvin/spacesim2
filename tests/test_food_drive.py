@@ -52,11 +52,12 @@ class TestFoodDriveInitialization:
         return registry
 
     def test_initialization(self, commodity_registry):
-        """A new drive resolves the food commodity and starts healthy."""
+        """A new drive resolves both food commodities and starts healthy."""
         drive = FoodDrive(commodity_registry)
 
-        assert drive.food_commodity is not None
-        assert drive.food_commodity.id == "food"
+        assert drive.staple_commodity.id == "processed_food"
+        assert drive.quality_commodity.id == "food"
+        assert [m.id for m in drive.materials()] == ["processed_food", "food"]
         assert isinstance(drive.metrics, FoodDriveMetrics)
         assert drive.metrics.health == 1.0
         assert drive.metrics.debt == 0.0
@@ -89,7 +90,7 @@ class TestFoodDriveTick:
         self, food_drive, mock_actor, commodity_registry
     ):
         """tick() consumes DAILY_CONSUMPTION food when the actor has food."""
-        food = commodity_registry.get_commodity("food")
+        food = commodity_registry.get_commodity("processed_food")
         mock_actor.inventory.add_commodity(food, 5)
 
         initial_food = mock_actor.inventory.get_quantity(food)
@@ -105,7 +106,7 @@ class TestFoodDriveTick:
         self, food_drive, mock_actor, commodity_registry
     ):
         """food_consumed_this_turn becomes True after eating."""
-        food = commodity_registry.get_commodity("food")
+        food = commodity_registry.get_commodity("processed_food")
         mock_actor.inventory.add_commodity(food, 1)
 
         assert mock_actor.food_consumed_this_turn is False
@@ -128,7 +129,7 @@ class TestFoodDriveTick:
         self, food_drive, mock_actor, commodity_registry
     ):
         """Health is 1.0 after eating."""
-        food = commodity_registry.get_commodity("food")
+        food = commodity_registry.get_commodity("processed_food")
         mock_actor.inventory.add_commodity(food, 1)
 
         metrics = food_drive.tick(mock_actor)
@@ -162,7 +163,7 @@ class TestFoodDriveTick:
         initial_debt = food_drive.metrics.debt
         assert initial_debt > 0
 
-        food = commodity_registry.get_commodity("food")
+        food = commodity_registry.get_commodity("processed_food")
         mock_actor.inventory.add_commodity(food, 1)
         food_drive.tick(mock_actor)
 
@@ -173,7 +174,7 @@ class TestFoodDriveTick:
         self, food_drive, mock_actor, commodity_registry
     ):
         """Buffer is positive at the pantry target and does not fall with more food."""
-        food = commodity_registry.get_commodity("food")
+        food = commodity_registry.get_commodity("processed_food")
 
         mock_actor.inventory.add_commodity(food, int(PANTRY_TARGET))
         food_drive.tick(mock_actor)
@@ -191,7 +192,7 @@ class TestFoodDriveTick:
         self, food_drive, mock_actor, commodity_registry
     ):
         """Buffer is 0 when eating leaves no food."""
-        food = commodity_registry.get_commodity("food")
+        food = commodity_registry.get_commodity("processed_food")
         mock_actor.inventory.add_commodity(
             food, DAILY_CONSUMPTION
         )  # enough for one meal
@@ -202,7 +203,7 @@ class TestFoodDriveTick:
 
     def test_tick_returns_metrics(self, food_drive, mock_actor, commodity_registry):
         """tick() returns the drive's own metrics object."""
-        food = commodity_registry.get_commodity("food")
+        food = commodity_registry.get_commodity("processed_food")
         mock_actor.inventory.add_commodity(food, 10)
 
         result = food_drive.tick(mock_actor)
@@ -250,7 +251,7 @@ class TestFoodDriveIntegration:
 
         assert actor.food_consumed_this_turn is False
 
-        food = simulation.commodity_registry.get_commodity("food")
+        food = simulation.commodity_registry.get_commodity("processed_food")
         actor.inventory.add_commodity(food, 5)
 
         actor.take_turn()
@@ -260,7 +261,7 @@ class TestFoodDriveIntegration:
     def test_multiple_turns_consumption(self, simulation):
         """Three food units feed three turns, then the actor goes hungry."""
         food_drive = FoodDrive(simulation.commodity_registry)
-        food = simulation.commodity_registry.get_commodity("food")
+        food = simulation.commodity_registry.get_commodity("processed_food")
 
         actor = Actor(
             name="TestActor",
@@ -325,7 +326,7 @@ class TestFoodSecurity:
     def _actor(self, food_drive, money: int, food: int) -> Actor:
         actor = Mock(spec=Actor)
         actor.inventory = Inventory()
-        actor.inventory.add_commodity(food_drive.food_commodity, food)
+        actor.inventory.add_commodity(food_drive.staple_commodity, food)
         actor.money = money
         return actor
 
