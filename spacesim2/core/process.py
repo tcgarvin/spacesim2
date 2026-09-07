@@ -44,6 +44,10 @@ class ProcessDefinition:
     relevant_skills: List[str] = field(default_factory=list)
     # Only gathering processes set this.
     resource_attribute: Optional[ResourceAttribute] = None
+    # Facility upkeep: commodity to the probability that one unit of it is
+    # consumed by a single run. Unlike tools, upkeep goods are not required
+    # to start a run, so they are absent from ``requirements``.
+    upkeep: Dict[CommodityDefinition, float] = field(default_factory=dict)
     # Read-only flattenings of the fields above, built once for hot scan
     # loops. Definitions are immutable after registry load, so they never go
     # stale. inputs/outputs as (commodity, quantity) tuples save a fresh
@@ -61,6 +65,12 @@ class ProcessDefinition:
     )
 
     def __post_init__(self) -> None:
+        for commodity, probability in self.upkeep.items():
+            if not 0.0 < probability <= 1.0:
+                raise ValueError(
+                    f"upkeep probability for {commodity} in process "
+                    f"{self.id!r} must be in (0, 1], got {probability!r}"
+                )
         self.inputs_items = tuple(self.inputs.items())
         self.outputs_items = tuple(self.outputs.items())
         self.requirements = (
@@ -133,6 +143,16 @@ class ProcessRegistry:
                             f"Warning: Skipping unknown commodity ID '{commodity_id}' in process facilities required"
                         )
 
+                upkeep = {}
+                for commodity_id, probability in process_data.get("upkeep", {}).items():
+                    commodity = self._commodity_registry.get_commodity(commodity_id)
+                    if commodity:
+                        upkeep[commodity] = float(probability)
+                    else:
+                        print(
+                            f"Warning: Skipping unknown commodity ID '{commodity_id}' in process upkeep"
+                        )
+
                 relevant_skills = process_data.get("relevant_skills", [])
 
                 resource_attribute = None
@@ -154,6 +174,7 @@ class ProcessRegistry:
                     description=process_data["description"],
                     relevant_skills=relevant_skills,
                     resource_attribute=resource_attribute,
+                    upkeep=upkeep,
                 )
                 self._processes[process_def.id] = process_def
             self._all_cache = None
