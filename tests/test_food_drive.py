@@ -350,3 +350,102 @@ class TestFoodSecurity:
         assert food_drive.security(actor, unit_price=0.0) == food_drive.security(
             self._actor(food_drive, money=0, food=6), unit_price=7.0
         )
+
+
+class TestStapleDemandBid:
+    """A drive material nobody sells locally still gets a bid.
+
+    Ships read the destination order book, so a planet with no local
+    ``processed_food`` seller has to post its own bid or its demand is
+    invisible off-world. See ``ActorBrain._add_absent_material_bids``.
+    """
+
+    @pytest.fixture
+    def sim(self):
+        from spacesim2.core.simulation import Simulation
+
+        sim = Simulation()
+        sim.setup_simple(
+            num_planets=1, num_regular_actors=4, num_market_makers=0, num_ships=0
+        )
+        return sim
+
+    def _actors(self, sim):
+        regular = [a for a in sim.actors if a.actor_type == ActorType.REGULAR]
+        return regular[0], regular[1]
+
+    def _food_drive(self, actor) -> FoodDrive:
+        return next(d for d in actor.drives if isinstance(d, FoodDrive))
+
+    def _post_premium_ask(self, seller, price: int, quantity: int = 20) -> FoodDrive:
+        """Put ``food`` on the shelf and nothing else."""
+        drive = self._food_drive(seller)
+        market = seller.planet.market
+        market.buy_orders.clear()
+        market.sell_orders.clear()
+        seller.inventory.add_commodity(drive.quality_commodity, quantity)
+        market.place_sell_order(seller, drive.quality_commodity, quantity, price)
+        return drive
+
+    def test_absent_staple_gets_a_bid(self, sim):
+        """With only premium food for sale, the actor still bids for the staple."""
+        buyer, seller = self._actors(sim)
+        self._post_premium_ask(seller, price=15)
+        buyer.money = 5000
+        buyer.inventory = Inventory()
+
+        commands = buyer.brain._drive_buy_commands(buyer, buyer.planet.market)
+        by_id = {c.commodity_type.id: c for c in commands}
+        assert "processed_food" in by_id
+        assert by_id["processed_food"].quantity > 0
+
+    def test_staple_bid_within_willingness_to_pay(self, sim):
+        """The staple bid never exceeds the drive's WTP or the premium ask."""
+        buyer, seller = self._actors(sim)
+        ask = 15
+        staple = self._post_premium_ask(seller, price=ask).staple_commodity
+        buyer.money = 5000
+        buyer.inventory = Inventory()
+
+        market = buyer.planet.market
+        drive = self._food_drive(buyer)
+        cache = buyer.brain._turn_cache(buyer)
+        lam = buyer.brain._value_of_money(buyer, market, cache)
+        wtp = buyer.brain._drive_willingness_to_pay(
+            buyer, market, drive, staple, lam, cache
+        )
+
+        commands = buyer.brain._drive_buy_commands(buyer, market)
+        bid = next(c for c in commands if c.commodity_type.id == "processed_food")
+        assert 0 < bid.price <= min(wtp, ask)
+
+    def test_bids_stay_within_budget(self, sim):
+        """Premium and staple bids together never exceed the actor's money."""
+        buyer, seller = self._actors(sim)
+        self._post_premium_ask(seller, price=15)
+        buyer.money = 40
+        buyer.inventory = Inventory()
+
+        commands = buyer.brain._drive_buy_commands(buyer, buyer.planet.market)
+        assert commands
+        assert sum(c.quantity * c.price for c in commands) <= buyer.money
+
+    def test_local_staple_ask_keeps_the_old_behavior(self, sim):
+        """With the staple on the shelf, only the cheapest material is bid for."""
+        buyer, seller = self._actors(sim)
+        drive = self._food_drive(seller)
+        market = seller.planet.market
+        market.buy_orders.clear()
+        market.sell_orders.clear()
+        seller.inventory.add_commodity(drive.staple_commodity, 20)
+        seller.inventory.add_commodity(drive.quality_commodity, 20)
+        market.place_sell_order(seller, drive.staple_commodity, 20, 6)
+        market.place_sell_order(seller, drive.quality_commodity, 20, 15)
+        buyer.money = 5000
+        buyer.inventory = Inventory()
+
+        commands = buyer.brain._drive_buy_commands(buyer, market)
+        food_ids = {"processed_food", "food"}
+        food_cmds = [c for c in commands if c.commodity_type.id in food_ids]
+        assert [c.commodity_type.id for c in food_cmds] == ["processed_food"]
+        assert food_cmds[0].price == 6

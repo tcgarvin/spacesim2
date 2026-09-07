@@ -93,7 +93,9 @@ Stored as `Actor.tastes` keyed by category, rolled by `random_tastes()` in
 Prosperity bids go through the existing two-layer path: willingness to pay
 is `marginal_welfare / value_of_money`, capped by replacement cost when the
 actor could make the good, and the posted bid escalates from the reference
-price under scarcity pressure. Nothing new. The value of money is floored at
+price under scarcity pressure. Nothing new. The absent-material bid in
+`docs/needs.md` never fires for a prosperity drive: each lists one material,
+so there is no second material to be missing from the local book. The value of money is floored at
 10% of the hungry value, so a rich actor's ceiling is about ten times a
 hungry actor's. Since the prosperity stake (0.1) is half the food stake
 (0.2), that put every prosperity ceiling near four times the food price,
