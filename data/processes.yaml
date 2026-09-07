@@ -13,6 +13,26 @@
     commodity: biomass
     effect: output
 
+- id: farm_biomass
+  name: Farm Biomass
+  inputs:
+    chemicals: 1
+  outputs:
+    biomass: 64
+  tools_required:
+    - simple_tools
+  facilities_required:
+    - farm
+  labor: 1
+  relevant_skills:
+    - agriculture
+  description: Grows biomass at industrial scale in a powered farm.
+  resource_attribute:
+    commodity: biomass
+    effect: output
+  upkeep:
+    heavy_machinery: 0.01
+
 - id: make_building_materials_wood
   name: Make Building Materials (Wood)
   inputs:
@@ -129,6 +149,22 @@
   relevant_skills:
     - simple_manufacturing
   description: Forges simple tools from refined metal using metalworking equipment.
+
+- id: make_heavy_machinery
+  name: Make Heavy Machinery
+  inputs:
+    common_metal: 5
+  outputs:
+    heavy_machinery: 1
+  tools_required:
+    - simple_tools
+  facilities_required:
+    - metalworking_facility
+  labor: 3
+  relevant_skills:
+    - advanced_manufacturing
+    - simple_manufacturing
+  description: Machines heavy industrial equipment from refined metal.
 
 - id: make_simple_tools_wood
   name: Make Simple Tools (Wood)
@@ -331,6 +367,7 @@
   inputs:
     simple_building_materials: 5
     common_metal: 2
+    heavy_machinery: 1
   outputs:
     chemical_plant: 1
   tools_required:
@@ -373,6 +410,22 @@
   relevant_skills:
     - advanced_manufacturing
   description: Constructs a workshop equipped for electronics assembly and testing.
+
+- id: build_farm
+  name: Build Farm
+  inputs:
+    simple_building_materials: 5
+    heavy_machinery: 1
+  outputs:
+    farm: 1
+  tools_required:
+    - simple_tools
+  facilities_required: []
+  labor: 5
+  relevant_skills:
+    - advanced_manufacturing
+    - agriculture
+  description: Constructs an industrial farm for large-scale biomass growth.
 
 # === Tier 2 Production ===
 
@@ -497,6 +550,8 @@
     - culinary
     - chemistry
   description: Bulk conversion of biomass into preserved processed food.
+  upkeep:
+    heavy_machinery: 0.01
 
 - id: make_quality_clothing
   name: Make Quality Clothing

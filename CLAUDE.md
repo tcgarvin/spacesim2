@@ -242,6 +242,10 @@ can start with nothing:
 6. Refine metal (needs smelting facility)
 7. Build metalworking facility (needs building materials and tools)
 8. Make simple tools from metal (more efficient, needs metalworking facility)
+9. Make heavy machinery from metal (needs metalworking facility; consumed as
+   upkeep by industrial facilities, for example the chemical plant)
+10. Build farm and farm biomass at scale (needs heavy machinery to build,
+    then draws on heavy machinery as upkeep, like the chemical plant)
 
 Tools break with 1% probability per use, which keeps tool demand alive.
 `ColonistBrain` acquires tools before profitable work. `IndustrialistBrain`

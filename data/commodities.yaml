@@ -115,6 +115,11 @@
   transportable: false
   description: Workshop equipped for assembling electronic components and circuits.
 
+- id: farm
+  name: Farm
+  transportable: false
+  description: An industrial farm that grows biomass at scale; needs heavy machinery to keep running.
+
 # --- Tier 2 Intermediates ---
 
 - id: textiles
@@ -151,6 +156,11 @@
   name: Precision Tools
   transportable: true
   description: High-quality tools for advanced manufacturing requiring fine tolerances.
+
+- id: heavy_machinery
+  name: Heavy Machinery
+  transportable: true
+  description: Industrial machinery that keeps farms and plants running; consumed as upkeep.
 
 # --- Tier 2 Consumer Goods ---
 
