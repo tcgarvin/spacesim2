@@ -38,13 +38,13 @@ class TestShip(unittest.TestCase):
         self.ship = Ship("TestShip", self.mock_sim, self.earth)
         self.earth.add_ship(self.ship)
 
-        self.ship.cargo.add_commodity(self.fuel, 50)
+        self.ship.fuel = 50
 
     def test_ship_initialization(self):
         self.assertEqual(self.ship.name, "TestShip")
         self.assertEqual(self.ship.planet, self.earth)
         self.assertEqual(self.ship.status, ShipStatus.DOCKED)
-        self.assertEqual(self.ship.cargo.get_quantity(self.fuel), 50)
+        self.assertEqual(self.ship.fuel, 50)
 
     def test_distance_calculation(self):
         distance = self.ship.route_distance(self.earth, self.mars)
@@ -65,7 +65,7 @@ class TestShip(unittest.TestCase):
         self.assertEqual(self.ship.departure_turns, [7])
 
         fuel_consumed = 3  # 50 / 20 = 2.5, rounded up to 3
-        self.assertEqual(self.ship.cargo.get_quantity(self.fuel), 50 - fuel_consumed)
+        self.assertEqual(self.ship.fuel, 50 - fuel_consumed)
 
         self.assertEqual(self.ship.travel_time, 3)  # 50 / 20 = 2.5, rounded up to 3
 
@@ -81,7 +81,7 @@ class TestShip(unittest.TestCase):
     def test_insufficient_fuel(self):
         ship2 = Ship("FuellessShip", self.mock_sim, self.earth)
         self.earth.add_ship(ship2)
-        ship2.cargo.add_commodity(self.fuel, 2)
+        ship2.fuel = 2
 
         # Keep the random maintenance check out of this test.
         ship2.check_maintenance = lambda: False

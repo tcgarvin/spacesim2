@@ -89,9 +89,8 @@ def test_setup_scales_capital_with_the_galaxy_it_builds():
     assert SHIP_CAPITAL_FLOOR <= small_money < 1.5 * SHIP_CAPITAL_FLOOR
     assert large_money > 1.5 * SHIP_CAPITAL_FLOOR
     # Ships launch with a tankful proportional to the tank they were given.
-    fuel = large.commodity_registry["nova_fuel"]
     for ship in large.ships:
-        held = ship.cargo.get_quantity(fuel)
+        held = ship.fuel
         assert 0 < held <= ship.fuel_capacity
 
 
@@ -104,7 +103,7 @@ def test_pair_economics_credits_fuel_already_in_the_tank():
     """A full tank must not be re-charged in cash at spike prices."""
     sim, fuel, _, (a, b) = _make_world([("A", 0, 0), ("B", 60, 0)])
     # Fuel is dear here: a seller's ask of 200 a unit.
-    seller = _make_ship(sim, a, fuel_units=40, money=0, name="Seller")
+    seller = _make_ship(sim, a, hold_fuel=40, money=0, name="Seller")
     a.market.place_sell_order(seller, fuel, 20, 200)
 
     # Poor ship, but its tank already covers the round trip and the reserve.
@@ -118,7 +117,7 @@ def test_pair_economics_credits_fuel_already_in_the_tank():
 
 def test_pair_economics_still_charges_fuel_it_must_buy():
     sim, fuel, _, (a, b) = _make_world([("A", 0, 0), ("B", 60, 0)])
-    seller = _make_ship(sim, a, fuel_units=40, money=0, name="Seller")
+    seller = _make_ship(sim, a, hold_fuel=40, money=0, name="Seller")
     a.market.place_sell_order(seller, fuel, 20, 200)
 
     # Empty tank, same purse: the round trip cannot be funded.
@@ -148,9 +147,9 @@ def test_solvent_ship_never_enters_distress():
     assert ship.brain._distress_entries == 0
 
 
-def test_broke_idle_ship_becomes_distressed_and_sells_tank_fuel():
+def test_broke_idle_ship_becomes_distressed_and_keeps_its_tank():
     sim, fuel, _, (a, b) = _make_world([("A", 0, 0), ("B", 60, 0)])
-    # A local buyer of fuel, so the liquidation has somewhere to go.
+    # A local buyer of fuel: the tank is still not for sale.
     buyer = _make_ship(sim, b, money=5000, name="Buyer")
     a.market.place_buy_order(buyer, fuel, 20, 12)
 
@@ -162,14 +161,12 @@ def test_broke_idle_ship_becomes_distressed_and_sells_tank_fuel():
     assert ship.brain.is_distressed
     assert ship.brain._distress_entries == 1
 
-    # Distress makes the tank above the survival target sellable, and the
-    # ship offers it to the market rather than sitting on dead capital.
-    survival = ship.brain._fuel_survival_target()
-    assert ship.brain._sellable_quantity(fuel) == 40 - survival
+    # Distress relaxes the plan margin, never the tank: the hold is empty and
+    # nothing is listed.
+    assert ship.brain._sellable_quantity(fuel) == 0
     ship.brain.decide_trade_actions()
-    sells = [o for o in a.market.sell_orders[fuel] if o.actor is ship]
-    assert sells
-    assert sum(o.quantity for o in sells) == 40 - survival
+    assert not [o for o in a.market.sell_orders[fuel] if o.actor is ship]
+    assert ship.fuel == 40
 
 
 def test_distress_never_sells_below_the_survival_target():

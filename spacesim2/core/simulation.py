@@ -530,10 +530,7 @@ class Simulation:
                 initial_money=starting_capital(mean_distance, efficiency),
             )
 
-            nova_fuel = self.commodity_registry["nova_fuel"]
-            ship.cargo.add_commodity(
-                nova_fuel, int(fuel_capacity * INITIAL_FUEL_FRACTION)
-            )
+            ship.fuel = int(fuel_capacity * INITIAL_FUEL_FRACTION)
 
             self.ships.append(ship)
             planet.add_ship(ship)

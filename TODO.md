@@ -9,19 +9,16 @@ perf levers live in `docs/performance.md`.
   they overpaid for fuel (avg ~50-54/unit vs fleet 42); possible remaining
   bunkering/pricing leak.
 - Fleet still pays avg 42 vs 33 best-planet honest fuel cost.
-- Multi-commodity loads (2026-09-07): a ship carries one commodity per trip.
-  `_best_plan_from` keeps a single best plan, quantity is capped by the
-  destination's bid depth plus flow, and leftover hold (100 units, shared
-  with tank fuel) only ever goes to fuel. Since the bid-depth cap usually
-  binds, topping up with the next profitable commodity to the same
-  destination is the missing behavior. Scope: `spacesim2/core/ship.py` only,
-  ~60-110 lines: rank plans per destination, deduct the shared
-  `money_for_trading` and `max_by_cargo` between picks, gate each pick with
-  `_plan_acceptable`, and generalize the loaded-or-patience-out lifecycle to
-  a multi-commodity load. Do this after the fleet is solvent.
-- Fuel-delivery accumulation overbuys: a fuel-run plan's "held" count only sees
-  tank overflow above fuel_capacity, so deliverers fill the tank plus the plan
-  quantity before departing.
+- Spiked survival top-ups (2026-09-07): the ration branch of
+  `_opportunistic_fuel_topup` still buys the survival target at any price
+  (252k of a 266k fuel premium over 600 turns at 100 planets before the
+  tank split), and a poor ship's standing rescue bid amortizes a deliverer's
+  round trip over 1-3 units, pricing at 15x reference. Next lever after the
+  tank split: cap ration buys by price when a cheaper ask is reachable on
+  the tank, and floor rescue-bid quantity.
+- Add-on cargo (2026-09-07) is chosen once per plan and not re-bid on later
+  accumulating turns; a partly filled add-on flies as is. Re-bidding the
+  shortfall is untested.
 
 ## Medicine / upper tier (post 2026-09-03 fixes)
 

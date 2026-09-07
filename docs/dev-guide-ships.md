@@ -93,7 +93,7 @@ it when planning for a specific ship so planning and consumption agree.
 | Constant | Value | Notes |
 |----------|-------|-------|
 | Base consumption | `ceil(distance/20)` | 1 fuel per 20 distance units |
-| Fuel capacity | `BASE_FUEL_CAPACITY` (50) or more | Scales with the galaxy, see below |
+| Fuel capacity | `BASE_FUEL_CAPACITY` (60) or more | Tank, separate from the hold; scales with the galaxy, see below |
 | Starting fuel | `INITIAL_FUEL_FRACTION` (60%) of the tank | Initial fuel for new ships |
 | Fuel efficiency | 0.8-1.2 | Random multiplier per ship |
 | Maintenance cost | 5 fuel | `MAINTENANCE_CHANCE` (10%) per departure |
@@ -121,57 +121,72 @@ reason: a tank-sized bid reserves most of the ship's money while it rests
 unfilled.
 
 Fuel upkeep, top-up or standing bid, runs *before* the plan branches in
-`decide_trade_actions` whenever the tank is under `_fuel_reserve_need()`.
+`decide_trade_actions` whenever the tank (`Ship.fuel`) is under
+`_fuel_reserve_need()`.
 Every branch below it can return early - an accumulating plan holds the turn
 for up to `ACCUMULATION_PATIENCE` turns - so upkeep placed after them never
 ran for the ships that needed it most: a dry ship with a plan it could not
 fly posted no rescue bid at all. Exactly one path owns the fuel side of the
 book per turn: when upkeep ran, `_execute_trade_plan` is passed
 `fuel_handled=True` and skips its own fuel buy and top-up rather than
-double-bidding. Below the reserve `_sellable_quantity` yields no fuel, so
-the early upkeep cannot self-trade against a same-turn fuel sell.
+double-bidding. The tank is never for sale, so the early upkeep cannot
+self-trade against a same-turn fuel sell; a ship selling hold fuel skips the
+top-up that turn (`placed_fuel_sell`).
 
-### Fuel as cargo
+### The tank is not the hold
 
-Tank fuel is normally not trade goods: only overflow above a full tank is,
-or `_fuel_survival_target()` downward while a ship is distressed. Otherwise a
-topped-up ship sells its tank at the local bid and re-buys at the ask every
-other turn, bleeding the spread.
+`Ship.fuel` is the tank: what departures burn and what every fuel gate
+reads. It is separate from `Ship.cargo`, takes no hold space, and is never
+for sale. `nova_fuel` in the hold is trade goods like any other commodity.
 
-The exception is an explicit fuel run. `_fuel_delivery_in_progress` is true
-at **both ends** of a `nova_fuel` `TradePlan`, and `_sellable_quantity` then
-counts everything above `_fuel_sell_reserve()` - the travel reserve for the
-trip. The origin end matters as much as the destination: a plan counts its
-load through `_sellable_quantity`, so while only overflow counted at the
-origin, a fuel plan never reached `_plan_loaded` and timed out after
-`ACCUMULATION_PATIENCE` every single time. Fuel arbitrage was structurally
-dead, on maps where a third to a half of planets have no fuel ask at all.
+Market fills land in the hold, so `Ship.pump_fuel` moves hold fuel into the
+tank up to capacity at the start of every docked turn (`Ship.take_turn`,
+and again at the top of `decide_trade_actions` and `decide_travel` so tests
+that drive the brain directly see the same state). It leaves
+`ShipBrain.fuel_cargo_to_keep()` units in the hold: for `TraderBrain` that
+is the plan quantity at either end of a `nova_fuel` `TradePlan`, so a fuel
+run's load is not pumped away, and zero otherwise. Hold fuel the tank
+cannot take stays in the hold and sells with the rest of the cargo.
 
-Counting as load is not permission to sell here: the plan lifecycle in
-`decide_trade_actions` marks such a ship loaded and routes it to the plan's
-destination, and `decide_travel` still gates the departure on the one-way
-burn plus `_fuel_safe_destination`.
+`_sellable_quantity` is therefore just the hold count for every commodity.
+Before the split, tank fuel was cargo and the brain carried a set of rules
+to keep it from being sold: an overflow-only rule, a scarcity-bid gate, a
+delivery-plan exception, a distress liquidation path, and a committed-fuel
+floor. All of them are gone. The one fuel-specific sale rule left is
+`_sell_floor_price`: a `nova_fuel` ask never rests below the replacement
+reference, `ceil(_fuel_value_reference())` or `FUEL_BID_FALLBACK_FLOOR`
+(15) before anything has traded.
 
-The other exception is a scarcity-priced local bid.
-`_local_fuel_bid_is_scarcity_priced` is true when the best local fuel bid
-reaches `FUEL_BID_MARGIN` (30%) over `_fuel_value_reference()`, the same
-median believable valuation the bunker rule uses. With no believable
-valuation anywhere, before any fuel has traded, the gate is **closed**.
+Fuel buys are bounded by tank room and money, never by hold room. A fuel
+fill can briefly put the hold over `cargo_capacity`; the pump clears it
+before any decision runs.
 
-That anchor used to be `Navigator.cheapest_fuel_ask()`, the galaxy minimum,
-and it made the gate a fleet-wide sell signal: a ship listing surplus fuel
-on a planet that had never traded it rested the remainder at 1 credit, that
-ask pinned the galaxy minimum at 1, and every local bid cleared the
-threshold. Over the first 120 turns of a 100-planet run, 100% of ship fuel
-sell orders passed the gate, the fleet sold its starting tanks at 1-15
-credits and re-bought at 200-500, and median ship money fell from 1481 at
-t100 to 33 at t300.
+### Add-on cargo
 
-The 1-credit ask itself is gone too. `_sell_floor_price` gives `nova_fuel` a
-floor at the replacement reference, `ceil(_fuel_value_reference())` or
-`FUEL_BID_FALLBACK_FLOOR` (15) before anything has traded, and
-`_place_flow_sell_orders` applies it to both the bid-level asks and the
-resting remainder. Other cargo has no floor there.
+A plan's quantity is capped by the destination's bid depth plus flow, and
+that cap usually binds, so a ship on a plan left most of its hold empty:
+measured over 400 turns at 100 planets, the median hold at departure was
+21% full and a second commodity to the same destination had positive
+marginal profit at 84% of departures. `_execute_trade_plan` now fills the
+rest of the hold with `_place_addon_bids`:
+
+- Candidates come from `_addon_candidates`: every exportable commodity at
+  the origin other than the plan's, fuel, and anything the ship is listing
+  here, evaluated by `_evaluate_trade_opportunity` against the plan's
+  destination with a `_PairEconomics` that carries the leftover money and
+  space and no fuel to buy. The trip is already paid for, so an add-on is
+  judged on revenue minus purchase cost and must clear
+  `TradePlan.MIN_MARGIN` on its purchase cost alone.
+- Up to `ADDON_MAX_COMMODITIES` (3) are chosen greedily by marginal profit,
+  the space each takes is deducted, and the rest are re-evaluated.
+- Chosen commodities are recorded in `_addon_commodities` and skipped by
+  the local sell step while the plan accumulates, so the ship does not list
+  at the origin what it just bought there. The set is cleared when a plan
+  is adopted or dropped. Add-ons are chosen once per plan and not re-bid
+  on later accumulating turns; a partly filled add-on flies as is.
+- Loading and departure are still gated on the primary plan alone.
+  `decide_travel` already values a mixed hold per commodity, and arrival
+  sells everything.
 
 ### Where fuel can actually be bought
 
@@ -206,11 +221,13 @@ for the galaxy they will fly in, from `Navigator.mean_pair_distance()`:
   30 at 100, and every plan must fund round-trip fuel before a credit goes
   to cargo, so a fixed 1000-credit purse grounded most of a 100-planet
   fleet.
-- `fuel_capacity_for(mean_distance, efficiency)`: an average round trip plus
-  `FUEL_CAPACITY_ROUND_TRIP_HEADROOM`, never below `BASE_FUEL_CAPACITY`. The
-  p90 lane route at 100 planets needs about 66 units round trip; sizing to
-  that would fill most of the 100-unit hold with fuel, so long cross-galaxy
-  hauls stay out of reach by design.
+- `fuel_capacity_for(mean_distance, efficiency)`:
+  `FUEL_CAPACITY_ROUND_TRIP_HEADROOM` (3.0) average round trips, never below
+  `BASE_FUEL_CAPACITY` (60). The tank costs no hold space, so it is sized
+  for several trips: a ship bunkers where fuel is cheap and can fly past
+  spiked markets. Before the split the tank was 1.5 round trips and shared
+  the hold, and spiked survival top-ups were 252k of the fleet's 266k fuel
+  premium over 600 turns at 100 planets.
 
 A `Ship` built directly, as tests do, keeps the constant defaults.
 

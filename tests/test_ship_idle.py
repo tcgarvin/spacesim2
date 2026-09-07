@@ -90,7 +90,7 @@ def test_stale_local_sale_allows_replanning():
     """Cargo nobody will buy no longer blocks adopting a new trade plan."""
     sim, fuel, food, (a, b) = _make_world([("A", 0, 0), ("B", 50, 0)])
     # Food is for sale at A and pays well at B: a plan exists to be found.
-    seller = _make_ship(sim, a, fuel_units=200, name="Seller")
+    seller = _make_ship(sim, a, hold_fuel=200, name="Seller")
     seller.cargo.add_commodity(food, 50)
     a.market.place_sell_order(seller, food, 50, 10)
     a.market.place_sell_order(seller, fuel, 100, 5)
@@ -122,9 +122,9 @@ def test_hold_considers_destinations_reachable_on_purchasable_fuel():
         [("A", 0, 0), ("B", 20, 0), ("C", 200, 0)]
     )
     # Fuel is for sale at both ends, so C is never a fuel dead end.
-    supplier_a = _make_ship(sim, a, fuel_units=400, name="SupplierA")
+    supplier_a = _make_ship(sim, a, hold_fuel=400, name="SupplierA")
     a.market.place_sell_order(supplier_a, fuel, 200, 5)
-    supplier_c = _make_ship(sim, c, fuel_units=400, name="SupplierC")
+    supplier_c = _make_ship(sim, c, hold_fuel=400, name="SupplierC")
     c.market.place_sell_order(supplier_c, fuel, 200, 5)
 
     local_buyer = _make_ship(sim, a, money=2000, name="LocalBuyer")
@@ -146,16 +146,16 @@ def test_hold_considers_destinations_reachable_on_purchasable_fuel():
     assert ship.brain._committed_fuel_need == required
     # ...and buys enough fuel to actually fly there.
     bought = sum(o.quantity for o in a.market.buy_orders[fuel] if o.actor is ship)
-    assert ship.cargo.get_quantity(fuel) + bought >= required
+    assert ship.fuel + bought >= required
 
 
 def test_committed_destination_fuel_is_bought_at_spike_prices():
     """Fuel for a committed profitable trip is not speculative bunkering."""
     sim, fuel, _food, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
     # Cheap fuel at B sets the galaxy reference near 10; the local ask spikes.
-    remote_supplier = _make_ship(sim, b, fuel_units=200, name="RemoteSupplier")
+    remote_supplier = _make_ship(sim, b, hold_fuel=200, name="RemoteSupplier")
     b.market.place_sell_order(remote_supplier, fuel, 100, 10)
-    local_supplier = _make_ship(sim, a, fuel_units=200, name="LocalSupplier")
+    local_supplier = _make_ship(sim, a, hold_fuel=200, name="LocalSupplier")
     a.market.place_sell_order(local_supplier, fuel, 100, 60)
 
     ship = _make_ship(sim, a, fuel_units=0, money=5000, name="Trader")
@@ -172,7 +172,7 @@ def test_committed_fuel_need_covers_the_departure_gate_and_the_ship_leaves():
     """What the hold commits to is what decide_travel demands, so it departs."""
     sim, fuel, food, (a, c) = _make_world([("A", 0, 0), ("C", 100, 0)])
     # Fuel sells at A only, so C's escape route has to be carried there.
-    supplier = _make_ship(sim, a, fuel_units=400, name="Supplier")
+    supplier = _make_ship(sim, a, hold_fuel=400, name="Supplier")
     a.market.place_sell_order(supplier, fuel, 200, 5)
     local_buyer = _make_ship(sim, a, money=2000, name="LocalBuyer")
     a.market.place_buy_order(local_buyer, food, 20, 10)
@@ -192,7 +192,8 @@ def test_committed_fuel_need_covers_the_departure_gate_and_the_ship_leaves():
     assert ship.brain.decide_travel() is None  # the fuel has not arrived yet
 
     a.market.match_orders()
-    assert ship.cargo.get_quantity(fuel) >= ship.brain._committed_fuel_need
+    ship.pump_fuel()
+    assert ship.fuel >= ship.brain._committed_fuel_need
 
     # Next turn, with the fuel aboard, it goes.
     ship.brain.decide_trade_actions()
@@ -202,7 +203,7 @@ def test_committed_fuel_need_covers_the_departure_gate_and_the_ship_leaves():
 def test_committed_fuel_need_is_cleared_once_the_ship_moves_on():
     """A commitment never outlives the turn that made it."""
     sim, fuel, food, (a, c) = _make_world([("A", 0, 0), ("C", 100, 0)])
-    supplier = _make_ship(sim, a, fuel_units=400, name="Supplier")
+    supplier = _make_ship(sim, a, hold_fuel=400, name="Supplier")
     a.market.place_sell_order(supplier, fuel, 200, 5)
     local_buyer = _make_ship(sim, a, money=2000, name="LocalBuyer")
     a.market.place_buy_order(local_buyer, food, 20, 10)
@@ -216,6 +217,7 @@ def test_committed_fuel_need_is_cleared_once_the_ship_moves_on():
     assert ship.brain._committed_fuel_need > 0
 
     a.market.match_orders()
+    ship.pump_fuel()
     assert ship.start_journey(c)
     # Arrive.
     a.ships.remove(ship)
@@ -238,7 +240,7 @@ def test_replan_does_not_bid_for_the_good_it_is_listing():
     """A ship listing wood here must not adopt a plan to buy wood here."""
     sim, fuel, _food, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
     wood = _add_commodity(sim, "wood", "Wood")
-    supplier = _make_ship(sim, a, fuel_units=400, name="Supplier")
+    supplier = _make_ship(sim, a, hold_fuel=400, name="Supplier")
     supplier.cargo.add_commodity(wood, 40)
     a.market.place_sell_order(supplier, fuel, 200, 5)
     a.market.place_sell_order(supplier, wood, 40, 10)  # a cheap export exists
@@ -298,7 +300,7 @@ def test_accumulating_plan_still_lists_unrelated_cargo():
     """A plan's waiting turns do not un-list the cargo the plan is not about."""
     sim, fuel, food, (a, b) = _make_world([("A", 0, 0), ("B", 50, 0)])
     junk = _add_commodity(sim, "junk", "Junk")
-    seller = _make_ship(sim, a, fuel_units=200, name="Seller")
+    seller = _make_ship(sim, a, hold_fuel=200, name="Seller")
     seller.cargo.add_commodity(food, 50)
     a.market.place_sell_order(seller, food, 50, 10)
     a.market.place_sell_order(seller, fuel, 100, 5)
@@ -332,8 +334,8 @@ def test_reposition_counts_fuel_the_ship_can_buy_here():
     move (no fuel aboard), and idled forever.
     """
     sim, fuel, _food, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
-    supplier_a = _make_ship(sim, a, fuel_units=500, name="SupplierA")
-    supplier_b = _make_ship(sim, b, fuel_units=500, name="SupplierB")
+    supplier_a = _make_ship(sim, a, hold_fuel=500, name="SupplierA")
+    supplier_b = _make_ship(sim, b, hold_fuel=500, name="SupplierB")
     a.market.place_sell_order(supplier_a, fuel, 200, 10)
     b.market.place_sell_order(supplier_b, fuel, 200, 10)
 
@@ -369,7 +371,7 @@ def test_reposition_counts_fuel_the_ship_can_buy_here():
 def test_reposition_intent_is_dropped_when_the_ship_moves_on():
     """An intent formed at one planet never funds fuel at another."""
     sim, fuel, _food, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
-    supplier = _make_ship(sim, a, fuel_units=500, name="SupplierA")
+    supplier = _make_ship(sim, a, hold_fuel=500, name="SupplierA")
     a.market.place_sell_order(supplier, fuel, 200, 10)
     ship = _make_ship(sim, a, fuel_units=1, money=2000, name="Trader")
     ship.brain._reposition_intent = _RepositionIntent(origin=b, target=b)
@@ -427,7 +429,7 @@ def test_distressed_ship_accepts_a_haul_that_only_covers_its_costs():
 def test_distress_does_not_end_below_the_short_trip_cash_floor():
     """Winning some cargo is not an exit; only cash above the floor is."""
     sim, fuel, food, (a, _b) = _make_world([("A", 0, 0), ("B", 100, 0)])
-    supplier = _make_ship(sim, a, fuel_units=500, name="Supplier")
+    supplier = _make_ship(sim, a, hold_fuel=500, name="Supplier")
     a.market.place_sell_order(supplier, fuel, 200, 40)
     ship = _make_ship(sim, a, fuel_units=5, money=10, name="Trader")
     floor = ship.brain._short_trip_cash_floor()
@@ -468,32 +470,6 @@ def test_distressed_ship_refuses_a_haul_that_cannot_buy_its_return_leg():
     assert ship.brain._plan_acceptable(plan)
 
 
-def test_distressed_ship_does_not_list_the_fuel_it_committed_to_a_trip():
-    """Committed fuel is not spare capital, even for a distressed ship.
-
-    Without the floor the ship bought the reposition's fuel at the ask,
-    listed the same units at the bid, blocked its own departure on the
-    one-turn sell veto, and re-bought them next turn.
-    """
-    sim, fuel, _food, (a, _near, far) = _make_world(
-        [("A", 0, 0), ("Near", 10, 0), ("Far", 400, 0)]
-    )
-    ship = _make_ship(sim, a, money=100, name="Trader")
-    ship.brain._distress_turns = DISTRESS_PATIENCE
-    committed = ship.brain._departure_fuel_requirement(far)
-    assert committed > ship.brain._fuel_survival_target()
-    ship.cargo.add_commodity(fuel, committed)
-
-    # Uncommitted, the tank above the survival target is the only capital left.
-    assert ship.brain._sellable_quantity(fuel) > 0
-
-    ship.brain._reposition_intent = _RepositionIntent(origin=a, target=far)
-    assert ship.brain._sellable_quantity(fuel) == 0
-
-    ship.brain.decide_trade_actions()
-    assert not [o for o in a.market.sell_orders[fuel] if o.actor is ship]
-
-
 def test_choosing_a_plan_over_a_reposition_drops_the_intent():
     """An abandoned target must not fund fuel on the next docked turn."""
     sim, _fuel, food, (a, b) = _make_world([("A", 0, 0), ("B", 100, 0)])
@@ -518,7 +494,7 @@ def test_reposition_intent_is_sticky_while_it_stays_viable():
     sim, fuel, _food, (a, b, c) = _make_world(
         [("A", 0, 0), ("B", 100, 0), ("C", 200, 0)]
     )
-    supplier = _make_ship(sim, a, fuel_units=500, name="Supplier")
+    supplier = _make_ship(sim, a, hold_fuel=500, name="Supplier")
     a.market.place_sell_order(supplier, fuel, 200, 10)
     ship = _make_ship(sim, a, fuel_units=2, money=2000, name="Trader")
     ship.brain._nav.refresh_market_facts()
@@ -536,7 +512,7 @@ def test_reposition_intent_is_sticky_while_it_stays_viable():
     # Once the standing target is out of reach, the survey runs again.
     ship.brain._reposition_intent = _RepositionIntent(origin=a, target=c)
     ship.money = 0
-    ship.cargo.remove_commodity(fuel, 2)
+    ship.fuel -= 2
     assert ship.brain._reposition_intent_target(0) is None
     ship.brain.decide_travel()
     assert ship.brain._reposition_intent is not None

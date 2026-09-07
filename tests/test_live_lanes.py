@@ -154,8 +154,7 @@ def test_traveling_ship_waypoints_follow_core_route() -> None:
     vm = GalaxyViewModel(sim)
     ship = sim.ships[0]
     # Drive a real departure so the core records a lane route.
-    fuel = sim.commodity_registry["nova_fuel"]
-    ship.cargo.add_commodity(fuel, 500)
+    ship.fuel = 500
     origin = ship.planet
     assert origin is not None
     # Pick a destination that is at least two hops away, if one exists.
@@ -203,8 +202,7 @@ def test_director_positions_ship_along_route_with_segment_heading() -> None:
     sim = _sim()
     vm = GalaxyViewModel(sim)
     ship = sim.ships[0]
-    fuel = sim.commodity_registry["nova_fuel"]
-    ship.cargo.add_commodity(fuel, 500)
+    ship.fuel = 500
     origin = ship.planet
     assert origin is not None
     dest = next(

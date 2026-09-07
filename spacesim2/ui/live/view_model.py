@@ -235,8 +235,7 @@ def planet_detail(
 
 def ship_detail(ship: Ship, sim: Simulation) -> ShipDetail:
     """Build the drill-down snapshot the ship overlay renders each frame."""
-    fuel_commodity = sim.commodity_registry.get_commodity(FUEL_COMMODITY_ID)
-    fuel = ship.cargo.get_quantity(fuel_commodity) if fuel_commodity else 0
+    fuel = ship.fuel
 
     cargo_rows = tuple(
         CargoRow(commodity_id=c.id, commodity_name=c.name, quantity=q)

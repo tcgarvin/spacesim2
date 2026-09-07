@@ -4,6 +4,42 @@ Append-only record of closed decisions, postmortems, and landed campaigns.
 Newest first. Open work lives in `TODO.md`; current reference docs live
 alongside this file.
 
+## 2026-09-07 - Fuel tank split from the hold, bigger tank, add-on cargo
+
+Ships bought fuel at spike prices and it was the fleet's whole loss: over
+600 turns at 100 planets the fleet spent 673k on fuel against 350k gross
+cargo margin, 55% of fuel credits went above 1.3x the galaxy reference, and
+the premium over reference was 266k. An in-process probe
+(`notebooks/ship_fuel_path_probe.py`) attributed the spiked fills by code
+path: the survival top-up ration branch 252k, plan fuel 34k, maintenance
+18k, standing bids 7k. Adopted plans mostly survived honest costing (34 of
+152 spiked-origin plans fail a 15% margin with the return leg charged at
+the local ask), so `TradePlan` was not the lever. Spikes were local: at
+spike-buy turns 32 of 40 ask planets were within 1.3x of reference.
+
+Three changes in `core/ship.py`:
+
+- `Ship.fuel` is a tank separate from the hold. Hold fuel is ordinary
+  cargo; `Ship.pump_fuel` moves fills into the tank each docked turn,
+  keeping `ShipBrain.fuel_cargo_to_keep()` for a fuel run's load. Removed:
+  `_fuel_delivery_in_progress`, `_local_fuel_bid_is_scarcity_priced`,
+  `_committed_fuel_floor`, the distress tank liquidation, and every
+  hold-room bound on fuel buys. `_sellable_quantity` is the hold count.
+- Tank sized to `FUEL_CAPACITY_ROUND_TRIP_HEADROOM` 3.0 mean round trips
+  (was 1.5), `BASE_FUEL_CAPACITY` 60 (was 50), so bunkering where fuel is
+  cheap covers several trips.
+- Add-on cargo: `_place_addon_bids` fills the hold left over after the
+  plan's bid with up to `ADDON_MAX_COMMODITIES` other goods the destination
+  bids for, judged on revenue minus purchase cost. Probe: hold 21% full at
+  the median departure, add-on available at 84% of departures, worth 34% of
+  planned profit in total.
+
+12-planet 200-turn A/B, 3 reps per arm (`tmp/ab_tank12`): every drive,
+money and prosperity KPI neutral; departures 24 -> 17 and idle ships 4 ->
+5.7 with delivered units flat (86 -> 88), consistent with fewer, fuller
+trips. Fuel geography does not bind at 12 planets; the 100-planet check is
+the next entry.
+
 ## 2026-09-07 - Fleet fuel sell-off: value the tank, not the cheapest ask
 
 The fleet sold its starting tanks in the launch window and re-bought the
