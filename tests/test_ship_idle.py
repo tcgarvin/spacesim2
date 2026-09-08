@@ -71,8 +71,9 @@ def test_local_sale_veto_returns_after_a_fill():
     sim, _fuel, food, (a, b) = _make_world([("A", 0, 0), ("B", 50, 0)])
     buyer = _make_ship(sim, a, money=2000, name="LocalBuyer")
     a.market.place_buy_order(buyer, food, 4, 10)  # takes part of the load
+    # B pays too little to be worth the fuel, so the load is sold here.
     remote_buyer = _make_ship(sim, b, money=5000, name="RemoteBuyer")
-    b.market.place_buy_order(remote_buyer, food, 20, 11)
+    b.market.place_buy_order(remote_buyer, food, 20, 5)
 
     ship = _make_ship(sim, a, fuel_units=10, name="Seller")
     ship.cargo.add_commodity(food, 10)

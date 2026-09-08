@@ -106,6 +106,23 @@ ACCUMULATION_PATIENCE = 8
 # flow price is a forecast, not a resting order.
 SELL_PRICE_HAIRCUT = 0.9
 
+# Cargo revenue. A ship prices its asks against what the cargo cost it, and
+# marks that floor down the longer the cargo sits unsold, so a load that no
+# market wants at cost still turns back into cash instead of riding along for
+# hundreds of turns.
+#
+# Fraction of the cost basis the floor drops per docked turn a listed
+# commodity goes unfilled, and the fraction of basis it never falls below.
+UNSOLD_DECAY = 0.1
+LIQUIDATION_FLOOR = 0.4
+# Cargo hops - departures taken to sell a load somewhere else rather than
+# under a trade plan - a load may make before it must be sold where it is.
+# Each hop costs fuel against a forecast that is usually gone by arrival.
+MAX_CARGO_HOPS = 1
+# Consecutive docked turns the departure gate may refuse a ship holding cargo
+# for another market before the cargo is listed where the ship actually is.
+HOLD_PATIENCE = 3
+
 # Candidate origin planets an empty repositioning ship surveys, in proximity
 # order. Surveying every origin is O(planets^2 x commodities) per ship per
 # turn, and nearby origins need less fuel to reach anyway. Galaxies with
@@ -482,6 +499,26 @@ class TraderBrain(ShipBrain):
         # docked turn in decide_trade_actions and reused by decide_travel so
         # the two agree. None means no such reposition this turn.
         self._refuel_reposition: Optional[Planet] = None
+        # Cost basis of the hold: commodity id -> (units, credits paid), fed
+        # from this ship's own fills. Fuel is excluded; the tank is priced
+        # against the galaxy reference, not against what it cost.
+        self._cost_basis: Dict[str, Tuple[int, int]] = {}
+        # Highest transaction id already read off each planet's per-actor
+        # history, keyed by planet name. Ids, not indices: the market trims
+        # histories from the front. See core/brains/dealer.ingest_fills.
+        self._basis_cursors: Dict[str, int] = {}
+        # Docked turns each listed commodity has gone unfilled, and the units
+        # held when it was listed, which is what a fill is judged against.
+        self._unsold_turns: Dict[str, int] = {}
+        self._listed_held: Dict[str, int] = {}
+        # Cargo hops each held commodity has made. Reset when the hold runs
+        # out of it.
+        self._cargo_hops: Dict[str, int] = {}
+        # Planet where the cargo was last held for another market, and the
+        # consecutive docked turns the departure gate has refused since. Past
+        # HOLD_PATIENCE the cargo is listed here instead.
+        self._hold_planet: Optional[Planet] = None
+        self._hold_refused_turns = 0
 
     def _recent_flow_per_turn(
         self, market: "Market", commodity: CommodityDefinition
@@ -919,27 +956,144 @@ class TraderBrain(ShipBrain):
         }
         self._local_sale_planet_name = planet.name
 
+    def _ingest_cost_basis(self) -> None:
+        """Read this ship's new fills at the current planet into the basis.
+
+        The cursor is the highest transaction id already seen, not an index:
+        the market trims each per-actor history from the front, so an index
+        cursor would skip fills or replay them. This is the cursor pattern
+        :func:`core.brains.dealer.ingest_fills` documents; the loop is written
+        out here because the basis needs the fills in the order they happened
+        and needs each fill's total amount.
+
+        Call once per docked turn, before any decision reads the basis. A fill
+        on either side also restarts that commodity's unsold clock: the book
+        is working, so the price it is listed at does not need marking down.
+        """
+        ship = self.ship
+        planet = ship.planet
+        if planet is None:
+            return
+        history = planet.market.get_actor_transaction_history(ship)
+        cursor = self._basis_cursors.get(planet.name, 0)
+        start = len(history)
+        while start > 0 and history[start - 1].transaction_id > cursor:
+            start -= 1
+        for transaction in history[start:]:
+            if transaction.transaction_id > cursor:
+                cursor = transaction.transaction_id
+            commodity_id = transaction.commodity_type.id
+            if commodity_id == "nova_fuel":
+                continue
+            if transaction.buyer is ship:
+                units, credits = self._cost_basis.get(commodity_id, (0, 0))
+                self._cost_basis[commodity_id] = (
+                    units + transaction.quantity,
+                    credits + transaction.total_amount,
+                )
+            elif transaction.seller is ship:
+                self._reduce_cost_basis(commodity_id, transaction.quantity)
+            else:
+                continue
+            self._unsold_turns.pop(commodity_id, None)
+        self._basis_cursors[planet.name] = cursor
+
+    def _reduce_cost_basis(self, commodity_id: str, quantity: int) -> None:
+        """Remove ``quantity`` units from a basis entry at its average cost."""
+        units, credits = self._cost_basis.get(commodity_id, (0, 0))
+        if units <= 0:
+            return
+        remaining = units - quantity
+        if remaining <= 0:
+            del self._cost_basis[commodity_id]
+            return
+        self._cost_basis[commodity_id] = (
+            remaining,
+            int(round(credits * remaining / units)),
+        )
+
+    def _forget_empty_cargo_state(self) -> None:
+        """Drop per-commodity state for goods the hold no longer carries."""
+        for commodity in self._get_tradeable_commodities():
+            if self.ship.cargo.get_quantity(commodity) > 0:
+                continue
+            self._cost_basis.pop(commodity.id, None)
+            self._cargo_hops.pop(commodity.id, None)
+            self._unsold_turns.pop(commodity.id, None)
+
+    def _age_unsold_listings(self) -> None:
+        """Count another unfilled turn for each commodity listed last turn.
+
+        Judged on raw held units, the same test :meth:`_refresh_local_sale_staleness`
+        uses: only a fill reduces them.
+        """
+        listed = self._listed_held
+        self._listed_held = {}
+        registry = self.ship.simulation.commodity_registry
+        for commodity_id, held_at_listing in listed.items():
+            commodity = registry.get_commodity(commodity_id)
+            if commodity is None:
+                continue
+            if self.ship.cargo.get_quantity(commodity) >= held_at_listing:
+                self._unsold_turns[commodity_id] = (
+                    self._unsold_turns.get(commodity_id, 0) + 1
+                )
+
+    def _note_listed(self, commodities: Sequence[CommodityDefinition]) -> None:
+        """Record the units held when these asks went in, for the unsold clock."""
+        self._listed_held = {
+            commodity.id: self.ship.cargo.get_quantity(commodity)
+            for commodity in commodities
+        }
+
+    def basis_per_unit(self, commodity: CommodityDefinition) -> Optional[float]:
+        """Credits per unit this ship paid for the cargo it holds, if known.
+
+        None when the cargo was aboard before the basis was tracked, or was
+        never bought on a market. Fuel is never tracked.
+        """
+        units, credits = self._cost_basis.get(commodity.id, (0, 0))
+        if units <= 0:
+            return None
+        return credits / units
+
     def _sell_floor_price(self, commodity: CommodityDefinition) -> int:
         """Lowest price the ship will list ``commodity`` at locally.
 
-        Only fuel has a floor: the galaxy fuel reference price, the median
-        believable per-planet valuation, which is what the ship pays to
-        refill the tank. Listing below it books a guaranteed loss on the
-        round trip, and on a planet that has never traded fuel the resting
-        price came out at 1 credit, which is also what pinned
-        :meth:`Navigator.cheapest_fuel_ask` and opened the sell gate for the
-        whole fleet.
+        Cargo with a known cost basis floors at what it cost, marked down by
+        UNSOLD_DECAY for every docked turn it has sat listed and unfilled and
+        never below LIQUIDATION_FLOOR of cost. Selling at cost is the goal;
+        holding a load nobody buys at cost is worse than taking the markdown,
+        because the hold space and the fuel spent carrying it around cost
+        more than the difference. Cargo of unknown basis has no floor.
 
-        Before any fuel has traded anywhere the reference is unknown and the
-        floor is FUEL_BID_FALLBACK_FLOOR, the same fabricated-price guard the
-        rest of the fuel code uses. Non-fuel cargo returns 0, no floor.
+        Fuel floors at the galaxy fuel reference price, the median believable
+        per-planet valuation, which is what the ship pays to refill the tank.
+        Listing below it books a guaranteed loss on the round trip, and on a
+        planet that has never traded fuel the resting price came out at 1
+        credit, which is also what pinned :meth:`Navigator.cheapest_fuel_ask`
+        and opened the sell gate for the whole fleet. Before any fuel has
+        traded anywhere the reference is unknown and the floor is
+        FUEL_BID_FALLBACK_FLOOR, the same fabricated-price guard the rest of
+        the fuel code uses.
         """
-        if commodity.id != "nova_fuel":
-            return 0
-        reference = self._fuel_value_reference()
-        if reference is None:
-            return FUEL_BID_FALLBACK_FLOOR
-        return max(1, math.ceil(reference))
+        floor = 0
+        basis = self.basis_per_unit(commodity)
+        if basis is not None:
+            markdown = max(
+                LIQUIDATION_FLOOR,
+                1.0 - UNSOLD_DECAY * self._unsold_turns.get(commodity.id, 0),
+            )
+            floor = int(basis * markdown)
+        if commodity.id == "nova_fuel":
+            reference = self._fuel_value_reference()
+            fuel_floor = (
+                FUEL_BID_FALLBACK_FLOOR
+                if reference is None
+                else max(1, math.ceil(reference))
+            )
+            floor = max(floor, fuel_floor)
+        return floor
 
     def _place_flow_sell_orders(
         self, market: "Market", commodity: CommodityDefinition, quantity: int
@@ -948,13 +1102,19 @@ class TraderBrain(ShipBrain):
 
         Matching executes at the sell order's price, so a single ask at the
         top bid liquidates the entire load at that one price, even into a
-        1-credit probe bid. Instead, premium resting bids above the haircut
-        flow price are captured by an ask priced at each level, and the
-        remainder rests near the recent clearing price to be absorbed by the
-        turn flow.
+        1-credit probe bid. Instead, every resting bid level the floor allows
+        is captured by an ask priced at that level, and the remainder rests
+        where it can still be taken: at the best bid, or at the haircut flow
+        price when that is lower.
 
-        Fuel additionally never rests below what the ship replaces it at; see
-        :meth:`_sell_floor_price`. Other cargo has no floor here.
+        The remainder used to rest at the flow price whatever the book said.
+        Measured over 300 turns at 100 planets, 82% of unfilled ship listings
+        rested at 1.78x the best resting bid, and 42% of listed units never
+        filled at all. An ask above every live bid is a forecast, not a sale.
+
+        The floor is what the cargo cost, marked down as it goes unsold; see
+        :meth:`_sell_floor_price`. It is the one thing that can put an ask
+        above the flow price, and it does so only for fuel.
 
         Returns action strings for the placed orders.
         """
@@ -962,9 +1122,11 @@ class TraderBrain(ShipBrain):
         flow_value = self._flow_value(market, commodity)
         flow_px = int(flow_value * SELL_PRICE_HAIRCUT) if flow_value else 0
         floor_px = self._sell_floor_price(commodity)
+        levels = market.get_bid_levels(commodity)
+        best_bid = levels[0][0] if levels else 0
         remaining = quantity
-        for price, level_qty in market.get_bid_levels(commodity):
-            if remaining <= 0 or price <= flow_px or price < floor_px:
+        for price, level_qty in levels:
+            if remaining <= 0 or price < floor_px:
                 break
             take = min(level_qty, remaining)
             order_id = market.place_sell_order(self.ship, commodity, take, price)
@@ -973,10 +1135,11 @@ class TraderBrain(ShipBrain):
                 self.ship.active_orders[order_id] = f"sell {commodity.id}"
                 remaining -= take
         if remaining > 0:
-            if flow_px > 0:
+            if best_bid > 0 and flow_px > 0:
+                rest_price = min(flow_px, best_bid)
+            elif flow_px > 0:
                 rest_price = flow_px
             else:
-                best_bid, _ = market.get_bid_ask_spread(commodity)
                 rest_price = max(1, best_bid or market.get_avg_price(commodity) or 1)
             rest_price = max(rest_price, floor_px)
             order_id = market.place_sell_order(
@@ -986,6 +1149,40 @@ class TraderBrain(ShipBrain):
                 actions.append(f"Offering {remaining} {commodity.name} at {rest_price}")
                 self.ship.active_orders[order_id] = f"sell {commodity.id}"
         return actions
+
+    def _realizable_value(
+        self, market: "Market", commodity: CommodityDefinition, quantity: int
+    ) -> int:
+        """What selling ``quantity`` units into ``market`` would actually fetch.
+
+        The resting bid levels are walked from the top for as many units as
+        they hold; whatever is left is valued at the price
+        :meth:`_place_flow_sell_orders` would rest it at, the lower of the
+        haircut flow price and the best bid. A market with neither a bid nor a
+        flow price values the remainder at nothing.
+
+        The old valuation, ``max(best bid, flow) * quantity``, paid the top bid
+        for every unit and ignored depth, so it valued a ten-unit load at ten
+        times a one-unit bid. That is the number the ship then flew to.
+        """
+        if quantity <= 0:
+            return 0
+        levels = market.get_bid_levels(commodity)
+        best_bid = levels[0][0] if levels else 0
+        flow_value = self._flow_value(market, commodity)
+        flow_px = int(flow_value * SELL_PRICE_HAIRCUT) if flow_value else 0
+        remaining = quantity
+        total = 0
+        for price, level_qty in levels:
+            if remaining <= 0:
+                break
+            take = min(level_qty, remaining)
+            total += take * price
+            remaining -= take
+        if remaining > 0:
+            rest_price = min(flow_px, best_bid) if best_bid else flow_px
+            total += remaining * rest_price
+        return total
 
     def _opportunistic_fuel_topup(
         self, pending_fuel: int = 0, required_floor: int = 0
@@ -2198,6 +2395,23 @@ class TraderBrain(ShipBrain):
             space -= quantity
         return actions
 
+    def _plan_departure_blocked(self, plan: TradePlan) -> bool:
+        """Whether a loaded plan cannot fly to its destination this turn.
+
+        The same fuel and safety test :meth:`decide_travel` applies, asked
+        early so a blocked ship lists its hold rather than sitting on it until
+        the plan's patience runs out.
+        """
+        origin = self.ship.planet
+        if origin is None or origin is not plan.origin:
+            return True
+        leg = self.ship.fuel_required(self._nav.distance(origin, plan.destination))
+        if self.ship.fuel < leg:
+            return True
+        return not self._fuel_safe_destination(
+            plan.destination, origin, self.ship.fuel - leg
+        )
+
     def _cargo_disposition(self, market: "Market") -> Tuple[bool, int]:
         """Decide whether to sell the hold here, and what fuel that commits.
 
@@ -2205,6 +2419,12 @@ class TraderBrain(ShipBrain):
         the departure requirement of the trip the cargo is being held for,
         the same number :meth:`decide_travel` gates on, so a ship that funds
         it can actually leave. Zero when selling here.
+
+        Both sides are valued with :meth:`_realizable_value`, which walks bid
+        depth, and a load that has already made MAX_CARGO_HOPS hops is sold
+        where it is whatever another market forecasts. Cargo that keeps
+        hopping burns fuel on every leg against a price that has usually gone
+        by arrival, and never turns into cash.
         """
         ship = self.ship
         current_planet = ship.planet
@@ -2225,12 +2445,10 @@ class TraderBrain(ShipBrain):
             quantity = self._sellable_quantity(commodity)
             if quantity <= 0:
                 continue
+            if self._cargo_hops.get(commodity.id, 0) >= MAX_CARGO_HOPS:
+                continue
 
-            local_bid, _ = market.get_bid_ask_spread(commodity)
-            # Value at the better of the top resting bid and the recent
-            # clearing price: the residual book alone undervalues any good the
-            # local auction clears.
-            local_price = max(local_bid or 0, self._flow_value(market, commodity) or 0)
+            local_value = self._realizable_value(market, commodity, quantity)
 
             for planet in ship.simulation.planets:
                 if planet == current_planet:
@@ -2244,13 +2462,8 @@ class TraderBrain(ShipBrain):
                 if fuel_available < required_fuel:
                     continue
 
-                dest_bid, _ = planet.market.get_bid_ask_spread(commodity)
-                dest_price = max(
-                    dest_bid or 0,
-                    self._flow_value(planet.market, commodity) or 0,
-                )
-
-                if not dest_price or not local_price:
+                dest_value = self._realizable_value(planet.market, commodity, quantity)
+                if dest_value <= 0:
                     continue
 
                 # Compare net values the way decide_travel does: destination
@@ -2270,8 +2483,8 @@ class TraderBrain(ShipBrain):
                 fuel_cost = from_tank * origin_fuel_price + to_buy * (
                     local_fuel_ask or origin_fuel_price
                 )
-                dest_net = dest_price * quantity - fuel_cost
-                if dest_net > local_price * quantity * 1.15:
+                dest_net = dest_value - fuel_cost
+                if dest_net > local_value * 1.15:
                     # The trip this cargo is being held for is profitable at
                     # the local fuel ask, so the top-up must buy every unit
                     # the departure gate will ask for.
@@ -2406,6 +2619,21 @@ class TraderBrain(ShipBrain):
         self._selling_locally = False
         # Now that the hold is whole again, judge last turn's local asks.
         self._refresh_local_sale_staleness()
+        # Cargo bookkeeping, before anything prices or values the hold: read
+        # this ship's own fills into the cost basis, age the listings that did
+        # not fill, and forget commodities the hold has run out of.
+        self._ingest_cost_basis()
+        self._age_unsold_listings()
+        self._forget_empty_cargo_state()
+
+        # Still docked where the cargo was last held for another market: the
+        # departure gate refused. Past HOLD_PATIENCE such turns the cargo is
+        # listed here instead of waiting for a trip that never leaves.
+        if self._hold_planet is current_planet:
+            self._hold_refused_turns += 1
+        else:
+            self._hold_refused_turns = 0
+        self._hold_planet = None
 
         # A reposition intent speaks for one planet only. Anywhere else - the
         # ship flew, or was diverted - it is stale and must not fund fuel.
@@ -2525,6 +2753,12 @@ class TraderBrain(ShipBrain):
             should_sell_here, self._committed_fuel_need = self._cargo_disposition(
                 market
             )
+            if not should_sell_here:
+                if self._hold_refused_turns >= HOLD_PATIENCE:
+                    should_sell_here = True
+                    self._committed_fuel_need = 0
+                else:
+                    self._hold_planet = current_planet
         elif self._reposition_intent is not None:
             # Empty, but committed to flying somewhere worth trading from and
             # short of the fuel for it. Same commitment a held cargo makes, so
@@ -2585,35 +2819,51 @@ class TraderBrain(ShipBrain):
             if listed:
                 actions.extend(sell_actions)
                 self._record_local_sale(current_planet, listed)
+                self._note_listed(listed)
             self._execute_trade_plan(
                 plan, fuel_handled=fuel_upkeep_ran, prior_actions=actions
             )
             return
 
-        # Cargo: sell here or travel. A loaded plan's cargo flies to
-        # plan.destination instead.
-        if has_trade_cargo and not self._plan_loaded:
-            if should_sell_here:
-                sell_actions, listed, listed_locally = self._list_cargo_locally(market)
-                if listed:
-                    actions.extend(sell_actions)
-                    # Hold the ship here only while the sale is fresh. A sale
-                    # that already sat a full turn unfilled has earned no more
-                    # patience.
-                    if not self._local_sale_stale:
-                        self._selling_locally = True
-                    placed_fuel_sell = any(c.id == "nova_fuel" for c in listed)
-                    self._record_local_sale(current_planet, listed)
-            else:
-                # decide_travel will fly it there.
-                actions.append("Holding cargo for better price elsewhere")
+        # Cargo that is not leaving this turn goes in the book. A loaded plan
+        # whose departure the fuel gate refuses is the case the old code left
+        # unlisted: it waited out ACCUMULATION_PATIENCE turns with the hold
+        # full and no ask anywhere. Listing costs it nothing when it does
+        # leave, since start_journey cancels resting orders before departure.
+        # Cargo held for another market is listed once HOLD_PATIENCE turns of
+        # refused departures have shown the trip is not happening.
+        list_here = should_sell_here
+        if has_trade_cargo and self._plan_loaded and plan is not None:
+            list_here = self._plan_departure_blocked(plan)
+        if has_trade_cargo and list_here:
+            sell_actions, listed, listed_locally = self._list_cargo_locally(market)
+            if listed:
+                actions.extend(sell_actions)
+                placed_fuel_sell = any(c.id == "nova_fuel" for c in listed)
+                self._record_local_sale(current_planet, listed)
+                self._note_listed(listed)
+                # Hold the ship here only for a sale it actually chose, and
+                # only while that sale is fresh: one that already sat a full
+                # turn unfilled has earned no more patience. A loaded plan is
+                # never pinned here by an ask it may yet fly away from.
+                if (
+                    should_sell_here
+                    and not self._plan_loaded
+                    and not self._local_sale_stale
+                ):
+                    self._selling_locally = True
+        if has_trade_cargo and not should_sell_here:
+            # decide_travel will fly it there.
+            actions.append("Holding cargo for better price elsewhere")
 
         # No cargo, or cargo listed locally that nobody has taken for a full
         # turn: look for a plan. Without the second case a ship holding an
         # unsellable load could never replan, which is the other half of the
         # idle livelock. Plan sizing already treats the held cargo as
         # occupied hold space (see _pair_economics).
-        if not has_trade_cargo or (listed_locally > 0 and self._local_sale_stale):
+        if not has_trade_cargo or (
+            listed_locally > 0 and self._local_sale_stale and not self._plan_loaded
+        ):
             # Adopt the best trade plan. The search skips whatever this ship
             # is listing here, so it cannot plan to buy back its own cargo.
             plan = self._find_best_trade_plan()
@@ -2732,6 +2982,9 @@ class TraderBrain(ShipBrain):
                 if self._linger_to_bunker(turn_value):
                     return None
                 self._departed_trip_turn_value = turn_value
+                # The cargo is going to the market the plan priced it for, so
+                # the markdown clock starts over there.
+                self._unsold_turns.clear()
                 return plan.destination
             return None
 
@@ -2798,10 +3051,7 @@ class TraderBrain(ShipBrain):
             total_value = 0
 
             for commodity, quantity in cargo_to_sell.items():
-                bid, _ = dest_market.get_bid_ask_spread(commodity)
-                price = max(bid or 0, self._flow_value(dest_market, commodity) or 0)
-                if price > 0:
-                    total_value += price * quantity
+                total_value += self._realizable_value(dest_market, commodity, quantity)
 
             # Fuel is costed at origin prices.
             origin_fuel_price = (
@@ -2819,6 +3069,13 @@ class TraderBrain(ShipBrain):
             if self._linger_to_bunker(turn_value):
                 return None
             self._departed_trip_turn_value = turn_value
+            # A cargo hop: cargo flown somewhere else to sell, outside any
+            # plan. Counted per commodity aboard so _cargo_disposition can
+            # stop the second one.
+            for commodity in cargo_to_sell:
+                self._cargo_hops[commodity.id] = (
+                    self._cargo_hops.get(commodity.id, 0) + 1
+                )
         return best_planet
 
     def _survival_reposition_target(self, fuel_available: int) -> Optional[Planet]:
