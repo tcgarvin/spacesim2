@@ -63,6 +63,13 @@ FUEL_BID_MARGIN = 0.30
 # 10 is fabricated and cannot be trusted.
 FUEL_BID_FALLBACK_FLOOR = 15
 
+# A fuel station is a market a ship can plan around: at least
+# FUEL_STATION_MIN_DEPTH units resting on the ask side, priced no higher than
+# FUEL_STATION_MAX_PRICE_MULT times the galaxy fuel reference. One producer
+# unit resting, or a book at a panic price, is not somewhere a ship can refuel.
+FUEL_STATION_MIN_DEPTH = 6
+FUEL_STATION_MAX_PRICE_MULT = 2.0
+
 # Ships are created with fuel_efficiency in [0.8, 1.2]. When estimating an
 # unknown deliverer's burn, assume the worst so the bid stays enticing.
 DELIVERER_WORST_FUEL_EFFICIENCY = 0.8
@@ -144,6 +151,8 @@ class Navigator:
         self._fuel_purchasable: Dict["Planet", bool] = {}
         self._fuel_ask_depth: Dict["Planet", int] = {}
         self._nearest_fuel_distance: Dict["Planet", Optional[float]] = {}
+        self._fuel_station: Dict["Planet", bool] = {}
+        self._nearest_station_distance: Dict["Planet", Optional[float]] = {}
         self._fuel_scan: Optional["_FuelScan"] = None
         self._trade_index: Optional[_TradeSignalIndex] = None
         # Turn the market-fact snapshot belongs to. None means never refreshed
@@ -172,6 +181,8 @@ class Navigator:
         self._fuel_purchasable.clear()
         self._fuel_ask_depth.clear()
         self._nearest_fuel_distance.clear()
+        self._fuel_station.clear()
+        self._nearest_station_distance.clear()
         self._fuel_scan = None
         self._trade_index = None
 
@@ -406,6 +417,63 @@ class Navigator:
                 break
         self._nearest_fuel_distance[planet] = result
         return result
+
+    def fuel_station_at(self, planet: "Planet") -> bool:
+        """Whether ``planet`` is a fuel market a ship can plan around.
+
+        True when at least :data:`FUEL_STATION_MIN_DEPTH` units rest on the
+        ask side, from any seller, and the best ask is no more than
+        :data:`FUEL_STATION_MAX_PRICE_MULT` times
+        :meth:`fuel_value_reference`. With no reference, depth alone decides.
+
+        Stricter than :meth:`fuel_purchasable_at`, which answers whether a
+        single unit can be lifted right now. A ship that commits its escape
+        fuel to reach a planet needs the planet to be able to fill the tank
+        at a price it can pay, so a one-unit trickle ask or a spiked book
+        does not count.
+        """
+        cached = self._fuel_station.get(planet)
+        if cached is not None:
+            return cached
+        fuel = self.fuel_commodity()
+        result = False
+        if (
+            fuel is not None
+            and self.fuel_ask_depth_at(planet) >= FUEL_STATION_MIN_DEPTH
+        ):
+            _, ask = planet.market.get_bid_ask_spread(fuel)
+            if ask is not None and ask > 0:
+                reference = self.fuel_value_reference()
+                result = (
+                    reference is None or ask <= FUEL_STATION_MAX_PRICE_MULT * reference
+                )
+        self._fuel_station[planet] = result
+        return result
+
+    def nearest_fuel_station_distance(self, planet: "Planet") -> Optional[float]:
+        """Distance from ``planet`` to the nearest other fuel station.
+
+        Returns None when no other planet in the galaxy is a station. Fuel
+        cost is monotone in distance, so the nearest station also minimizes
+        any ship's escape-fuel requirement.
+        """
+        if planet in self._nearest_station_distance:
+            return self._nearest_station_distance[planet]
+        result: Optional[float] = None
+        for other in self.planets_by_proximity(planet):
+            if self.fuel_station_at(other):
+                result = self.distance(planet, other)
+                break
+        self._nearest_station_distance[planet] = result
+        return result
+
+    def fuel_station_planets(self) -> List["Planet"]:
+        """Every planet that is a fuel station right now."""
+        return [
+            planet
+            for planet, _ in self._fuel_market_scan().asks
+            if self.fuel_station_at(planet)
+        ]
 
     def fuel_ask_planets(self) -> List[Tuple["Planet", int]]:
         """Every planet with a resting fuel ask, as (planet, ask) pairs."""

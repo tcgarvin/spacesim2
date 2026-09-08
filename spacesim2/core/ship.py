@@ -118,6 +118,20 @@ REPOSITION_ORIGIN_CANDIDATES = 12
 MAINTENANCE_CHANCE = 0.1
 MAINTENANCE_FUEL_UNITS = 5
 
+# Maintenance goods, best quality first, as (commodity id, units per repair,
+# label). A "repair kit" is one complete tier of the cargo goods. The fuel
+# tier is the legacy fallback: it burns tank fuel rather than hold cargo, and
+# is what MAINTENANCE_FUEL_UNITS of arrival reserve exists to survive.
+MAINTENANCE_KIT_TIERS: Tuple[Tuple[str, int, str], ...] = (
+    ("ship_components", 1, "ship components"),
+    ("ship_parts", 2, "ship parts"),
+    ("ship_supplies", 3, "ship supplies"),
+)
+MAINTENANCE_TIERS: Tuple[Tuple[str, int, str], ...] = MAINTENANCE_KIT_TIERS + (
+    ("nova_fuel", MAINTENANCE_FUEL_UNITS, "fuel"),
+)
+MAINTENANCE_KIT_IDS = frozenset(tier[0] for tier in MAINTENANCE_KIT_TIERS)
+
 # Consecutive docked turns with no cargo, no plan and less cash than one
 # short round trip's fuel before a ship counts as distressed. A distressed
 # ship may liquidate the working capital parked in its tank, selling fuel
@@ -512,16 +526,49 @@ class TraderBrain(ShipBrain):
         return self.ship.fuel_required(nearest)
 
     def _min_escape_fuel(self, from_planet: Planet) -> Optional[int]:
-        """Fuel needed to reach the nearest fuel-selling planet from ``from_planet``.
+        """Fuel needed to reach the nearest fuel station from ``from_planet``.
 
-        Returns None if fuel is not purchasable anywhere else in the galaxy.
-        Fuel burn is monotone in distance, so the navigator's nearest source
-        minimizes this ship's escape cost too.
+        Returns None if no other planet in the galaxy is a station. The
+        measure is to a station, not to any resting ask: a one-unit trickle
+        ask cannot refill a tank, so escaping to it leaves the ship in the
+        same position one hop further on. Fuel burn is monotone in distance,
+        so the navigator's nearest station minimizes this ship's escape cost
+        too.
         """
-        distance = self._nav.nearest_fuel_source_distance(from_planet)
+        distance = self._nav.nearest_fuel_station_distance(from_planet)
         if distance is None:
             return None
         return self.ship.fuel_required(distance)
+
+    def _repair_kit_tier(self) -> Optional[Tuple[str, int, str]]:
+        """The complete maintenance tier the ship would repair with, if any.
+
+        Best quality first, matching :meth:`Ship.perform_maintenance`, so the
+        tier named here is the one a repair would actually consume. Returns
+        None when the hold carries no complete tier.
+        """
+        registry = self.ship.simulation.commodity_registry
+        for tier in MAINTENANCE_KIT_TIERS:
+            commodity = registry.get_commodity(tier[0])
+            if commodity is None:
+                continue
+            if self.ship.cargo.get_quantity(commodity) >= tier[1]:
+                return tier
+        return None
+
+    def _holds_repair_kit(self) -> bool:
+        """Whether the hold carries a complete maintenance tier."""
+        return self._repair_kit_tier() is not None
+
+    def _maintenance_fuel_buffer(self) -> int:
+        """Tank fuel a maintenance roll could burn before the next departure.
+
+        Zero while the ship carries a repair kit, because the cargo tiers are
+        tried before the fuel tier. Otherwise MAINTENANCE_FUEL_UNITS, the
+        legacy tier's cost, which is charged on top of every arrival reserve
+        so a repair cannot leave the ship below the leg it was funded for.
+        """
+        return 0 if self._holds_repair_kit() else MAINTENANCE_FUEL_UNITS
 
     def _arrival_fuel_requirement(
         self, destination: Planet, return_planet: Planet
@@ -532,8 +579,12 @@ class TraderBrain(ShipBrain):
         callers that have to *fund* a trip ask the same question the gate
         that approves it asks, instead of guessing.
 
-        The requirement is normally the escape leg: fuel enough, on arrival,
-        to reach the nearest *other* planet that sells fuel.
+        The requirement is normally the escape leg to the nearest fuel
+        station, plus :meth:`_maintenance_fuel_buffer`. The buffer covers the
+        legacy maintenance tier, which burns MAINTENANCE_FUEL_UNITS of tank
+        fuel on the turn after a departure roll: a ship funded to exactly its
+        escape leg lands, repairs, and is then below the leg it was funded
+        for. A ship carrying a repair kit needs no buffer.
 
         Demanding that leg unconditionally is self-ratcheting. A ship funded
         to exactly its escape leg can never spend it, because the hop to the
@@ -541,37 +592,25 @@ class TraderBrain(ShipBrain):
         sat for hundreds of turns with money in hand and a live fuel market
         three units away, vetoed by a floor they were already sitting on.
 
-        So the escape leg is waived when the destination is itself a working
-        fuel market, and that takes two independent signals:
+        So the requirement drops to zero when the destination is itself a
+        fuel station (:meth:`Navigator.fuel_station_at`): depth enough to
+        refill a tank at a price near the galaxy reference. Any burn there is
+        re-buyable. Weaker evidence does not qualify. A resting ask paired
+        with recent trading used to waive the leg, and ships landed on the
+        strength of it with no ask left by arrival: 39% of spiked fuel spend
+        came from ships in that state.
 
-        * a live resting nova_fuel ask right now
-          (:meth:`_fuel_purchasable_at`), and
-        * fuel actually changing hands there recently
-          (:meth:`Navigator.fuel_traded_recently`).
-
-        Neither alone is trustworthy, and both failures are on the record.
-        A recency rule with no resting ask was the original stranding bug:
-        it said yes on arrival 97% of the time when nothing was for sale.
-        Depth alone failed the other way: approval reads the book several
-        turns before the ship lands, and in a sixth of episodes the depth
-        approved at departure was gone by arrival. Together they mean a
-        market that is both stocked now and habitually restocked, which is
-        the only thing a ship in transit can reasonably bet on. When only
-        one signal holds, the escape floor stands.
-
-        Only when fuel is purchasable nowhere else in the galaxy is there no
-        escape leg to demand. Grounding the whole fleet would then be worse
-        than the risk, so the requirement falls back to the return leg to
+        Only when the galaxy holds no station at all is there no escape leg
+        to demand. Grounding the whole fleet would then be worse than the
+        risk, so the requirement falls back to the return leg to
         ``return_planet``, which the destination's own ask depth may still
         offset.
         """
         escape_fuel = self._min_escape_fuel(destination)
         if escape_fuel is not None:
-            if self._fuel_purchasable_at(
-                destination
-            ) and self._nav.fuel_traded_recently(destination):
+            if self._nav.fuel_station_at(destination):
                 return 0
-            return escape_fuel
+            return escape_fuel + self._maintenance_fuel_buffer()
         requirement = self.ship.fuel_required(
             self._nav.distance(destination, return_planet)
         )
@@ -694,8 +733,8 @@ class TraderBrain(ShipBrain):
         """Tank level that buys a way off this planet and no more, or None.
 
         The rationed alternative to :meth:`_fuel_survival_target` when the
-        local ask is spiked: the leg to the nearest planet that sells fuel
-        plus that planet's own arrival floor, so the ship is not merely
+        local ask is spiked: the leg to the nearest fuel station plus that
+        station's own arrival floor, so the ship is not merely
         moved to a second trap. It is exactly the number
         :meth:`_departure_fuel_requirement` would demand for that hop, which
         is the number the departure gate checks, so a ship that funds this
@@ -705,15 +744,15 @@ class TraderBrain(ShipBrain):
         (typically because the requirement exceeds the tank). Callers must
         then buy the full survival target: overpaying beats dying in place.
 
-        Only the nearest fuel seller is considered. Fuel burn is monotone in
-        distance, so a farther seller costs strictly more leg fuel, and the
+        Only the nearest station is considered. Fuel burn is monotone in
+        distance, so a farther station costs strictly more leg fuel, and the
         point of rationing is to spend as little as possible at a spiked ask.
         """
         origin = self.ship.planet
         if origin is None:
             return None
         for candidate in self._nav.planets_by_proximity(origin):
-            if not self._fuel_purchasable_at(candidate):
+            if not self._nav.fuel_station_at(candidate):
                 continue
             target = self._departure_fuel_requirement(candidate)
             leg = self.ship.fuel_required(self._nav.distance(origin, candidate))
@@ -809,11 +848,22 @@ class TraderBrain(ShipBrain):
     def _sellable_quantity(self, commodity: CommodityDefinition) -> int:
         """Hold units of ``commodity`` the ship may treat as trade goods.
 
-        The tank is not part of the hold, so this is simply what the hold
+        The tank is not part of the hold, so this is mostly what the hold
         carries. Fuel in the hold is either a delivery plan's load or the
         remainder the pump could not fit, and both are for sale.
+
+        One repair kit is held back. Maintenance goods the ship needs to
+        repair itself are equipment, not trade cargo: selling them puts the
+        arrival reserve back up by MAINTENANCE_FUEL_UNITS, which costs more
+        fuel than the kit is worth. Only the tier the ship would repair with
+        is reserved, so a second tier bought as cargo still sells.
         """
-        return max(0, self.ship.cargo.get_quantity(commodity))
+        held = max(0, self.ship.cargo.get_quantity(commodity))
+        if held and commodity.id in MAINTENANCE_KIT_IDS:
+            kit = self._repair_kit_tier()
+            if kit is not None and kit[0] == commodity.id:
+                held = max(0, held - kit[1])
+        return held
 
     def _refresh_local_sale_staleness(self) -> None:
         """Judge whether last turn's local asks went a full turn unfilled.
@@ -1708,6 +1758,57 @@ class TraderBrain(ShipBrain):
                 )
         return actions
 
+    def _buy_repair_kit(self) -> List[str]:
+        """Buy one complete maintenance tier when it is cheaper than the fuel it saves.
+
+        A ship with no kit carries MAINTENANCE_FUEL_UNITS of extra arrival
+        reserve on every leg, because the legacy maintenance tier burns tank
+        fuel. Owning a kit removes that reserve, so any kit costing less than
+        those units at the galaxy fuel reference pays for itself immediately,
+        and again at every repair. Buys the cheapest complete tier with a
+        resting ask, at that ask, one tier per turn.
+
+        This is the planned purchase; :meth:`Ship._buy_maintenance_supplies`
+        remains the fallback for a ship that has already rolled a repair it
+        cannot make.
+        """
+        ship = self.ship
+        planet = ship.planet
+        if planet is None or self._holds_repair_kit():
+            return []
+        reference = self._fuel_value_reference()
+        budget_ceiling = MAINTENANCE_FUEL_UNITS * (
+            reference if reference is not None else float(FUEL_BID_FALLBACK_FLOOR)
+        )
+        spendable = int(ship.money * 0.9)
+        market = planet.market
+        registry = ship.simulation.commodity_registry
+        best: Optional[Tuple[int, CommodityDefinition, int, int]] = None
+        for commodity_id, units, _label in MAINTENANCE_KIT_TIERS:
+            commodity = registry.get_commodity(commodity_id)
+            if commodity is None:
+                continue
+            if ship.cargo.get_quantity(commodity) > 0:
+                # Partly held: those units are listed as cargo this turn, and
+                # bidding for the rest would meet our own ask.
+                continue
+            _, ask = market.get_bid_ask_spread(commodity)
+            if ask is None or ask <= 0:
+                continue
+            cost = ask * units
+            if cost >= budget_ceiling or cost > spendable:
+                continue
+            if best is None or cost < best[0]:
+                best = (cost, commodity, units, ask)
+        if best is None:
+            return []
+        _cost, commodity, units, ask = best
+        order_id = market.place_buy_order(ship, commodity, units, ask)
+        if not order_id:
+            return []
+        ship.active_orders[order_id] = f"buy {commodity.id} (repair kit)"
+        return [f"Buying repair kit: {units} {commodity.id} at {ask}"]
+
     def _execute_trade_plan(
         self,
         plan: TradePlan,
@@ -2263,6 +2364,12 @@ class TraderBrain(ShipBrain):
         if fuel_upkeep_ran:
             actions.extend(self._maintain_fuel())
 
+        # A repair kit removes the maintenance buffer from every arrival
+        # reserve this ship funds, so it goes in ahead of cargo listing and
+        # cargo buying: the reserve it frees is worth more than the hold
+        # space it takes.
+        actions.extend(self._buy_repair_kit())
+
         listed_locally = 0
         if accumulating and plan is not None:
             # Cargo the plan is not about would otherwise sit unlisted for the
@@ -2497,12 +2604,12 @@ class TraderBrain(ShipBrain):
         """Nearest reachable planet where refueling is plausible.
 
         This is the last resort, so it accepts weaker evidence than a plan
-        gate does. First choice is a planet with a live fuel ask; second is
-        one where fuel traded in the recent window; third is one that has
-        ever traded fuel, since a producer there can answer a standing
-        rescue bid, unlike on a never-traded fuel desert. Returns None when
-        no such planet is in range; then staying put and posting a standing
-        bid is all that is left.
+        gate does. First choice is a planet with a live fuel ask, stations
+        ahead of thinner books; second is one where fuel traded in the recent
+        window; third is one that has ever traded fuel, since a producer
+        there can answer a standing rescue bid, unlike on a never-traded fuel
+        desert. Returns None when no such planet is in range; then staying
+        put and posting a standing bid is all that is left.
 
         Candidates that also clear :meth:`_fuel_safe_destination` sort ahead
         of ones that do not, so a hop that leaves an escape route always
@@ -2522,7 +2629,7 @@ class TraderBrain(ShipBrain):
         fuel_commodity = self._fuel_commodity()
         if fuel_commodity is None:
             return None
-        best: Optional[tuple[int, int, float, Planet]] = None
+        best: Optional[tuple[int, int, int, float, Planet]] = None
         for planet in self.ship.simulation.planets:
             if planet is current:
                 continue
@@ -2530,7 +2637,8 @@ class TraderBrain(ShipBrain):
             leg = self.ship.fuel_required(distance)
             if fuel_available < leg:
                 continue
-            if self._fuel_purchasable_at(planet):
+            station = self._nav.fuel_station_at(planet)
+            if station or self._fuel_purchasable_at(planet):
                 tier = 0
             elif self._nav.fuel_traded_recently(planet):
                 tier = 1
@@ -2545,10 +2653,10 @@ class TraderBrain(ShipBrain):
             )
             if unsafe and tier > 0:
                 continue
-            key = (unsafe, tier, distance)
-            if best is None or key < (best[0], best[1], best[2]):
-                best = (unsafe, tier, distance, planet)
-        return best[3] if best is not None else None
+            key = (unsafe, tier, 0 if station else 1, distance)
+            if best is None or key < (best[0], best[1], best[2], best[3]):
+                best = (unsafe, tier, 0 if station else 1, distance, planet)
+        return best[4] if best is not None else None
 
     def _find_reposition_target(
         self, fuel_available: int, fuel_commodity: "CommodityDefinition"
@@ -2816,15 +2924,8 @@ class Ship:
         Returns True if maintenance succeeded, False if supplies are lacking.
         """
         registry = self.simulation.commodity_registry
-        # Tiered maintenance: (commodity_id, quantity_needed, label)
-        tiers = [
-            ("ship_components", 1, "ship components"),
-            ("ship_parts", 2, "ship parts"),
-            ("ship_supplies", 3, "ship supplies"),
-            ("nova_fuel", 5, "fuel"),
-        ]
 
-        for commodity_id, qty, label in tiers:
+        for commodity_id, qty, label in MAINTENANCE_TIERS:
             commodity = registry.get_commodity(commodity_id)
             if commodity is None:
                 continue
@@ -2869,12 +2970,7 @@ class Ship:
         for order in existing["buy"] + existing["sell"]:
             market.cancel_order(order.order_id)
 
-        tiers = [
-            ("ship_components", 1),
-            ("ship_parts", 2),
-            ("ship_supplies", 3),
-            ("nova_fuel", 5),
-        ]
+        tiers = [(tier[0], tier[1]) for tier in MAINTENANCE_TIERS]
         for commodity_id, qty_needed in tiers:
             commodity = registry.get_commodity(commodity_id)
             if commodity is None:

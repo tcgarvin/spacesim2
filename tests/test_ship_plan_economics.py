@@ -30,8 +30,15 @@ def _make_world(planet_specs):
     food = CommodityDefinition(
         id="food", name="Food", transportable=True, description="Basic sustenance."
     )
+    components = CommodityDefinition(
+        id="ship_components",
+        name="Ship Components",
+        transportable=True,
+        description="Best-quality maintenance tier.",
+    )
     registry.add_commodity(fuel)
     registry.add_commodity(food)
+    registry.add_commodity(components)
     planets = [Planet(name, Market(), x, y) for name, x, y in planet_specs]
     sim = type(
         "MockSim",
@@ -59,6 +66,12 @@ def _make_ship(
     return ship
 
 
+def _give_repair_kit(ship):
+    """Stock one complete maintenance tier, which zeroes the arrival fuel buffer."""
+    components = ship.simulation.commodity_registry.get_commodity("ship_components")
+    ship.cargo.add_commodity(components, 1)
+
+
 def _record_flow(market, commodity, price, volume):
     """Give ``commodity`` a believable clearing price and recent volume."""
     market.last_traded_prices[commodity] = [price]
@@ -82,6 +95,7 @@ def test_margin_charges_only_the_outbound_leg_of_fuel():
     b.market.place_buy_order(buyer, food, 50, 30)
 
     trader = _make_ship(sim, a, money=5000, name="Trader")
+    _give_repair_kit(trader)
     plan = trader.brain._evaluate_trade_opportunity(a, b, food)
 
     assert plan is not None
@@ -130,6 +144,7 @@ def test_cash_gate_still_withholds_the_whole_round_trip():
     b.market.place_buy_order(buyer, food, 50, 30)
 
     rich = _make_ship(sim, a, money=5000, name="Rich")
+    _give_repair_kit(rich)
     pair = rich.brain._pair_economics(a, b)
     assert pair is not None
     fuel_one_way = rich.fuel_required(rich.route_distance(a, b))
@@ -139,6 +154,7 @@ def test_cash_gate_still_withholds_the_whole_round_trip():
     # gate must refuse, or the ship strands at B with no way home.
     one_way_only = fuel_one_way * 40 + 10
     poor = _make_ship(sim, a, money=one_way_only, name="Poor")
+    _give_repair_kit(poor)
     assert poor.brain._pair_economics(a, b) is None
 
 
@@ -160,6 +176,7 @@ def test_evaluation_price_uses_the_resting_ask_while_the_bid_chases_the_flow():
     b.market.place_buy_order(buyer, food, 40, 30)
 
     trader = _make_ship(sim, a, money=20000, name="Trader")
+    _give_repair_kit(trader)
     acquisition = trader.brain._origin_acquisition(a, food)
     assert acquisition is not None
     assert acquisition.entry_price == 10
@@ -186,6 +203,7 @@ def test_evaluation_price_walks_past_a_thin_ask_into_the_flow():
     b.market.place_buy_order(buyer, food, 40, 30)
 
     trader = _make_ship(sim, a, money=20000, name="Trader")
+    _give_repair_kit(trader)
     plan = trader.brain._evaluate_trade_opportunity(a, b, food)
 
     assert plan is not None
