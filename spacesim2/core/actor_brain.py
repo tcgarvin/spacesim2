@@ -33,6 +33,10 @@ NUMERAIRE_DRIVE = "food"
 SURPLUS_REFERENCE_DAYS = 30.0
 SURPLUS_DISCOUNT_FLOOR = 0.1
 
+# A drive's substitute bid sits this far under the shelf price of the material
+# it buys today: the buyer prefers the known good but takes the other for less.
+SUBSTITUTE_BID_DISCOUNT = 0.9
+
 # Max recursion depth for make-or-buy imputation through production chains.
 MAX_IMPUTE_DEPTH = 6
 
@@ -270,7 +274,7 @@ class ActorBrain:
         if cache is None:
             cache = BrainCache()
         commands: List[MarketCommand] = []
-        absent: List[
+        substitutes: List[
             Tuple[List["CommodityDefinition"], "CommodityDefinition", int, int, int]
         ] = []
         available = actor.money
@@ -319,10 +323,10 @@ class ActorBrain:
                 available -= qty * bid
 
             if ask is not None:
-                absent.append((mats, target_commodity, need, wtp, ask))
+                substitutes.append((mats, target_commodity, need, wtp, ask))
 
-        for mats, target_commodity, need, wtp, ask in absent:
-            available = self._add_absent_material_bids(
+        for mats, target_commodity, need, wtp, ask in substitutes:
+            available = self._add_substitute_material_bids(
                 actor,
                 market,
                 mats,
@@ -337,7 +341,7 @@ class ActorBrain:
 
         return commands
 
-    def _add_absent_material_bids(
+    def _add_substitute_material_bids(
         self,
         actor: "Actor",
         market: "Market",
@@ -350,41 +354,41 @@ class ActorBrain:
         commands: List[MarketCommand],
         cache: Optional[BrainCache],
     ) -> int:
-        """Bid for a drive's materials that nobody sells here. Returns the budget left.
+        """Bid for a drive's other materials below the shelf price. Returns the budget left.
 
-        A drive bids for the cheapest material that has a local ask, so a
-        material with no local seller draws no bid and the planet's demand
-        for it is invisible off-world. Ships read the destination book, so a
-        planet that imports nothing shows nothing to import. This posts one
-        extra bid per absent material, priced at or below what the actor
-        would pay for the material it can actually buy.
+        A drive bids for the cheapest material that has a local ask, so its
+        other materials draw no bid and the planet's demand for them is
+        invisible off-world. Ships read the destination book, so a planet
+        whose colonists hand-feed on ``food`` at 7 shows no demand for
+        ``processed_food`` even though every one of them would take it at
+        6. This posts one extra bid per other material, priced just under
+        what the actor pays for the material it buys today, whether or not
+        someone sells that material locally at a higher price. The bids
+        make a deep book at a price a ship can carry a full hold into.
 
-        Price: ``min(wtp, ask, reference * (1 + scarcity_pressure))``. The
-        ceiling is the drive's own willingness to pay; ``ask`` bounds it by
-        the substitute on the shelf, since no buyer pays more for an absent
-        good than for one it can carry home today; the escalating reference
-        starts the bid at a level the market can supply and raises it while
-        the bid goes unfilled.
+        Price: ``min(wtp, ask * SUBSTITUTE_BID_DISCOUNT, reference * (1 +
+        scarcity_pressure))``. The ceiling is the drive's own willingness to
+        pay; the discounted ``ask`` bounds it by the substitute on the
+        shelf, since a buyer takes the untried good only for less than the
+        one it can carry home today; the escalating reference starts a
+        never-traded good's bid at a level the market can supply and raises
+        it while the bid goes unfilled.
 
         Budget: the caller's running ``available`` is threaded through, so
         every bid an actor places in a turn together reserves no more than
-        its money, and the caller runs this pass last so a speculative
-        import bid never outbids a shelf purchase for a lower-priority
-        need. Quantity is the same restock ``need``, so an actor with cash
-        can end a turn holding up to twice its target. Consumption then
-        keeps it out of the market until stock falls back below target.
-
-        Cost is one dict lookup per material: ``_cheapest_material_ask``
-        already populated the quote cache this turn.
+        its money, and the caller runs this pass last so a substitute bid
+        never outbids a shelf purchase for a lower-priority need. Quantity
+        is the same restock ``need``, so an actor with cash can end a turn
+        holding up to twice its target. Consumption then keeps it out of the
+        market until stock falls back below target.
         """
+        shelf_bound = int(ask * SUBSTITUTE_BID_DISCOUNT)
         for material in materials:
             if material is target_commodity:
                 continue
-            if _get_bid_ask(market, material, cache)[1] is not None:
-                continue  # somebody sells it here, including possibly the actor
             ref = self._drive_bid_reference(actor, market, material, cache)
             pressure = market.scarcity_pressure_for(material)
-            price = min(wtp, ask, int(round(ref * (1.0 + pressure))))
+            price = min(wtp, shelf_bound, int(round(ref * (1.0 + pressure))))
             if price <= 0:
                 continue
             qty = min(need, available // price)

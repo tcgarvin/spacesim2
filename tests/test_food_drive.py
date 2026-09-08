@@ -5,6 +5,7 @@ from unittest.mock import Mock
 import pytest
 
 from spacesim2.core.actor import Actor, ActorType
+from spacesim2.core.actor_brain import SUBSTITUTE_BID_DISCOUNT
 from spacesim2.core.commodity import CommodityRegistry, Inventory
 from spacesim2.core.drives.food_drive import (
     DAILY_CONSUMPTION,
@@ -357,7 +358,7 @@ class TestStapleDemandBid:
 
     Ships read the destination order book, so a planet with no local
     ``processed_food`` seller has to post its own bid or its demand is
-    invisible off-world. See ``ActorBrain._add_absent_material_bids``.
+    invisible off-world. See ``ActorBrain._add_substitute_material_bids``.
     """
 
     @pytest.fixture
@@ -417,7 +418,31 @@ class TestStapleDemandBid:
 
         commands = buyer.brain._drive_buy_commands(buyer, market)
         bid = next(c for c in commands if c.commodity_type.id == "processed_food")
-        assert 0 < bid.price <= min(wtp, ask)
+        assert 0 < bid.price <= min(wtp, int(ask * SUBSTITUTE_BID_DISCOUNT))
+
+    def test_staple_bid_stands_under_a_pricier_local_staple_ask(self, sim):
+        """A local staple seller above the food price does not silence the bid.
+
+        Hand-feeding actors are the staple's deep demand. Their bid sits
+        under the food ask and below the premium staple ask, so it rests
+        unfilled locally and shows a ship a full-hold price.
+        """
+        buyer, seller = self._actors(sim)
+        food_ask = 10
+        drive = self._post_premium_ask(seller, price=food_ask)
+        staple = drive.staple_commodity
+        market = buyer.planet.market
+        seller.inventory.add_commodity(staple, 5)
+        market.place_sell_order(seller, staple, 5, 25)
+        buyer.money = 5000
+        buyer.inventory = Inventory()
+
+        commands = buyer.brain._drive_buy_commands(buyer, market)
+        by_id = {c.commodity_type.id: c for c in commands}
+        assert by_id["food"].price == food_ask
+        assert by_id["processed_food"].quantity > 0
+        assert by_id["processed_food"].price <= int(food_ask * SUBSTITUTE_BID_DISCOUNT)
+        assert by_id["processed_food"].price < 25
 
     def test_bids_stay_within_budget(self, sim):
         """Premium and staple bids together never exceed the actor's money."""
@@ -430,8 +455,8 @@ class TestStapleDemandBid:
         assert commands
         assert sum(c.quantity * c.price for c in commands) <= buyer.money
 
-    def test_local_staple_ask_keeps_the_old_behavior(self, sim):
-        """With the staple on the shelf, only the cheapest material is bid for."""
+    def test_cheapest_material_bid_at_ask_and_other_under_it(self, sim):
+        """The cheapest material is bid at its ask; the other rests under it."""
         buyer, seller = self._actors(sim)
         drive = self._food_drive(seller)
         market = seller.planet.market
@@ -446,6 +471,8 @@ class TestStapleDemandBid:
 
         commands = buyer.brain._drive_buy_commands(buyer, market)
         food_ids = {"processed_food", "food"}
-        food_cmds = [c for c in commands if c.commodity_type.id in food_ids]
-        assert [c.commodity_type.id for c in food_cmds] == ["processed_food"]
-        assert food_cmds[0].price == 6
+        by_id = {
+            c.commodity_type.id: c for c in commands if c.commodity_type.id in food_ids
+        }
+        assert by_id["processed_food"].price == 6
+        assert 0 < by_id["food"].price <= int(6 * SUBSTITUTE_BID_DISCOUNT)

@@ -56,14 +56,18 @@ The WTP ceiling and phantom-bid entry are fixed (`FoodDrive.security`,
   the health drive fell to 0.25 (WARN), so metal supply under machinery
   demand and the medicine chain are the next bottlenecks; 100 planets
   unchecked; (2) a plant out-produces its planet (one held
-  16,990 processed food at turn 300) and the surplus is not exported. Two
-  questions, in order, both needing the 100-planet galaxy since trade KPIs
-  mean nothing at 12: does processed food ever leave a plant planet, and if
-  not, does the ship planner reject it on per-unit margin (2-3 credits at
-  the plant against 5-9 for hand food on a poor planet)? Then, once imports
-  land, do biomass-poor planets still build farms? A farm scores against
-  its own planet's biomass price, where hand gathering at attribute 0.2
-  yields 1.6 per turn, so a local farm looks good even when a farm two
+  16,990 processed food at turn 300) and the surplus is not exported.
+  Answered 2026-09-07 (see the decision log): at 100 planets it never
+  leaves. Not per-unit margin on the demand side; substitute bids now put
+  45 resting bids per poor planet at the discounted food price and ships
+  still carry 10 units per 100 turns. 92% of (origin, destination) pair
+  evaluations fail on fuel or cash (`notebooks/processed_food_export_pairs.py`),
+  and the shippable spread is 1-3 credits, one hop's worth. Next: fleet
+  fuel and cash at plant planets, then plan ranking by margin per
+  trip-turn instead of absolute profit. Then, once imports land, do
+  biomass-poor planets still build farms? A farm scores against its own
+  planet's biomass price, where hand gathering at attribute 0.2 yields
+  1.6 per turn, so a local farm looks good even when a farm two
   lanes away yields 64; (3) latent numeraire
   risk: `_cheapest_effective_price` anchors lambda on the cheapest food, so
   when plants become common and the staple reaches ~2 credits every need

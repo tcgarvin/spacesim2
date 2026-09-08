@@ -88,37 +88,40 @@ returns both goods and bids for whichever is cheaper.
 - `can_purchase(actor)`: whether the brain may bid for this drive this
   turn. Always true for needs; prosperity drives gate on met needs.
 
-### Bidding for a material nobody sells here
+### Substitute bids for a drive's other materials
 
 `ActorBrain._drive_buy_commands` bids for the cheapest material that has a
-local ask, so a material with no local seller drew no bid at all. Ships plan
-against the destination order book, so a planet that never bids for
-`processed_food` shows nothing to import, however hungry it is. Biomass-poor
-planets bought hand-cooked `food` at 11-19 and the staple surplus stayed on
-the plant planets.
+local ask, so the drive's other materials draw no bid at all. Ships plan
+against the destination order book, so a planet whose colonists hand-feed on
+`food` at 7 shows no demand for `processed_food`, even though every one of
+them would take it at 6. Where a local plant sells a few units at 20, the
+book showed five bids at 18 and nothing under it, and no ship could sell a
+full hold there. The staple surplus stayed on the plant planets at 1.
 
-`ActorBrain._add_absent_material_bids` posts one extra bid per material of
-the drive that has no live local ask:
+`ActorBrain._add_substitute_material_bids` posts one extra bid per other
+material of the drive, whether or not someone sells it locally at a higher
+price:
 
 | Term | Value |
 |------|-------|
-| price | `min(wtp, ask, reference * (1 + scarcity_pressure))` |
+| price | `min(wtp, ask * SUBSTITUTE_BID_DISCOUNT, reference * (1 + scarcity_pressure))` |
 | quantity | the drive's restock `need`, capped by the money left |
 | when | after every drive has placed its primary bid |
 
 `wtp` is `_drive_willingness_to_pay` for the drive, unchanged. `ask` is the
-cheapest local ask among the drive's materials, so the buyer never pays more
-for an absent good than for the substitute on the shelf. `reference` is
-`_drive_bid_reference`, and unfilled bids raise `scarcity_pressure` toward
-its cap of 3.0, so the bid starts where the market can supply and ratchets up
-while nothing arrives.
+cheapest local ask among the drive's materials and `SUBSTITUTE_BID_DISCOUNT`
+is 0.9, so the buyer offers a little less for the untried good than for the
+one on the shelf. `reference` is `_drive_bid_reference`, and unfilled bids
+raise `scarcity_pressure` toward its cap of 3.0, so a never-traded good's
+bid starts where the market can supply and ratchets up while nothing
+arrives. With a shelf ask present the discounted ask is the binding term.
 
 The pass runs last, after every drive's primary bid, and draws on the same
-running budget. An import bid therefore never outbids a shelf purchase for a
-lower-priority need, and the bids an actor places in a turn together reserve
-no more than its money. Quantity is the full restock `need`, so an actor with
-cash can end a turn holding up to twice its target; consumption keeps it out
-of the market until stock falls back below target.
+running budget. A substitute bid therefore never outbids a shelf purchase
+for a lower-priority need, and the bids an actor places in a turn together
+reserve no more than its money. Quantity is the full restock `need`, so an
+actor with cash can end a turn holding up to twice its target; consumption
+keeps it out of the market until stock falls back below target.
 
 Only `FoodDrive` lists more than one material, so today only
 `processed_food` is affected. Cost is one dict lookup per material:

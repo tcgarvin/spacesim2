@@ -4,6 +4,57 @@ Append-only record of closed decisions, postmortems, and landed campaigns.
 Newest first. Open work lives in `TODO.md`; current reference docs live
 alongside this file.
 
+## 2026-09-07 - Substitute bids for the staple; why processed food still does not ship
+
+Question: after the tank split, does cheap `processed_food` move from plant
+planets to poor planets? No. In a 600-turn 100-planet run ships bought 24
+units in the last 100 turns against 320,994 traded locally, with the staple
+at 1.0 on plant planets and 19 one lane away. Food health is above 0.99 on
+every planet; poor planets hand-feed at 6.7 instead of importing.
+
+Change: `ActorBrain._add_substitute_material_bids` (was
+`_add_absent_material_bids`) now bids for a drive's other materials whether
+or not someone sells them locally, at `min(wtp, ask *
+SUBSTITUTE_BID_DISCOUNT, reference * (1 + pressure))` with the discount at
+0.9. Before, a single local staple ask above the food price silenced every
+hand-feeding actor's staple bid, so the destination book showed five bids
+at 18 and nothing under them. 12-planet A/B (3 reps x 300 turns) neutral on
+every KPI.
+
+100-planet before/after, 400 turns, last 100 turns:
+
+| KPI | before (`run_20260907_182849`, t500-600) | after (`run_20260907_200044`) |
+|---|---|---|
+| planets with staple best bid >= 3 | 36 | 59 |
+| mean resting staple bids on those | 31 | 45 |
+| staple units bought by ships | 24 | 10 |
+
+The book got deeper and nothing shipped. `notebooks/processed_food_export_pairs.py`
+replays the planner per (origin, destination) pair, 15,383 pairs:
+
+| pair outcome | share |
+|---|---|
+| fuel not buyable at origin | 49% |
+| no money for trading after round-trip fuel, refuel floor, maintenance | 43% |
+| plan built, margin below 0.15 | 6% |
+| no sellable demand | 2% |
+| plan accepted | 0.3% (40) |
+
+Evaluator ships hold median 372 credits and 1 unit of fuel against a median
+26-unit round trip at 39 per unit. Where a plan is built, the walked
+destination depth sits at 3-6 (the discounted food price; only 325 of
+about 3,000 units at 15) against an origin entry of 2-4, so a 66-unit load
+grosses 330 against 168 fuel and 42 maintenance. The 40 accepted plans are
+all one hop, median profit 98, and lose the absolute-profit ranking to
+tools and clothing at a median 1,264. Ships do carry bulk cheap goods when
+the spread is there: 13,053 units of biomass over the run.
+
+Conclusion: demand depth was not the blocker. The staple's shippable
+spread is 1-3 credits per unit, which pays for one hop and no more, and
+92% of pair evaluations fail on fuel or cash before price matters. The
+next levers are fleet fuel and cash at plant planets, then plan ranking.
+`notebooks/staple_flow.py` is the quick check.
+
 ## 2026-09-07 - Fuel tank split from the hold, bigger tank, add-on cargo
 
 Ships bought fuel at spike prices and it was the fleet's whole loss: over
