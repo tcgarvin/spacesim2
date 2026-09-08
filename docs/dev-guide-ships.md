@@ -339,10 +339,11 @@ cannot take stays in the hold and sells with the rest of the cargo.
 Before the split, tank fuel was cargo and the brain carried a set of rules
 to keep it from being sold: an overflow-only rule, a scarcity-bid gate, a
 delivery-plan exception, a distress liquidation path, and a committed-fuel
-floor. All of them are gone. The one fuel-specific sale rule left is
-`_sell_floor_price`: a `nova_fuel` ask never rests below the replacement
-reference, `ceil(_fuel_value_reference())` or `FUEL_BID_FALLBACK_FLOOR`
-(15) before anything has traded.
+floor. All of them are gone. The one fuel-specific sale rule left is in
+`_sell_floor_price` (see "Cost basis and the sell floor" below): a
+`nova_fuel` ask never rests below the replacement reference,
+`ceil(_fuel_value_reference())` or `FUEL_BID_FALLBACK_FLOOR` (15) before
+anything has traded, on top of the cost-basis floor every commodity gets.
 
 Fuel buys are bounded by tank room and money, never by hold room. A fuel
 fill can briefly put the hold over `cargo_capacity`; the pump clears it
@@ -539,11 +540,80 @@ Acquire cargo before deciding to travel. `decide_trade_actions()` evaluates
 plans and places buy orders; `decide_travel()` checks for cargo and picks
 the destination. Ships then never fly empty or without a plan.
 
-### Sell location
+### Cost basis and the sell floor
 
-Do not sell cargo where it was bought. Check other planets for a better
-price (15% or more higher), hold and travel if worthwhile, and sell locally
-only when no better destination exists.
+`TraderBrain` keeps a per-commodity cost basis fed from this ship's own
+fills: `_ingest_cost_basis()` reads new fills into it once per docked turn,
+before any decision uses it. The cursor is the highest transaction id
+already seen per planet (`_basis_cursors`, keyed by planet name), not an
+index, since the market trims each per-actor history from the front. A buy
+raises the basis (`units`, `credits`); a sell removes units at the average
+cost (`_reduce_cost_basis`). Fuel is excluded from the basis; the tank is
+priced at the galaxy reference, not at what it cost. `basis_per_unit(commodity)`
+returns credits per unit, or `None` for cargo with no known basis (aboard
+before tracking started, or never bought on a market).
+
+`_sell_floor_price(commodity)` is the lowest price the ship will list at:
+
+- Cargo with a known basis floors at that basis, marked down `UNSOLD_DECAY`
+  (10%) per docked turn it has sat listed and unfilled, never below
+  `LIQUIDATION_FLOOR` (40%) of basis. `_age_unsold_listings()` counts a turn
+  against a commodity only when the held quantity has not fallen below what
+  was listed (`_listed_held`, set by `_note_listed()` when an ask goes in); a
+  fill on either side resets `_unsold_turns` for that commodity in
+  `_ingest_cost_basis()`.
+- Fuel additionally floors at the galaxy fuel reference,
+  `ceil(_fuel_value_reference())` or `FUEL_BID_FALLBACK_FLOOR` (15) before
+  anything has traded, and takes the higher of the two floors.
+- Cargo with no known basis has no floor.
+
+### Selling cargo locally
+
+`_place_flow_sell_orders` ladders an ask into every resting bid level at or
+above the floor, one order per level, so a single ask does not liquidate the
+whole load into a 1-credit probe bid. Whatever is left rests at
+`max(floor, min(flow_px, best_bid))`: no higher than the live best bid, and
+no higher than the haircut flow price (`SELL_PRICE_HAIRCUT`, 0.9x recent
+clearing). An ask above every live bid is a forecast, not a sale; the floor
+is the one thing that can put an ask there anyway.
+
+### Realizable value and holding cargo for another market
+
+`_realizable_value(market, commodity, quantity)` prices a quantity the way
+it would actually sell: bid levels walked from the top for as many units as
+they hold, and any remainder priced at what `_place_flow_sell_orders` would
+rest it at, `min(flow_px, best_bid)`. A market with neither a bid nor a flow
+price values the remainder at nothing. This replaced `max(best_bid, flow) *
+quantity`, which paid the top bid for the whole load and ignored depth.
+
+`_cargo_disposition` decides whether to sell the hold here or hold it for
+another planet, using `_realizable_value` on both sides: the local value of
+each held commodity against, for every other planet the ship can reach
+(`_departure_fuel_requirement`), that planet's realizable value net of the
+leg's fuel cost. Holding wins only when the destination's net beats the
+local value by 15% or more, and a loaded plan's cargo is not compared here —
+it flies to `plan.destination`. A commodity that has already made
+`MAX_CARGO_HOPS` (1) hops is skipped and defaults to selling locally: cargo
+that keeps hopping burns fuel on every leg against a price that has usually
+gone by arrival. `decide_travel`'s cargo branch (an unloaded hold, not under
+a plan) values `cargo_to_sell` at each candidate destination the same way,
+with `_realizable_value`, and counts a hop in `_cargo_hops` per commodity
+when it picks a destination.
+
+A ship left holding cargo for another market that cannot depart —
+`_cargo_disposition` said hold, but the fuel gate refuses each turn — is not
+held forever. `_hold_planet` and `_hold_refused_turns` count consecutive
+docked turns at that planet with the hold still refused; once
+`_hold_refused_turns` reaches `HOLD_PATIENCE` (3), `decide_trade_actions`
+overrides the hold and sells locally instead.
+
+A loaded plan whose departure the fuel gate would refuse this turn is
+listed locally too: `_plan_departure_blocked(plan)` applies the same fuel
+and safety test `decide_travel`'s plan branch does, checked early in
+`decide_trade_actions` so the cargo goes in the book instead of sitting
+unlisted for `ACCUMULATION_PATIENCE` turns waiting on a departure that will
+not happen this turn. Listing costs nothing when the plan does leave later,
+since `start_journey` cancels resting orders before departure.
 
 ## Common pitfalls
 

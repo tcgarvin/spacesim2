@@ -3,29 +3,28 @@
 Genuinely open work only. Closed postmortems live in `docs/decision-log.md`;
 perf levers live in `docs/performance.md`.
 
-## Ship trading residuals (post flow-based rework, 2026-08-31)
+## Ship trading residuals (post fuel-station and cost-basis selling rework, 2026-09-08)
 
-- 2/5 ships ended lean (6 and 181 credits) despite positive per-trip margins —
-  they overpaid for fuel (avg ~50-54/unit vs fleet 42); possible remaining
-  bunkering/pricing leak.
-- Fleet still pays avg 42 vs 33 best-planet honest fuel cost.
-- Spiked survival top-ups (2026-09-08, see the decision log): the ration
-  branch of `_opportunistic_fuel_topup` still buys at any price, but 93% of
-  those buys are by ships already at or below their escape target, under 2
-  units per order at about 6x the reference. Sized and not built: buying
-  only the leg to the nearest cheap pump would avoid 12% of the ration
-  premium; waiting up to 5 turns at a fair bid would recover 24% (8 turns:
-  38%), with the planet's own 30-day average finding fills faster than 1.5x
-  the galaxy reference. The remaining levers are the supply side (refiner
-  asks at 4-6x, no fuel ask at 87% of planets ships fly past) and a bounded
-  fair-price wait with a stranding override. A poor ship's standing rescue
-  bid still amortizes a deliverer's round trip over 1-3 units.
-- Fleet wealth falls about 80-140k over 300 turns at 100 planets in every
-  arm measured (`notebooks/ship_fuel_path_probe.py` fleet block), so the
-  fleet is a net money sink independent of the fuel-bid changes.
+- Plan expectations are inflated: median expected profit 1346 per plan trip
+  versus a median realized cycle net of 0 (mean +147) at 100 planets
+  (`trip_probe.py` in the 2026-09-08 session). Plan revenue counts
+  destination bid depth plus 15 turns of flow at a 10% haircut; the ladder
+  on arrival realizes far less. Value plans with `_realizable_value` plus a
+  shorter flow horizon and see whether fewer, better plans beat more plans.
+- Refuel repositions cost a mean 858 credits per cycle (fuel bought at the
+  station plus the leg) and happen 270 times per 300 turns. Ships still
+  arrive short at stations that other ships drained between departure and
+  arrival (89% of the residual spiked bids). A station test on operator
+  stock or a depth margin above one ship's fill would cut this.
+- Bunker orders reserve up to 80% of cash for a full 60-unit tank whenever
+  fuel is cheap; tanks hold ~2.6k units fleet-wide (~100k credits) at turn
+  400. Cap bunkering at two round trips' worth unless cash is above the
+  capital floor.
 - Add-on cargo (2026-09-07) is chosen once per plan and not re-bid on later
   accumulating turns; a partly filled add-on flies as is. Re-bidding the
   shortfall is untested.
+- Operators still hold ~2k fuel units at turn 400 and never post delivery
+  bids that a ship acts on; fuel does not move between planets by ship.
 
 ## Medicine / upper tier (post 2026-09-03 fixes)
 
@@ -36,9 +35,8 @@ The WTP ceiling and phantom-bid entry are fixed (`FoodDrive.security`,
   keep stock growing. Entry scoring is inventory-blind; a producer sitting on
   unsold output still scores positive when the depth price covers cost. A
   stock-aware discount on output value is the next lever.
-- `ship_supplies` has no consumer. Ships buy maintenance goods only when
-  already stranded, and the `nova_fuel` maintenance tier always succeeds, so
-  the tier is never reached. Give ships a standing supplies buffer.
+- `ship_supplies` demand now comes from the proactive repair kit
+  (`_buy_repair_kit`, 2026-09-08); check that producers enter the recipe.
 - nova_fuel clears at 58-287 for ships while they resell at ~50. Probe the
   refiner side: is the t50-150 spike a supply gap?
 - Prosperity (post 2026-09-06 surplus money discount; see the decision

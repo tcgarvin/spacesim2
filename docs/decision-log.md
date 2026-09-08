@@ -4,6 +4,56 @@ Append-only record of closed decisions, postmortems, and landed campaigns.
 Newest first. Open work lives in `TODO.md`; current reference docs live
 alongside this file.
 
+## 2026-09-08 - Ship brain: fuel stations, price ceiling, refuel reposition, cost-basis selling
+
+Done (e7b71be, fc33876, 6ad6e80, 00d7420, bee4fe0). Fleet cash fell from
+~500k to ~200k over 400 turns at 100 planets while producers sold 38-45
+fuel/turn against a fleet burn of 20-34/turn and operators held 3.7k units:
+fuel was mislocated, not scarce. In-process probes classified every spiked
+fuel order: 46% of spiked bid money came from ships that could already fly
+to a fuel seller under the departure gate, 39% from ships that landed below
+their escape leg because a one-unit producer ask plus a recent trade passed
+as a fuel market at departure, 26% from the maintenance roll at departure
+burning five tank units the next turn. Producers fill a resting ship bid at
+the bid price, so a delivery-priced or scarcity-escalated (4x) rescue bid
+became the next average price and ratcheted (one planet: 363 -> 1020 per
+unit).
+
+Fuel rules landed first: a fuel station is a planet with 6+ units resting at
+no more than 2x the galaxy reference; escape legs measure to stations and
+only a station waives the arrival floor; a non-station arrival adds a
+5-unit maintenance buffer unless the ship holds a repair kit, which it now
+buys proactively; every fuel bid is capped at 2x the reference; a ship that
+can reach a station buys nothing at a spiked ask and flies there instead.
+That cut stranded ships 35 -> 5 and the fleet fuel price 74 -> 37, and made
+cash worse (median 750 -> 24), because revenue was never realized: 26% of
+listed cargo units filled, the unlisted remainder rested at the haircut
+30-turn average (1.8x the live bid), and ships hauled cargo planet to planet
+on flow forecasts, four hops per plan flight.
+
+The selling rules fixed that: a per-commodity cost basis from the ship's own
+fills, a sell floor that decays 10% per unsold turn to 40% of basis, asks
+laddered into every resting bid at or above the floor with the remainder no
+higher than the live best bid, realizable-depth valuation on both sides of
+the hold-or-sell decision, one cargo hop at most, and a three-turn hold
+patience.
+
+100 planets x 400 turns, 3 replicates per arm, means:
+
+| KPI | base | fuel rules only | with selling rules |
+|-----|------|-----------------|--------------------|
+| ship_money_median | 752 | 24 | 2271 |
+| ships_solvent_share | 0.44 | 0.15 | 0.61 |
+| ship_delivered_total (50 turns) | 460 | 230 | 1643 |
+| stranded / idle ships | 35 / 37 | 5 / 46 | 4 / 12 |
+| ship_fuel_price | 74 | 37 | 40 |
+| operator fuel stock | 3114 | 3248 | 2052 |
+
+Tanks hold ~2.6k units (~100k credits) at the end, so fleet assets are
+back near the starting capital and fleet money rose between turns 200 and
+300 in the trip probe. Open items are in `TODO.md`. Formal table:
+`tmp/ab_fuel_r5/table.txt` (base e7b71be).
+
 ## 2026-09-08 - Ship refueling: flow-priced fuel bids, linger to fill, en-route refuel stops
 
 Done (02b8371, e3190e8). The tank split left the fuel premium intact
