@@ -30,6 +30,7 @@ from typing import Any, Optional
 from spacesim2.cli.common import create_and_setup_simulation
 from spacesim2.core import ship as ship_mod
 from spacesim2.core.market import Market
+from spacesim2.core.navigation import get_navigator
 from spacesim2.core.ship import (
     FUEL_BUNKER_PREMIUM,
     Ship,
@@ -221,7 +222,7 @@ TraderBrain.decide_trade_actions = decide_trade_actions  # type: ignore[method-a
 _orig_start = Ship.start_journey
 
 
-def start_journey(self: Ship, destination: Any) -> bool:
+def start_journey(self: Ship, destination: Any, **kwargs: Any) -> bool:
     brain = self.brain
     plan = brain._current_plan
     origin = self.planet
@@ -298,7 +299,7 @@ def start_journey(self: Ship, destination: Any) -> bool:
             "best_addon": best_addon,
             "best_addon_units": best_addon_units,
         }
-    started = _orig_start(self, destination)
+    started = _orig_start(self, destination, **kwargs)
     if started and record is not None:
         DEPARTURES.append(record)
     return started
@@ -332,7 +333,68 @@ def collect_fills(sim: Any, seen: set[int]) -> None:
             )
 
 
-def summarize(turns: int, planets: int, ships: int) -> dict[str, Any]:
+def fleet_snapshot(sim: Any) -> dict[str, Any]:
+    """Fleet-wide wealth snapshot: money, tank fuel value, hold cargo value.
+
+    Tank fuel is valued at the galaxy-wide reference (``Navigator.
+    fuel_value_reference``); hold cargo is valued at each ship's current
+    planet's 30-day average price, or 0 for a commodity/planet with no
+    believable price signal (including a ship in transit, with no current
+    planet). ``fleet_wealth`` is money plus both value components.
+    """
+    nav = get_navigator(sim)
+    fuel_commodity = nav.fuel_commodity()
+    fuel_ref = nav.fuel_value_reference() or 0.0
+    commodities = [
+        c for c in sim.commodity_registry.all_commodities() if c.transportable
+    ]
+    total_money = 0
+    total_fuel_units = 0
+    total_fuel_value = 0.0
+    total_cargo_value = 0.0
+    broke = 0
+    never_departed = 0
+    for ship in sim.ships:
+        total_money += ship.money
+        total_fuel_units += ship.fuel
+        total_fuel_value += ship.fuel * fuel_ref
+        if ship.money < 100:
+            broke += 1
+        if not ship.departure_turns:
+            never_departed += 1
+        planet = ship.planet
+        if planet is None:
+            continue
+        market = planet.market
+        for commodity in commodities:
+            if fuel_commodity is not None and commodity.id == fuel_commodity.id:
+                continue
+            qty = ship.cargo.get_quantity(commodity)
+            if qty <= 0:
+                continue
+            if market.has_price_signal(commodity):
+                total_cargo_value += qty * market.get_30_day_average_price(commodity)
+    fleet_wealth = total_money + total_fuel_value + total_cargo_value
+    return {
+        "n_ships": len(sim.ships),
+        "money": total_money,
+        "fuel_units": total_fuel_units,
+        "fuel_ref": fuel_ref,
+        "fuel_value": total_fuel_value,
+        "cargo_value": total_cargo_value,
+        "fleet_wealth": fleet_wealth,
+        "broke_ships": broke,
+        "never_departed": never_departed,
+    }
+
+
+def summarize(
+    turns: int,
+    planets: int,
+    ships: int,
+    fleet_start: dict[str, Any],
+    fleet_end: dict[str, Any],
+) -> dict[str, Any]:
     fills_by = defaultdict(lambda: {"units": 0, "credits": 0, "premium": 0.0})
     for f in FUEL_FILLS:
         key = (f["path"], band(f["ratio"]) if not math.isnan(f["ratio"]) else "noref")
@@ -425,6 +487,17 @@ def summarize(turns: int, planets: int, ships: int) -> dict[str, Any]:
         "plans_spiked": plan_stats(spiked),
         "plans_normal": plan_stats(normal),
         "departures": dep,
+        "fleet": {
+            "start_money": fleet_start["money"],
+            "end_money": fleet_end["money"],
+            "end_fuel_units": fleet_end["fuel_units"],
+            "end_fuel_value": fleet_end["fuel_value"],
+            "end_cargo_value": fleet_end["cargo_value"],
+            "end_wealth": fleet_end["fleet_wealth"],
+            "wealth_change": fleet_end["fleet_wealth"] - fleet_start["money"],
+            "broke_ships": fleet_end["broke_ships"],
+            "never_departed": fleet_end["never_departed"],
+        },
     }
 
 
@@ -443,6 +516,9 @@ def print_tables(result: dict[str, Any]) -> None:
     print("\n== DEPARTURES ON A LOADED PLAN ==")
     for k, v in result["departures"].items():
         print(f"  {k}: {v}")
+    print("\n== FLEET WEALTH ==")
+    for k, v in result["fleet"].items():
+        print(f"  {k}: {v}")
 
 
 def main() -> None:
@@ -456,6 +532,7 @@ def main() -> None:
     sim = create_and_setup_simulation(
         planets=args.planets, actors=args.actors, makers=2, ships=args.ships
     )
+    fleet_start = fleet_snapshot(sim)
     seen: set[int] = set()
     for _ in range(args.turns):
         sim.run_turn()
@@ -465,7 +542,8 @@ def main() -> None:
                 f"turn {sim.current_turn}: fuel orders {len(FUEL_ORDERS)} fills {len(FUEL_FILLS)} plans {len(PLANS)} departures {len(DEPARTURES)}",
                 flush=True,
             )
-    result = summarize(args.turns, args.planets, len(sim.ships))
+    fleet_end = fleet_snapshot(sim)
+    result = summarize(args.turns, args.planets, len(sim.ships), fleet_start, fleet_end)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result, indent=1, default=str))
     print_tables(result)

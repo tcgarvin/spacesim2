@@ -71,8 +71,9 @@ if bid is None:
 
 ```python
 # Shortest star-lane route, not the straight line (see core/galaxy.py and
-# core/navigation.py). Multi-lane routes are flown in one go; intermediate
-# planets are passed without docking.
+# core/navigation.py). A multi-lane route is fuelled in one charge at
+# departure and intermediate planets are passed without docking, except for
+# the opportunistic refuel stop below.
 distance = ship.route_distance(planet_a, planet_b)
 fuel_needed = Ship.calculate_fuel_needed(distance)  # ceil(distance/20)
 
@@ -137,6 +138,74 @@ path at 50 credits each and 1096 units through the survival ration at 243
 each, 195k above reference: buying more where fuel is cheap is what removes
 the expensive purchases.
 
+### Stopping for fuel en route
+
+A ship passing an intermediate planet with cheap fuel may dock there for a
+turn, bunker, and fly on to its original destination.
+`Ship.update_journey` finds the route nodes whose distance along the route
+falls in the span covered this turn and offers each to
+`ShipBrain.wants_refuel_stop`, which defaults to `False`; only `TraderBrain`
+ever stops. `Ship._take_refuel_stop` performs the stop.
+
+Departure charged `route_fuel_charged` for the whole route, so the stop
+refunds what is not yet burned and the resumed leg is charged normally. Route
+fuel is rounded up per leg, so splitting a route can cost fuel:
+`shortfall = max(0, fuel_required(remaining) - refund)`.
+`Ship._take_refuel_stop` allows up to `REFUEL_STOP_MAX_SHORTFALL` (2) units and
+refuses more. Travel turns alone can only cost one unit, since
+`ceil(total/20) <= ceil(covered/20) + ceil(remaining/20)`, but `fuel_required`
+ceils a second time when it divides by fuel efficiency, so a ship under 1.0
+efficiency can lose two. At a cap of one, that guard was refusing 25.6% of the
+intermediate nodes ships passed at 40 planets; at two it refuses under 1%. The one unit is bought rather than treated as a reason to
+fly on: the stop's criteria already establish a cheap ask with a deep book, so
+it is the cheapest fuel the trip will see. The purchase goes in as the
+top-up's `required_floor`, and `_refuel_stop_travel` holds the ship docked
+until the tank covers the remaining route.
+
+`TraderBrain.wants_refuel_stop` requires all of:
+
+- the tank *after the refund* is below `FUEL_STOP_TANK_FRACTION` (60%) of
+  capacity;
+- a fuel ask rests at the planet, and the planet has a real price signal - one
+  with no fuel history is passed by rather than guessed about;
+- the ask is at or below the planet's own 30-day average, inside
+  `FUEL_BUNKER_PREMIUM` of the galaxy reference, and strictly below that
+  reference;
+- the shortfall is affordable at the local bid and `_bunker_fillable_units` at
+  the after-refund tank is at least `shortfall + 1`;
+- the price gap on the units past the shortfall beats
+  `_departed_trip_turn_value * stop_turns`, where `stop_turns` is 1 plus the
+  travel turns the lane rounding adds.
+
+`_departed_trip_turn_value` is recorded by `decide_travel` whenever it returns
+a destination: `_trip_turn_value` of a loaded plan's expected profit, or of the
+cargo destination's net value. An empty reposition records 0, so any positive
+saving justifies a stop for a ship with nothing to lose.
+
+While `Ship.refuel_stop_resume` is set the brain does fuel and nothing else.
+`_refuel_stop_trade_actions` refreshes market facts, pumps, cancels resting
+orders and runs `_opportunistic_fuel_topup` on the turn the ship docked, and
+again on any later turn where the tank still does not cover the remaining
+route; `take_turn` calls it from the traveling branch so the first bid rests
+in the same turn's auction. `_current_plan`, `_plan_loaded`, `_addon_commodities` and
+`_committed_fuel_need` are untouched, so arrival at the plan's destination
+sells normally - the plan lifecycle would abandon the plan, since the stop is
+not its origin. `_refuel_stop_travel` returns the resume destination once the
+fill has been pumped and the leg is funded, and `take_turn` departs with
+`start_journey(destination, resuming=True)`, which skips the maintenance roll
+the original departure already made. A stop that has not resumed within
+`REFUEL_STOP_MAX_TURNS` (3) turns is abandoned and the ship goes back to
+normal docked logic; so is one whose resume destination is where the ship
+already sits, and one interrupted by maintenance.
+
+Stops are counted per ship in `Ship.refuel_stop_turns`, exposed as
+`Ship.refuel_stops` and as `refuel_stops_window` in the KPI summary. They are
+uncommon: 11 and 9 stops over 397 and 363 departures in two 40-planet,
+150-turn runs, against 4 and 8 before the shortfall cap was raised to 2 and
+the tank fraction to 0.6. What now refuses a stop is almost entirely supply:
+86% and 87% of the intermediate nodes a ship passes have no resting fuel ask
+at all. Every other criterion together accounts for under 10%.
+
 ### Lingering to fill the tank
 
 A departing ship cancels its resting orders, so a bunker bid placed on the
@@ -148,9 +217,10 @@ more turn so that bid matches. It does so only when all of these hold:
 - the tank is below `FUEL_LINGER_TANK_FRACTION` (50%) of capacity;
 - the local ask is inside `FUEL_BUNKER_PREMIUM` and strictly below the
   reference;
-- `_bunker_fillable_units` is positive: the minimum of tank room, what the
-  cheap-tier budget affords at the bid, and one turn's supply, taken as the
-  larger of the resting ask depth and the recent traded units per turn;
+- `_bunker_fillable_units(bid, planet, tank)` is positive: the minimum of tank
+  room, what the cheap-tier budget affords at the bid, and one turn's supply,
+  taken as the larger of the resting ask depth and the recent traded units per
+  turn;
 - fillable units times the price gap beats `_trip_turn_value`, the trip's
   expected profit spread over `2 * travel_turns + 1`.
 

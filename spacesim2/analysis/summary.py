@@ -363,7 +363,9 @@ def _summarize_fleet_fuel(sim: Simulation) -> Dict[str, object]:
     if it never actually departs. ``idle_ships`` is a definition-independent
     activity floor: docked ships that have not departed in the last
     `_ACTIVITY_WINDOW_TURNS` turns (or never have). ``departures_window``
-    counts journeys started fleet-wide in that window, and
+    counts journeys started fleet-wide in that window,
+    ``refuel_stops_window`` counts the journeys broken for an en-route refuel
+    stop in it, and
     ``fuel_sold_by_service_window`` / ``fuel_sold_by_service_price`` track
     nova_fuel actually sold by SERVICE actors (spaceport operators) in the
     same window, volume-weighted by price. Like `ship_delivered_units`, the
@@ -390,6 +392,10 @@ def _summarize_fleet_fuel(sim: Simulation) -> Dict[str, object]:
     idle_ship_share = round(idle_ships / ship_count, 3) if ship_count else 0.0
     departures_window = sum(
         sum(1 for turn in ship.departure_turns if turn >= cutoff) for ship in sim.ships
+    )
+    refuel_stops_window = sum(
+        sum(1 for turn in ship.refuel_stop_turns if turn >= cutoff)
+        for ship in sim.ships
     )
 
     fuel_commodity = sim.commodity_registry.get_commodity("nova_fuel")
@@ -427,6 +433,7 @@ def _summarize_fleet_fuel(sim: Simulation) -> Dict[str, object]:
         "idle_ships": idle_ships,
         "idle_ship_share": idle_ship_share,
         "departures_window": departures_window,
+        "refuel_stops_window": refuel_stops_window,
         "service_fuel_stock": service_fuel_stock,
         "industrialist_fuel_stock": industrialist_fuel_stock,
         "fuel_sold_by_service_window": fuel_sold_units,
