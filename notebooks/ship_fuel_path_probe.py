@@ -354,6 +354,7 @@ def fleet_snapshot(sim: Any) -> dict[str, Any]:
     total_cargo_value = 0.0
     broke = 0
     never_departed = 0
+    total_refuel_stops = 0
     for ship in sim.ships:
         total_money += ship.money
         total_fuel_units += ship.fuel
@@ -362,6 +363,7 @@ def fleet_snapshot(sim: Any) -> dict[str, Any]:
             broke += 1
         if not ship.departure_turns:
             never_departed += 1
+        total_refuel_stops += len(getattr(ship, "refuel_stop_turns", []))
         planet = ship.planet
         if planet is None:
             continue
@@ -385,6 +387,7 @@ def fleet_snapshot(sim: Any) -> dict[str, Any]:
         "fleet_wealth": fleet_wealth,
         "broke_ships": broke,
         "never_departed": never_departed,
+        "refuel_stops": total_refuel_stops,
     }
 
 
@@ -497,6 +500,7 @@ def summarize(
             "wealth_change": fleet_end["fleet_wealth"] - fleet_start["money"],
             "broke_ships": fleet_end["broke_ships"],
             "never_departed": fleet_end["never_departed"],
+            "refuel_stops": fleet_end["refuel_stops"],
         },
     }
 

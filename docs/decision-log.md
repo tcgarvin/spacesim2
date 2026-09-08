@@ -4,6 +4,50 @@ Append-only record of closed decisions, postmortems, and landed campaigns.
 Newest first. Open work lives in `TODO.md`; current reference docs live
 alongside this file.
 
+## 2026-09-08 - Ship refueling: flow-priced fuel bids, linger to fill, en-route refuel stops
+
+Done (02b8371, e3190e8). The tank split left the fuel premium intact
+because the cheap fuel a ship wanted mostly did not fill: bunker orders
+bid exactly at the resting ask and matching executes at the seller's ask,
+so a higher bid costs nothing on resting units and wins the turn's flow.
+Fuel bids now post at max(ask, flow price), the bunker budget is 0.8 of
+cash at or below the galaxy reference (0.5 above it), and a ship ready to
+depart with a tank under half stays one turn to keep filling when the
+fillable units' discount beats one turn of the trip's value. A ship
+flying a multi-lane route may also dock at an intermediate planet for
+cheap fuel: tank after the route-fuel refund under 0.6 of capacity, ask
+at or below the planet's 30-day average and below the reference, and the
+saving beating the stop's turns of trip value. The stop buys fuel only,
+keeps the plan intact, resumes without a second maintenance roll, and
+buys back the up to 2 units that per-leg rounding costs.
+
+Three replicates per arm, 100 planets, 300 turns
+(`notebooks/ship_fuel_path_probe.py`, tmp/fuel_path_*_r*.json):
+
+| Metric (mean of 3) | base a4c49b3 | bids 02b8371 | stops e3190e8 |
+|---|---|---|---|
+| Fleet wealth change | -139k | -87k | -77k |
+| Broke ships (<100 credits) | 26 | 37 | 26 |
+| Fuel credits | 590k | 643k | 597k |
+| Fuel premium over reference | 263k | 286k | 261k |
+| Bunker fill ratio | 0.06 | 0.09 | 0.09 |
+| Departures | 529 | 528 | 501 |
+| Plan profit total | 1.23M | 1.11M | 1.10M |
+| Refuel stops | - | - | 40 |
+
+The bunker fill ratio change and the fleet wealth improvement hold across
+replicates; the fuel credit, premium, and plan profit differences overlap
+between arms and are noise at n=3. Stops are 2.6% of departures at 40
+planets; 87% of the planets a ship flies past have no fuel ask at all, so
+supply limits stops, not the criteria.
+
+Sized and not built: the "buy the way to the next cheap pump" ration rule.
+`notebooks/ship_fuel_cheap_pump_probe.py` shows ration buys average under 2
+units per order at about 6x the reference, 93% of them by ships already at
+or below their escape target, and a cheap pump within tank reach would
+avoid 12% of the ration premium. Waiting at a fair bid recovers 24% in 5
+turns and 38% in 8; see TODO.md.
+
 ## 2026-09-07 - Substitute bids for the staple; why processed food still does not ship
 
 Question: after the tank split, does cheap `processed_food` move from plant

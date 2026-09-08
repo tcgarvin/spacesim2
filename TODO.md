@@ -9,13 +9,20 @@ perf levers live in `docs/performance.md`.
   they overpaid for fuel (avg ~50-54/unit vs fleet 42); possible remaining
   bunkering/pricing leak.
 - Fleet still pays avg 42 vs 33 best-planet honest fuel cost.
-- Spiked survival top-ups (2026-09-07): the ration branch of
-  `_opportunistic_fuel_topup` still buys the survival target at any price
-  (252k of a 266k fuel premium over 600 turns at 100 planets before the
-  tank split), and a poor ship's standing rescue bid amortizes a deliverer's
-  round trip over 1-3 units, pricing at 15x reference. Next lever after the
-  tank split: cap ration buys by price when a cheaper ask is reachable on
-  the tank, and floor rescue-bid quantity.
+- Spiked survival top-ups (2026-09-08, see the decision log): the ration
+  branch of `_opportunistic_fuel_topup` still buys at any price, but 93% of
+  those buys are by ships already at or below their escape target, under 2
+  units per order at about 6x the reference. Sized and not built: buying
+  only the leg to the nearest cheap pump would avoid 12% of the ration
+  premium; waiting up to 5 turns at a fair bid would recover 24% (8 turns:
+  38%), with the planet's own 30-day average finding fills faster than 1.5x
+  the galaxy reference. The remaining levers are the supply side (refiner
+  asks at 4-6x, no fuel ask at 87% of planets ships fly past) and a bounded
+  fair-price wait with a stranding override. A poor ship's standing rescue
+  bid still amortizes a deliverer's round trip over 1-3 units.
+- Fleet wealth falls about 80-140k over 300 turns at 100 planets in every
+  arm measured (`notebooks/ship_fuel_path_probe.py` fleet block), so the
+  fleet is a net money sink independent of the fuel-bid changes.
 - Add-on cargo (2026-09-07) is chosen once per plan and not re-bid on later
   accumulating turns; a partly filled add-on flies as is. Re-bidding the
   shortfall is untested.
