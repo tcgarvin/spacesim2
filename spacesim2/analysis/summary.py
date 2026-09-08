@@ -75,6 +75,7 @@ _TRADE_WATCH_COMMODITIES = _DRIVE_MATERIALS + ("nova_fuel",)
 # Turns of history behind the `markets` and `trade` sections. Market volume
 # series keep 120 entries and transaction history is capped per market, so
 # this window must stay well inside both.
+_SOLVENT_MONEY = 1000
 _ACTIVITY_WINDOW_TURNS = 50
 
 # A drive instance counts as deprived when its debt exceeds this.
@@ -426,6 +427,33 @@ def _summarize_fleet_fuel(sim: Simulation) -> Dict[str, object]:
         round(fuel_sold_value / fuel_sold_units, 1) if fuel_sold_units else 0.0
     )
 
+    # Fleet fuel purchases over the same window, and what they cost. The
+    # service price above is what operators charge; the gap between the two
+    # is the fleet's spiked-fill premium.
+    ship_fuel_units = 0
+    ship_fuel_value = 0
+    if fuel_commodity is not None:
+        for planet in sim.planets:
+            for tx in planet.market.transaction_history:
+                if tx.turn < cutoff or tx.commodity_type is not fuel_commodity:
+                    continue
+                if isinstance(tx.buyer, Ship):
+                    ship_fuel_units += tx.quantity
+                    ship_fuel_value += tx.quantity * tx.price
+    ship_fuel_price = (
+        round(ship_fuel_value / ship_fuel_units, 1) if ship_fuel_units else 0.0
+    )
+
+    # Fleet solvency. A ship under _SOLVENT_MONEY cannot fund a short trip's
+    # fuel and cargo, so the share above it is the share still trading.
+    ship_money = sorted(ship.money for ship in sim.ships)
+    ship_money_median = float(statistics.median(ship_money)) if ship_money else 0.0
+    ships_solvent_share = (
+        round(sum(1 for m in ship_money if m >= _SOLVENT_MONEY) / ship_count, 3)
+        if ship_count
+        else 0.0
+    )
+
     return {
         "fuel_ask_planets": fuel_ask_planets,
         "stranded_ships": stranded_ships,
@@ -438,6 +466,11 @@ def _summarize_fleet_fuel(sim: Simulation) -> Dict[str, object]:
         "industrialist_fuel_stock": industrialist_fuel_stock,
         "fuel_sold_by_service_window": fuel_sold_units,
         "fuel_sold_by_service_price": fuel_sold_by_service_price,
+        "ship_fuel_bought_window": ship_fuel_units,
+        "ship_fuel_price": ship_fuel_price,
+        "ship_money_median": ship_money_median,
+        "ship_money_total": int(sum(ship_money)),
+        "ships_solvent_share": ships_solvent_share,
     }
 
 
