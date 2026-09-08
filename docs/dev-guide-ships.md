@@ -24,6 +24,12 @@ destination. `TraderBrain` is the reference implementation.
   trip is still *funded*: the cash gate in `_pair_economics` withholds
   round-trip fuel plus the refuel floor before a credit reaches cargo, and
   that gate is load-bearing against fleet insolvency. Do not relax it.
+- `_pair_economics` funds `max(fuel_round_trip, fuel_one_way +
+  arrival_requirement)`, capped at the tank, where `arrival_requirement` is
+  `_arrival_fuel_requirement(destination, origin)` (the escape leg plus the
+  maintenance buffer, zero at a station). A non-station destination can
+  demand more than a bare round trip leaves in the tank, so funding only the
+  round trip would reject every such pair at the fuel-safety gate below.
 - Value the outbound burn honestly: units already in the tank at the galaxy
   fuel reference (`_fuel_value_reference`), units that must be bought at the
   local ask, however spiked. The ship still *buys* the whole round-trip
@@ -32,6 +38,14 @@ destination. `TraderBrain` is the reference implementation.
   the fleet (stranded 3 -> 14, departures 68 -> 22 over one 200-turn
   30-planet run), because a fuel-safe destination is a market with depth
   *now* and by arrival it usually has none.
+- A pair that needs origin fuel bought at a spiked ask (not
+  `_local_fuel_bunkerable`) while a station is reachable
+  (`_can_reach_station`) is rejected outright: the ship should reach the
+  station and plan from there instead of buying at the spike. The plan fuel
+  step in `_execute_trade_plan` re-checks the same condition and funds the
+  same `max(round trip, leg + arrival requirement)` quantity, capped at
+  `Navigator.fuel_bid_ceiling()`, so a re-executed accumulating plan cannot
+  drift past what the gate approved.
 - Execute only plans with margin at or above `TradePlan.MIN_MARGIN` (15%).
 - Separate the **bid** from the **cost basis**. `TradePlan.bid_price_per_unit`
   is what the ship posts, `max(best ask, flow price)`, deliberately high so
@@ -137,6 +151,60 @@ there. Over the same 300 turns the fleet bought 3921 units through the bunker
 path at 50 credits each and 1096 units through the survival ration at 243
 each, 195k above reference: buying more where fuel is cheap is what removes
 the expensive purchases.
+
+### Fuel bid price ceiling
+
+`Navigator.fuel_bid_ceiling()` caps every fuel bid a ship posts at
+`FUEL_BID_CEILING_MULT` (2.0) times `fuel_value_reference()`, or at
+`FUEL_BID_CEILING_UNBOUNDED` (`10**9`) when no planet has believable fuel
+evidence, so a bootstrap galaxy with no fuel reference yet can still call the
+first fuel into existence. Without the cap a resting bid buys its own
+escalation: a seller fills the best resting bid at the bid price, so the fill
+sets the next average price and the next bid goes higher still. The cap is
+applied everywhere a ship prices fuel: `fuel_delivery_bid_price` and
+`local_fuel_reference_price` in `Navigator`, and in `TraderBrain` the standing
+rescue bid (`_post_standing_fuel_bid`), the opportunistic top-up
+(`_opportunistic_fuel_topup`), and the plan fuel step
+(`_execute_trade_plan`).
+
+### No spiked buys when a station is reachable
+
+A ship whose tank already covers `_departure_fuel_requirement` for some fuel
+station is better off flying there than paying a spiked local ask:
+
+- `TraderBrain._local_fuel_bunkerable(planet)` is true when a fuel ask rests
+  at `planet` no higher than `FUEL_BUNKER_PREMIUM` times the galaxy
+  reference. False covers both no ask and a spiked one.
+- `TraderBrain._reachable_stations()` lists fuel stations elsewhere the tank
+  alone can reach, nearest first, counting no local fuel purchase.
+  `_can_reach_station()` is whether that list is non-empty.
+- When the local ask is not `_local_fuel_bunkerable` and a station is
+  reachable, `_opportunistic_fuel_topup` buys nothing, `_post_standing_fuel_bid`
+  posts no standing bid, and the plan fuel step in `_execute_trade_plan`
+  buys no fuel at the origin - each leaves fuel money for the reposition
+  below instead. A ship mid refuel stop (`Ship.refuel_stop_resume` set) is
+  exempt from the top-up cutoff and still buys, capped at
+  `fuel_bid_ceiling()`; a ship with no reachable station (a trapped ship)
+  also still buys, rationed to `_fuel_escape_target()`.
+
+`TraderBrain._refuel_reposition_target()` chooses where to fly instead. It
+returns a station when the ship is docked, not mid refuel stop, not already
+at a station, the local ask is not `_local_fuel_bunkerable`, and the ship is
+short of its survival target or its committed fuel need. Among
+`_reachable_stations()`, it picks the one where the current hold's cargo is
+worth most at bid-or-flow prices net of the leg's fuel at the galaxy
+reference; an empty hold and ties go to the nearest station. Cargo aboard is
+not unloaded for this.
+
+`decide_trade_actions` computes the target once per docked turn and caches it
+in `self._refuel_reposition`. If set, it takes the departure: any current
+plan is dropped unless its destination is the station itself, local selling
+and reposition intents are cleared, and `decide_travel` returns the station
+directly - the ship does not adopt a new plan or evaluate the local sell
+step first, since nothing it could do locally outranks being able to leave.
+Measured over 400 turns, 46% of the fleet's spiked fuel spend had come from
+ships that could already fly to a station under the departure gate and
+posted a rescue bid instead.
 
 ### Stopping for fuel en route
 
@@ -311,20 +379,33 @@ rest of the hold with `_place_addon_bids`:
 
 `Navigator.fuel_purchasable_at` means a **live resting ask**, nothing else.
 Actors trade before ships each turn, so the book a ship reads already holds
-the turn's supply. Recent volume used to count as availability; on arrival
-that was wrong 97% of the time, because the trade in the window is usually
-the one that emptied the book. Two weaker signals exist for the callers that
-genuinely want them:
+the turn's supply.
+
+`Navigator.fuel_ask_depth_at(planet)` gives the units resting on the ask
+side, which is what an arriving ship could really buy.
+
+A single live ask is not enough to plan an escape leg around: a one-unit
+producer ask or a spiked book cannot refill a tank. `Navigator.fuel_station_at`
+is the stricter test a ship commits an escape leg to:
+
+- at least `FUEL_STATION_MIN_DEPTH` (6) units resting on the ask side, from
+  any seller, and
+- the best ask no more than `FUEL_STATION_MAX_PRICE_MULT` (2.0) times
+  `Navigator.fuel_value_reference()`; with no reference, depth alone decides.
+
+`Navigator.nearest_fuel_station_distance(planet)` returns the distance to the
+nearest other station, or `None` if the galaxy has none.
+`Navigator.fuel_station_planets()` lists every current station.
+
+Two weaker signals exist for callers that genuinely want them, never a plan
+gate:
 
 - `Navigator.fuel_traded_recently(planet)`: fuel changed hands in
   `FUEL_MARKET_RECENCY_TURNS`. A supplier exists who might answer a standing
   bid. Used only by last-resort choices - deciding whether idling here is
-  survivable, and ranking survival-reposition targets - never by a plan gate.
+  survivable, and ranking survival-reposition targets.
 - `Market.has_price_signal(fuel)`: fuel has ever traded. The bottom tier of
   `_survival_reposition_target`.
-
-`Navigator.fuel_ask_depth_at(planet)` gives the units resting on the ask
-side, which is what an arriving ship could really buy.
 
 ### Capital scaled to the galaxy
 
@@ -401,29 +482,56 @@ that purchase against the plan the origin backs, and
 `_reposition_intent` so the next docked turn funds it through
 `_committed_fuel_need`, the same mechanism a held cargo uses. A destination is safe when:
 
-1. `fuel_after_arrival` reaches the nearest *other* fuel seller - the escape
-   leg, computed by `_arrival_fuel_requirement`; or
-2. the destination is a **working fuel market**, which waives the escape leg
-   entirely. That takes two independent signals: a live resting ask now
-   (`_fuel_purchasable_at`) **and** fuel traded there recently
-   (`Navigator.fuel_traded_recently`); or
-3. fuel is purchasable nowhere else in the galaxy and `fuel_after_arrival`
-   still covers the return leg to `return_planet`, less any shortfall the
-   destination's own ask depth covers. Grounding the whole fleet would be
-   worse than the risk.
+1. `fuel_after_arrival` reaches the nearest *other* fuel station
+   (`Navigator.fuel_station_at`, via `Navigator.nearest_fuel_station_distance`)
+   - the escape leg, computed by `_arrival_fuel_requirement`, plus the
+   maintenance buffer described below; or
+2. the destination is itself a fuel station, which waives the escape leg
+   entirely: a station has depth enough to refill a tank at a price near the
+   galaxy reference, so any fuel spent there is re-buyable; or
+3. the galaxy has no station at all and `fuel_after_arrival` still covers the
+   return leg to `return_planet`, less any shortfall the destination's own
+   ask depth covers. Grounding the whole fleet would be worse than the risk.
 
-Both halves of the waiver are load-bearing, and both failure modes are on
-the record. Recency with no resting ask was the original stranding bug: it
-said fuel was available on arrival when 97% of the time nothing was for
-sale. Ask depth alone failed the other way: the book is read several turns
-before the ship lands, and in a sixth of episodes the depth approved at
-departure was gone by arrival. Do not weaken either half back to one signal.
+The waiver used to fire on a live resting ask plus recent trading at the
+destination. That let ships land on a market that had a resting ask at
+departure and nothing left by arrival: 39% of the fleet's spiked fuel spend
+came from ships that had waived their escape leg this way. Requiring the
+depth-and-price test of a station instead closes that gap.
 
-Requiring the escape leg *unconditionally*, as the gate briefly did, is also
+Requiring the escape leg *unconditionally*, with no waiver at all, is also
 wrong: it self-ratchets. A ship holding exactly its escape leg can never
 spend it, because the hop to the fuel seller then demands that seller's own
 escape leg on arrival, and ships sat for hundreds of turns three units from
 a live fuel market.
+
+### Maintenance buffer and repair kit
+
+A departure rolls `MAINTENANCE_CHANCE` (10%) for a maintenance event, and the
+event is resolved the turn after departure, so a ship funded to land with
+exactly its escape leg can be short of it before it can requeue for fuel.
+`TraderBrain._arrival_fuel_requirement` adds a buffer on top of the escape
+leg to cover this:
+
+- `TraderBrain._maintenance_fuel_buffer()` returns `MAINTENANCE_FUEL_UNITS`
+  (5), the fuel-tier repair cost, unless the ship holds a complete repair
+  kit, in which case it returns 0.
+- `TraderBrain._holds_repair_kit()` and `_repair_kit_tier()` check the hold
+  against `MAINTENANCE_KIT_TIERS` - `ship_components` (1 unit),
+  `ship_parts` (2), `ship_supplies` (3), best quality first, the same order
+  `Ship.perform_maintenance` tries them in. `MAINTENANCE_TIERS` is those
+  three plus the legacy `nova_fuel` (`MAINTENANCE_FUEL_UNITS`) tank-fuel
+  tier, which is what the buffer exists to survive.
+- `TraderBrain._buy_repair_kit()` buys the cheapest complete tier with a
+  resting ask, once per turn, whenever its cost is below
+  `MAINTENANCE_FUEL_UNITS` valued at the galaxy fuel reference: owning a kit
+  removes the buffer from every arrival requirement this ship funds, so a
+  kit that costs less than the buffer it removes pays for itself
+  immediately. Runs in `decide_trade_actions` ahead of cargo listing and
+  cargo buying.
+- The held kit is excluded from `_sellable_quantity`, so a ship does not
+  list the maintenance tier it would repair itself with; a second, spare
+  unit of the same commodity still sells.
 
 ### Cargo before travel
 

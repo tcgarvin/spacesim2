@@ -447,6 +447,10 @@ def _summarize_fleet_fuel(sim: Simulation) -> Dict[str, object]:
     # Fleet solvency. A ship under _SOLVENT_MONEY cannot fund a short trip's
     # fuel and cargo, so the share above it is the share still trading.
     ship_money = sorted(ship.money for ship in sim.ships)
+    # Fuel in tanks is capital too: a fleet that bunkers heavily shows low
+    # cash and a large tank stock, which is a different condition from a
+    # fleet that has lost its money.
+    ship_fuel_in_tanks = sum(ship.fuel for ship in sim.ships)
     ship_money_median = float(statistics.median(ship_money)) if ship_money else 0.0
     ships_solvent_share = (
         round(sum(1 for m in ship_money if m >= _SOLVENT_MONEY) / ship_count, 3)
@@ -470,6 +474,7 @@ def _summarize_fleet_fuel(sim: Simulation) -> Dict[str, object]:
         "ship_fuel_price": ship_fuel_price,
         "ship_money_median": ship_money_median,
         "ship_money_total": int(sum(ship_money)),
+        "ship_fuel_in_tanks": ship_fuel_in_tanks,
         "ships_solvent_share": ships_solvent_share,
     }
 
