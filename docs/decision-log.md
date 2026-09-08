@@ -51,8 +51,14 @@ patience.
 
 Tanks hold ~2.6k units (~100k credits) at the end, so fleet assets are
 back near the starting capital and fleet money rose between turns 200 and
-300 in the trip probe. Open items are in `TODO.md`. Formal table:
-`tmp/ab_fuel_r5/table.txt` (base e7b71be).
+300 in the trip probe. One 800-turn run: fleet money 890k from a ~500k
+start, median ship 7114, solvent share 0.62, 2 stranded, fleet fuel price
+23.6, verdict PASS. The 38% of ships under 1000 credits are a persistent
+underclass, not a trend. Open items are in `TODO.md`. The `dev ab` run against e7b71be (3 reps
+per arm, 400 turns, 100 planets) judged stranded ships 31 -> 2.7, idle 40 ->
+17, ship_delivered_total 401 -> 1590, ship_money_median 227 -> 1220,
+ships_solvent_share 0.33 -> 0.53, and operator fuel sales 179 -> 346 all
+IMPROVE, with drives and prosperity neutral.
 
 ## 2026-09-08 - Ship refueling: flow-priced fuel bids, linger to fill, en-route refuel stops
 
