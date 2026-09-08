@@ -109,12 +109,61 @@ it when planning for a specific ship so planning and consumption agree.
   30-day average price, or its best non-dealer ask with more than one unit
   of depth when it has never traded. This used to be the galaxy-wide
   minimum, which one-unit probe asks pinned far below the traded price, so
-  every planet looked scarcity-priced and no ship ever bunkered. Bunkering
-  beyond the survival target spends at most `FUEL_BUNKER_BUDGET_FRACTION`
-  (50%) of cash so fuel does not crowd out trading capital.
+  every planet looked scarcity-priced and no ship ever bunkered.
 - Ration at scarcity prices: buy only up to `_fuel_survival_target()`, the
   larger of two shortest round trips and the escape leg. Filling a tank at
   spike prices bankrupts ships.
+
+The bid is `max(local ask, _flow_value(market, nova_fuel))`, the same rule
+cargo bids use, for the required units and the bunker units alike. Matching
+executes at the seller's ask and refunds the difference, so a bid above the
+resting ask costs nothing on those units and also wins units out of the
+turn's flow of fresh asks. Money is reserved at the bid, so every quantity is
+sized on the bid rather than the ask. Measured over 300 turns at 100 planets,
+bidding at the ask asked for 43.9k units and filled 3.9k.
+
+The bunker budget beyond the survival target has two tiers, both fractions of
+cash so fuel does not crowd out trading capital:
+
+| Local ask | Fraction | Constant |
+|-----------|----------|----------|
+| at or below the reference | 80% | `FUEL_BUNKER_BUDGET_FRACTION_CHEAP` |
+| above the reference, within the premium | 50% | `FUEL_BUNKER_BUDGET_FRACTION` |
+
+Fuel bought at or under the typical galaxy price is not a loss to recover
+later and the tank takes no hold space, so more of the purse is worth parking
+there. Over the same 300 turns the fleet bought 3921 units through the bunker
+path at 50 credits each and 1096 units through the survival ration at 243
+each, 195k above reference: buying more where fuel is cheap is what removes
+the expensive purchases.
+
+### Lingering to fill the tank
+
+A departing ship cancels its resting orders, so a bunker bid placed on the
+turn the ship leaves buys nothing. When `decide_travel` is about to return a
+destination - a loaded plan's, or the best destination for a hold of cargo -
+`_linger_to_bunker` may return `None` instead and keep the ship docked one
+more turn so that bid matches. It does so only when all of these hold:
+
+- the tank is below `FUEL_LINGER_TANK_FRACTION` (50%) of capacity;
+- the local ask is inside `FUEL_BUNKER_PREMIUM` and strictly below the
+  reference;
+- `_bunker_fillable_units` is positive: the minimum of tank room, what the
+  cheap-tier budget affords at the bid, and one turn's supply, taken as the
+  larger of the resting ask depth and the recent traded units per turn;
+- fillable units times the price gap beats `_trip_turn_value`, the trip's
+  expected profit spread over `2 * travel_turns + 1`.
+
+An empty reposition has no such profit number, so it never lingers.
+
+A stop gets at most one linger turn. `_fuel_linger_planet` records where it
+was spent and is cleared as soon as the ship is docked anywhere else;
+`_fuel_linger_pending` marks the turn just bought and is consumed at the top
+of the next `decide_trade_actions`, where it also stops the linger counting
+against a loaded plan's departure patience (`_plan_turns_left`). A lingering
+ship still posts its bunker bid on the linger turn: a loaded plan reaches the
+`_maintain_fuel()` call at the end of `decide_trade_actions`, and a ship
+holding cargo for a better market reaches the same call.
 
 Standing fuel rescue bids are capped at the survival target for the same
 reason: a tank-sized bid reserves most of the ship's money while it rests

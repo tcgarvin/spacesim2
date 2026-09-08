@@ -33,8 +33,24 @@ FUEL_BUNKER_PREMIUM = 1.3
 
 # Fraction of a ship's money that may go to fuel beyond the survival
 # minimum. Fuel is working capital parked in the tank and cargo margins are
-# usually better, so bunkering must not crowd out trading cash.
+# usually better, so bunkering must not crowd out trading cash. This is the
+# fraction for an ask above the galaxy reference but still within
+# FUEL_BUNKER_PREMIUM.
 FUEL_BUNKER_BUDGET_FRACTION = 0.5
+# The fraction when the ask is at or below the reference. Fuel bought at or
+# under the typical galaxy price is not a loss to recover later and the tank
+# costs no hold space, so more of the purse is worth parking there. Measured
+# over 300 turns at 100 planets, the fleet bought 3921 units through the
+# bunker path at 50 credits each, 26k below reference, and 1096 units through
+# the survival ration at 243 credits each, 195k above it. Buying more where
+# fuel is cheap is what removes the expensive purchases.
+FUEL_BUNKER_BUDGET_FRACTION_CHEAP = 0.8
+
+# A ship that is ready to depart stays docked one more turn to keep bunkering
+# only while its tank is below this fraction of capacity. With a fuller tank
+# there is too little room left for the price saving to beat a turn of the
+# trip it is delaying.
+FUEL_LINGER_TANK_FRACTION = 0.5
 
 # Max cargo units for a plan whose destination has no resting bids. Revenue
 # is then a guess from the average price, so the exposure is capped.
@@ -392,6 +408,14 @@ class TraderBrain(ShipBrain):
         # dropped as soon as the ship is anywhere other than the planet the
         # choice was made at.
         self._reposition_intent: Optional[_RepositionIntent] = None
+        # Planet where this stop's one linger-to-bunker turn has been spent,
+        # and whether the previous docked turn was that linger. The planet
+        # caps a stop at one extra turn; it is cleared as soon as the ship is
+        # docked anywhere else. The flag is consumed at the top of the next
+        # decide_trade_actions, where it keeps the linger from counting
+        # against a loaded plan's departure patience.
+        self._fuel_linger_planet: Optional[Planet] = None
+        self._fuel_linger_pending = False
 
     def _recent_flow_per_turn(
         self, market: "Market", commodity: CommodityDefinition
@@ -871,6 +895,13 @@ class TraderBrain(ShipBrain):
         ship has committed its cargo to; filling tanks at spike prices
         bankrupts ships.
 
+        The order is posted at max(local ask, recent clearing price), so it
+        also wins units out of the turn's flow of fresh asks rather than only
+        the leftovers resting in the book. The bunker budget has two tiers:
+        FUEL_BUNKER_BUDGET_FRACTION_CHEAP of cash when the ask is at or below
+        the galaxy reference, FUEL_BUNKER_BUDGET_FRACTION when it is above the
+        reference but still inside the premium.
+
         Above the premium the survival portion is rationed further, to
         :meth:`_fuel_escape_target`: enough to reach the nearest planet that
         sells fuel and still clear its arrival floor, rather than two round
@@ -911,12 +942,23 @@ class TraderBrain(ShipBrain):
 
         current_fuel = ship.fuel + pending_fuel
 
+        # Post above the resting ask when the recent clearing price is higher,
+        # the rule cargo bids already use (TradePlan.bid_price_per_unit).
+        # Matching executes at the seller's ask and refunds the difference, so
+        # the extra costs nothing on the units resting now and wins units out
+        # of the turn's flow of fresh asks. Money is reserved at the bid, so
+        # every quantity below is sized on the bid, not the ask.
+        fuel_bid = max(fuel_ask, self._flow_value(market, fuel_commodity) or 0)
+
         reference = self._fuel_value_reference()
         # The local ask is itself a galaxy signal, so reference is never None
         # here; the guard is defensive.
         bunkering = reference is not None and fuel_ask <= math.ceil(
             reference * FUEL_BUNKER_PREMIUM
         )
+        # Cheapness is judged on the ask, which is what the fill actually
+        # costs, rounded the same way the premium gate rounds.
+        cheap = reference is not None and fuel_ask <= math.ceil(reference)
 
         # Fuel the ship must have to fly the destination it is holding cargo
         # for is as non-negotiable as the survival minimum: the hold-or-sell
@@ -933,19 +975,23 @@ class TraderBrain(ShipBrain):
         )
         required_units = min(
             max(0, required_target - current_fuel),
-            int(ship.money * 0.9) // fuel_ask,
+            int(ship.money * 0.9) // fuel_bid,
         )
         required_units = max(0, required_units)
 
         bunker_units = 0
         if bunkering:
+            budget_fraction = (
+                FUEL_BUNKER_BUDGET_FRACTION_CHEAP
+                if cheap
+                else FUEL_BUNKER_BUDGET_FRACTION
+            )
             bunker_budget = (
-                int(ship.money * FUEL_BUNKER_BUDGET_FRACTION)
-                - required_units * fuel_ask
+                int(ship.money * budget_fraction) - required_units * fuel_bid
             )
             bunker_units = min(
                 ship.fuel_capacity - current_fuel - required_units,
-                max(0, bunker_budget) // fuel_ask,
+                max(0, bunker_budget) // fuel_bid,
             )
             bunker_units = max(0, bunker_units)
 
@@ -953,11 +999,105 @@ class TraderBrain(ShipBrain):
         if quantity <= 0:
             return None
 
-        order_id = market.place_buy_order(ship, fuel_commodity, quantity, fuel_ask)
+        order_id = market.place_buy_order(ship, fuel_commodity, quantity, fuel_bid)
         if not order_id:
             return None
         ship.active_orders[order_id] = "buy fuel"
         return order_id
+
+    def _bunker_fillable_units(self, bid_price: int) -> int:
+        """Fuel units the ship could realistically buy here on one more turn.
+
+        The smallest of tank room, what the cheap-tier bunker budget affords
+        at ``bid_price``, and the supply a single turn offers: the resting ask
+        depth or the recent traded units per turn, whichever is larger. The
+        depth resting now and the flow arriving next turn are alternative
+        estimates of the same thing, not additive.
+        """
+        ship = self.ship
+        planet = ship.planet
+        fuel_commodity = self._fuel_commodity()
+        if planet is None or fuel_commodity is None or bid_price <= 0:
+            return 0
+        room = ship.fuel_capacity - ship.fuel
+        affordable = int(ship.money * FUEL_BUNKER_BUDGET_FRACTION_CHEAP) // bid_price
+        supply = max(
+            self._nav.fuel_ask_depth_at(planet),
+            int(self._recent_flow_per_turn(planet.market, fuel_commodity)),
+        )
+        return max(0, min(room, affordable, supply))
+
+    def _trip_turn_value(self, profit: float, destination: Planet) -> float:
+        """Value of one docked turn to a ship about to fly to ``destination``.
+
+        The trip's profit spread over the turns it occupies: both legs plus
+        the docked turn at each end, approximated as ``2 * travel + 1``.
+        Delaying departure by a turn costs about this much.
+        """
+        origin = self.ship.planet
+        if origin is None:
+            return 0.0
+        distance = self._nav.distance(origin, destination)
+        travel_turns = max(1, math.ceil(distance / 20))
+        return profit / (2 * travel_turns + 1)
+
+    def _should_linger_to_bunker(self, turn_value: float) -> bool:
+        """Whether one more docked turn of cheap bunkering beats departing.
+
+        A departing ship cancels its resting orders, so the bunker bid it
+        placed this turn buys nothing unless the ship stays for the
+        end-of-turn match. Staying is worth it when the fuel here is below the
+        galaxy reference and the ship can take enough of it that the saving,
+        fillable units times the price gap, beats one turn of the trip.
+
+        Conditions, all required: the tank is below FUEL_LINGER_TANK_FRACTION
+        of capacity, the local ask is inside FUEL_BUNKER_PREMIUM and strictly
+        below the reference, a meaningful quantity is fillable, and this stop
+        has not already spent its one linger turn.
+        """
+        ship = self.ship
+        planet = ship.planet
+        if planet is None or turn_value <= 0:
+            return False
+        if self._fuel_linger_planet is planet:
+            return False
+        fuel_commodity = self._fuel_commodity()
+        if fuel_commodity is None:
+            return False
+        if ship.fuel >= FUEL_LINGER_TANK_FRACTION * ship.fuel_capacity:
+            return False
+        reference = self._fuel_value_reference()
+        if reference is None:
+            return False
+        _, ask = planet.market.get_bid_ask_spread(fuel_commodity)
+        if ask is None or ask <= 0:
+            return False
+        if ask > math.ceil(reference * FUEL_BUNKER_PREMIUM):
+            return False
+        saving_per_unit = reference - ask
+        if saving_per_unit <= 0:
+            return False
+        bid = max(ask, self._flow_value(planet.market, fuel_commodity) or 0)
+        fillable = self._bunker_fillable_units(bid)
+        if fillable <= 0:
+            return False
+        return fillable * saving_per_unit > turn_value
+
+    def _linger_to_bunker(self, turn_value: float) -> bool:
+        """Take this stop's one linger turn if it is worth more than the trip.
+
+        Records the stop so no second linger is taken here, and flags the turn
+        so the next decide_trade_actions does not charge it to a loaded plan's
+        departure patience.
+        """
+        if not self._should_linger_to_bunker(turn_value):
+            return False
+        self._fuel_linger_planet = self.ship.planet
+        self._fuel_linger_pending = True
+        self.ship.last_action = (
+            f"{self.ship.last_action}; Staying one turn to buy cheap fuel"
+        )
+        return True
 
     def _fuel_bid_price(self, planet: Planet, quantity: int) -> int:
         """Price for a standing fuel bid that makes delivery profitable.
@@ -1802,6 +1942,15 @@ class TraderBrain(ShipBrain):
         if intent is not None and intent.origin is not current_planet:
             self._clear_reposition_intent()
 
+        # Linger bookkeeping. The flag is consumed here, once: it says the
+        # previous docked turn was bought for fuel, not spent waiting, so it
+        # must not count against a loaded plan's departure patience below. The
+        # planet caps this stop at one linger and is stale anywhere else.
+        lingered_last_turn = self._fuel_linger_pending
+        self._fuel_linger_pending = False
+        if self._fuel_linger_planet is not current_planet:
+            self._fuel_linger_planet = None
+
         # Distress bookkeeping, before anything reads is_distressed. A ship
         # that is docked, empty of trade goods and poorer than one short
         # round trip of fuel is locked out of the planner: every pair fails
@@ -1870,8 +2019,11 @@ class TraderBrain(ShipBrain):
                 # Loaded at origin. Departure happens in decide_travel, so
                 # being here next turn means it was blocked, usually on fuel.
                 # Wait a bounded while, then release the cargo to the plain
-                # sell-or-fly logic.
-                if self._plan_turns_left > 0:
+                # sell-or-fly logic. A turn the ship chose to spend bunkering
+                # cheap fuel is not a blocked turn and does not spend patience.
+                if lingered_last_turn:
+                    pass
+                elif self._plan_turns_left > 0:
                     self._plan_turns_left -= 1
                 else:
                     self._current_plan = None
@@ -2049,6 +2201,10 @@ class TraderBrain(ShipBrain):
             if fuel_available >= fuel_needed and self._fuel_safe_destination(
                 plan.destination, current_planet, fuel_available - fuel_needed
             ):
+                if self._linger_to_bunker(
+                    self._trip_turn_value(plan.expected_profit, plan.destination)
+                ):
+                    return None
                 return plan.destination
             return None
 
@@ -2131,6 +2287,10 @@ class TraderBrain(ShipBrain):
                 best_expected_value = net_value
                 best_planet = destination
 
+        if best_planet is not None and self._linger_to_bunker(
+            self._trip_turn_value(best_expected_value, best_planet)
+        ):
+            return None
         return best_planet
 
     def _survival_reposition_target(self, fuel_available: int) -> Optional[Planet]:
