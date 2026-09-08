@@ -1542,6 +1542,16 @@ class TraderBrain(ShipBrain):
         fuel_to_buy = max(0, min(fuel_wanted - current_fuel, tank_room))
         if fuel_to_buy > 0 and not self._fuel_purchasable_at(origin):
             return None
+        # Fuel that has to be bought here at a spiked ask, while a station is
+        # within reach, is fuel the ship should buy at the station instead:
+        # the plan is not adopted, the reposition logic moves the ship, and
+        # it plans again from a market that sells fuel at a sane price.
+        if (
+            fuel_to_buy > 0
+            and not self._local_fuel_bunkerable(origin)
+            and self._can_reach_station()
+        ):
+            return None
         fuel_cost = fuel_to_buy * fuel_price
 
         # Never fly somewhere that leaves no escape route: the destination
@@ -1996,7 +2006,17 @@ class TraderBrain(ShipBrain):
         pending_fuel = 0
         if fuel_commodity is not None and not fuel_handled:
             current_fuel = self.ship.fuel
-            fuel_needed = plan.fuel_needed_round_trip
+            # The same quantity _pair_economics funded: the round trip, or
+            # the outbound leg plus what the destination demands on arrival,
+            # whichever is larger, within the tank.
+            fuel_needed = min(
+                self.ship.fuel_capacity,
+                max(
+                    plan.fuel_needed_round_trip,
+                    plan.fuel_needed_one_way
+                    + self._arrival_fuel_requirement(plan.destination, plan.origin),
+                ),
+            )
 
             if current_fuel < fuel_needed:
                 fuel_to_buy = fuel_needed - current_fuel
@@ -2006,6 +2026,16 @@ class TraderBrain(ShipBrain):
                     if fuel_ask is not None
                     else self._flow_value(market, fuel_commodity)
                 )
+                # Same ceiling every other fuel bid honors, and no spiked buy
+                # while a station is reachable; _pair_economics rejects such
+                # pairs at adoption, this guards the re-executed plan.
+                if fuel_bid is not None:
+                    fuel_bid = min(fuel_bid, self._nav.fuel_bid_ceiling())
+                if (
+                    not self._local_fuel_bunkerable(plan.origin)
+                    and self._can_reach_station()
+                ):
+                    fuel_bid = None
 
                 if fuel_bid is not None and fuel_bid > 0:
                     affordable_fuel = min(fuel_to_buy, self.ship.money // fuel_bid)
