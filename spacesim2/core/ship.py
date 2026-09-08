@@ -478,6 +478,10 @@ class TraderBrain(ShipBrain):
         # by then, so the number has to be remembered rather than recomputed.
         # Zero means an empty reposition, which loses nothing by stopping.
         self._departed_trip_turn_value = 0.0
+        # Station this ship is flying to purely to refuel, chosen once per
+        # docked turn in decide_trade_actions and reused by decide_travel so
+        # the two agree. None means no such reposition this turn.
+        self._refuel_reposition: Optional[Planet] = None
 
     def _recent_flow_per_turn(
         self, market: "Market", commodity: CommodityDefinition
@@ -1002,6 +1006,13 @@ class TraderBrain(ShipBrain):
         the galaxy reference, FUEL_BUNKER_BUDGET_FRACTION when it is above the
         reference but still inside the premium.
 
+        Above the premium the ship buys nothing at all when a fuel station is
+        within tank range: :meth:`_refuel_reposition_target` flies it there
+        instead, where the same money buys depth at the reference price. Only
+        a trapped ship, or one mid refuel stop, still buys, and its bid is
+        capped at :meth:`Navigator.fuel_bid_ceiling` so it cannot pay its own
+        escalation.
+
         Above the premium the survival portion is rationed further, to
         :meth:`_fuel_escape_target`: enough to reach the nearest planet that
         sells fuel and still clear its arrival floor, rather than two round
@@ -1058,10 +1069,8 @@ class TraderBrain(ShipBrain):
 
         reference = self._fuel_value_reference()
         # The local ask is itself a galaxy signal, so reference is never None
-        # here; the guard is defensive.
-        bunkering = reference is not None and fuel_ask <= math.ceil(
-            reference * FUEL_BUNKER_PREMIUM
-        )
+        # here; the guard inside the helper is defensive.
+        bunkering = self._local_fuel_bunkerable(planet)
         # Cheapness is judged on the ask, which is what the fill actually
         # costs, rounded the same way the premium gate rounds.
         cheap = reference is not None and fuel_ask <= math.ceil(reference)
@@ -1072,6 +1081,15 @@ class TraderBrain(ShipBrain):
         # is not speculative bunkering and the premium gate does not apply.
         survival_target = self._fuel_survival_target()
         if not bunkering:
+            # Spiked ask. A ship that can fly to a fuel station buys nothing
+            # here: the reposition in decide_travel takes it to depth at the
+            # reference price, and any unit bought at this ask is money the
+            # trip needs. A ship mid refuel stop is not repositioned, so it
+            # still buys, at the capped price. A trapped ship, one with no
+            # station in tank range, buys the rationed minimum and no bunker.
+            if ship.refuel_stop_resume is None and self._can_reach_station():
+                return None
+            fuel_bid = min(fuel_bid, self._nav.fuel_bid_ceiling())
             escape_target = self._fuel_escape_target()
             if escape_target is not None:
                 survival_target = min(survival_target, escape_target)
@@ -1110,6 +1128,111 @@ class TraderBrain(ShipBrain):
             return None
         ship.active_orders[order_id] = "buy fuel"
         return order_id
+
+    def _local_fuel_bunkerable(self, planet: Planet) -> bool:
+        """Whether ``planet``'s fuel ask is cheap enough to buy freely at.
+
+        True when a fuel ask rests here at no more than FUEL_BUNKER_PREMIUM
+        times the galaxy reference. False covers both an absent ask and a
+        spiked one, which are the two cases a ship should leave rather than
+        pay: :meth:`_opportunistic_fuel_topup` rations against this test and
+        :meth:`_refuel_reposition_target` moves the ship on it.
+        """
+        fuel_commodity = self._fuel_commodity()
+        if fuel_commodity is None:
+            return False
+        _, ask = planet.market.get_bid_ask_spread(fuel_commodity)
+        if ask is None or ask <= 0:
+            return False
+        reference = self._fuel_value_reference()
+        if reference is None:
+            return False
+        return ask <= math.ceil(reference * FUEL_BUNKER_PREMIUM)
+
+    def _reachable_stations(self) -> List[Planet]:
+        """Fuel stations elsewhere the tank can already reach, nearest first.
+
+        A station passes when the tank alone covers
+        :meth:`_departure_fuel_requirement`, which for a station is just the
+        leg: a station has depth at the reference price, so it demands no
+        arrival reserve. No local fuel is counted, because the point of the
+        list is what the ship can do without buying at the local ask.
+        """
+        origin = self.ship.planet
+        if origin is None:
+            return []
+        return [
+            station
+            for station in self._nav.planets_by_proximity(origin)
+            if station is not origin
+            and self._nav.fuel_station_at(station)
+            and self.ship.fuel >= self._departure_fuel_requirement(station)
+        ]
+
+    def _can_reach_station(self) -> bool:
+        """Whether the tank alone reaches a fuel station somewhere else."""
+        return bool(self._reachable_stations())
+
+    def _refuel_reposition_target(self) -> Optional[Planet]:
+        """Station to fly to instead of buying fuel at a spiked local ask.
+
+        Returns a planet when the ship is docked outside a refuel stop, the
+        current planet is not a station, the local ask is absent or above the
+        bunkering premium, the ship is short of fuel for what it has
+        committed to, and a station is in tank range. Measured over 400
+        turns, 46% of the fleet's spiked fuel spend came from ships in
+        exactly this state: they could already fly to a fuel seller under the
+        departure gate and posted a bid instead.
+
+        Among the reachable stations, the one worth most: the hold's value
+        there at bid-or-flow prices, less the leg's fuel at the galaxy
+        reference. An empty hold and ties go to the nearest, which is the
+        cheapest leg. Cargo rides along and the ordinary sell logic lists it
+        on arrival.
+        """
+        ship = self.ship
+        origin = ship.planet
+        if origin is None or ship.status != ShipStatus.DOCKED:
+            return None
+        if ship.refuel_stop_resume is not None:
+            return None
+        if self._nav.fuel_station_at(origin):
+            return None
+        if self._local_fuel_bunkerable(origin):
+            return None
+        if (
+            ship.fuel >= self._fuel_survival_target()
+            and self._committed_fuel_need <= ship.fuel
+        ):
+            return None
+        stations = self._reachable_stations()
+        if not stations:
+            return None
+
+        cargo = {
+            commodity: quantity
+            for commodity in self._get_tradeable_commodities()
+            if (quantity := self._sellable_quantity(commodity)) > 0
+        }
+        reference = self._fuel_value_reference()
+        fuel_price = (
+            reference if reference is not None else float(FUEL_BID_FALLBACK_FLOOR)
+        )
+
+        best: Optional[Planet] = None
+        best_score = 0.0
+        for station in stations:  # nearest first, so ties keep the nearest
+            value = 0.0
+            for commodity, quantity in cargo.items():
+                bid, _ = station.market.get_bid_ask_spread(commodity)
+                price = max(bid or 0, self._flow_value(station.market, commodity) or 0)
+                value += price * quantity
+            leg = ship.fuel_required(self._nav.distance(origin, station))
+            score = value - leg * fuel_price
+            if best is None or score > best_score:
+                best = station
+                best_score = score
+        return best
 
     def _bunker_fillable_units(
         self, bid_price: int, planet: Planet, tank_units: int
@@ -1296,8 +1419,14 @@ class TraderBrain(ShipBrain):
         travel reserve and no local ask to lift. The bid rests in the book so
         other traders' cross-planet scans see it as a sell opportunity.
         decide_trade_actions re-posts it every docked turn while the
-        condition holds, and the fallback price escalates via scarcity
-        pressure if it keeps going unfilled.
+        condition holds.
+
+        Two limits keep the bid from being the ship's ruin. It posts nothing
+        when a fuel station is within tank range, because R4 flies the ship
+        there instead and a resting bid would only reserve the money the trip
+        needs. And every price is capped at
+        :meth:`Navigator.fuel_bid_ceiling`: a seller fills a resting bid at
+        the bid price, so an escalating bid buys its own escalation.
         """
         ship = self.ship
         planet = ship.planet
@@ -1306,7 +1435,10 @@ class TraderBrain(ShipBrain):
         fuel_commodity = self._fuel_commodity()
         if fuel_commodity is None:
             return None
+        if self._can_reach_station():
+            return None
         market = planet.market
+        ceiling = self._nav.fuel_bid_ceiling()
 
         current_fuel = ship.fuel
         # Bid only up to the survival target, not a full tank. A tank-sized
@@ -1318,19 +1450,19 @@ class TraderBrain(ShipBrain):
             return None
 
         budget = int(ship.money * 0.9)  # keep a small operating buffer
-        price = self._fuel_bid_price(planet, max_units)
+        price = min(self._fuel_bid_price(planet, max_units), ceiling)
         quantity = min(max_units, budget // price) if price > 0 else 0
         if 0 < quantity < max_units:
             # Smaller bids amortize the delivery burn over fewer units, so
             # reprice once for the quantity we can afford.
-            price = self._fuel_bid_price(planet, quantity)
+            price = min(self._fuel_bid_price(planet, quantity), ceiling)
             quantity = min(quantity, budget // price)
         if quantity <= 0:
             # Too poor for a delivery-viable bid; a 1-unit rescue run can
             # never amortize its burn. A local producer needs no delivery
-            # margin, so bid the scarcity-escalated local reference with the
-            # money that remains rather than going silent.
-            price = self._local_fuel_reference_price(planet)
+            # margin, so bid the local reference with the money that remains
+            # rather than going silent.
+            price = min(self._local_fuel_reference_price(planet), ceiling)
             quantity = min(max_units, budget // price) if price > 0 else 0
         if quantity <= 0:
             return None
@@ -1397,7 +1529,19 @@ class TraderBrain(ShipBrain):
         # -> 22. A fuel-safe destination is a market that has depth *now*,
         # and by arrival it usually does not. Only the *margin* is charged one
         # way; the tank is still filled for the round trip.
-        fuel_to_buy = round_trip_shortfall
+        #
+        # A non-station destination now also demands an escape leg plus the
+        # maintenance buffer on arrival, and that can exceed what the return
+        # leg leaves in the tank. Fund the larger of the round trip and the
+        # outbound leg plus that arrival requirement, or the gate below
+        # rejects every such pair outright. The tank caps the purchase; if
+        # even a full tank cannot satisfy the gate, the pair is infeasible.
+        arrival_requirement = self._arrival_fuel_requirement(destination, origin)
+        fuel_wanted = max(fuel_round_trip, fuel_one_way + arrival_requirement)
+        tank_room = self.ship.fuel_capacity - current_fuel
+        fuel_to_buy = max(0, min(fuel_wanted - current_fuel, tank_room))
+        if fuel_to_buy > 0 and not self._fuel_purchasable_at(origin):
+            return None
         fuel_cost = fuel_to_buy * fuel_price
 
         # Never fly somewhere that leaves no escape route: the destination
@@ -1737,6 +1881,14 @@ class TraderBrain(ShipBrain):
         reserve, post a standing bid priced to entice a delivery run. Callers
         must not run this in the same turn as a fuel sell: buying into our
         own ask would self-trade.
+
+        Both callees now decline where the local price is bad and a fuel
+        station is within tank range: the top-up buys nothing above the
+        bunkering premium and the standing bid is not posted at all, because
+        :meth:`_refuel_reposition_target` flies the ship to the station this
+        turn and a resting bid would only tie up the money the trip needs.
+        The structure here is unchanged; those turns simply produce no
+        action string.
         """
         planet = self.ship.planet
         fuel_commodity = self._fuel_commodity()
@@ -2351,6 +2503,16 @@ class TraderBrain(ShipBrain):
                 self._reposition_intent.target
             )
 
+        # Fly to a fuel station rather than pay a spiked local ask. Decided
+        # once here, after the fuel commitment it reads, and cached for
+        # decide_travel so both agree on the turn's plan. An accumulating
+        # plan is left alone: its own fuel step funds the trip it is loading
+        # for, and its patience is bounded, so a ship that really is stuck
+        # reaches this branch within a few turns anyway.
+        self._refuel_reposition = (
+            None if accumulating else self._refuel_reposition_target()
+        )
+
         # Fuel upkeep, whenever the tank is under the stranding reserve, and
         # ahead of every branch that can end the turn: an accumulating plan
         # holds the turn for up to ACCUMULATION_PATIENCE turns and adopting a
@@ -2369,6 +2531,14 @@ class TraderBrain(ShipBrain):
         # cargo buying: the reserve it frees is worth more than the hold
         # space it takes.
         actions.extend(self._buy_repair_kit())
+
+        if self._refuel_reposition is not None:
+            # Departing this turn. Listing the hold now would leave resting
+            # asks behind and strand the cargo's money, and adopting a plan
+            # here would only be abandoned in decide_travel.
+            actions.append(f"Repositioning to {self._refuel_reposition.name} to refuel")
+            self.ship.last_action = "; ".join(actions)
+            return
 
         listed_locally = 0
         if accumulating and plan is not None:
@@ -2471,6 +2641,27 @@ class TraderBrain(ShipBrain):
             return self._refuel_stop_travel()
 
         self._departed_trip_turn_value = 0.0
+
+        # Refuelling reposition, chosen this turn by decide_trade_actions.
+        # It outranks the local-sale hold and any unloaded plan: the ship is
+        # short of fuel where fuel is unaffordable, and nothing it can do
+        # here is worth more than being able to leave. A loaded plan survives
+        # only when its destination is the station itself.
+        station = self._refuel_reposition
+        if station is not None:
+            self._selling_locally = False
+            if not (
+                self._plan_loaded
+                and self._current_plan is not None
+                and self._current_plan.destination is station
+            ):
+                self._current_plan = None
+                self._plan_loaded = False
+            self._clear_reposition_intent()
+            # An empty reposition loses nothing by taking a cheap-fuel stop
+            # en route, and this trip earns nothing per turn of its own.
+            self._departed_trip_turn_value = 0.0
+            return station
 
         # We committed to selling here this turn. Departing would strand the
         # fresh sell orders in the book, or with cancel-on-depart abort the

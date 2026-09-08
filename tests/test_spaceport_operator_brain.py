@@ -459,16 +459,23 @@ def _legacy_fuel_bid_price(navigator, planet, quantity):
 
 
 def test_navigator_delivery_price_matches_the_old_trader_formula():
+    """The delivered-cost formula is unchanged below the fuel bid ceiling.
+
+    Small orders amortize the round trip over few units, so their delivered
+    price runs far above the ceiling and is capped there; the formula itself
+    still governs everything under it.
+    """
     sim, registry, (planet, other) = _make_world()
     fuel = registry.get_commodity("nova_fuel")
     _seller(sim, other, fuel, 100, 24)
     navigator = get_navigator(sim)
     navigator.refresh_market_facts()
 
+    ceiling = navigator.fuel_bid_ceiling()
     for quantity in (1, 7, 50, 400):
-        assert navigator.fuel_delivery_bid_price(
-            planet, quantity
-        ) == _legacy_fuel_bid_price(navigator, planet, quantity)
+        assert navigator.fuel_delivery_bid_price(planet, quantity) == min(
+            _legacy_fuel_bid_price(navigator, planet, quantity), ceiling
+        )
 
 
 def test_navigator_local_reference_price_with_no_ask_anywhere():
@@ -527,8 +534,10 @@ def test_delivery_price_ignores_a_dealer_ask():
     price a dealer paid, its ask marked that up, and the next dealer anchored
     there. Fuel VWAP ratcheted from 14 to 94 in a hundred turns on it.
     """
+    # Distances are short enough that neither delivered price reaches the
+    # fuel bid ceiling, so this test still measures which source anchors.
     sim, registry, (planet, near, far) = _make_world(
-        (("A", 0, 0), ("Near", 100, 0), ("Far", 400, 0))
+        (("A", 0, 0), ("Near", 60, 0), ("Far", 160, 0))
     )
     fuel = registry.get_commodity("nova_fuel")
     _dealer_seller(sim, near, fuel, 500, 20)

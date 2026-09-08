@@ -7,7 +7,8 @@
   cannot sell are rejected; docked ships top up toward a full tank.
 - Standing fuel bids: a stranded ship posts a resting buy order priced to
   make delivery profitable for another trader, re-posts it each turn, and
-  escalates the fallback price with scarcity pressure.
+  escalates the fallback price with scarcity pressure while the galaxy has no
+  believable fuel price to cap the bid against.
 """
 
 import math
@@ -16,7 +17,7 @@ from types import SimpleNamespace
 from spacesim2.core.commodity import CommodityDefinition, CommodityRegistry
 from spacesim2.core.galaxy import StarLaneNetwork
 from spacesim2.core.market import Market
-from spacesim2.core.navigation import FUEL_BID_MARGIN
+from spacesim2.core.navigation import FUEL_BID_MARGIN, get_navigator
 from spacesim2.core.planet import Planet
 from spacesim2.core.ship import (
     ACCUMULATION_PATIENCE,
@@ -312,9 +313,17 @@ def test_standing_bid_fires_below_reserve_not_only_at_zero():
 
 
 def test_standing_bid_reposts_and_escalates_when_unfilled():
+    """With no believable fuel price anywhere, the bid still escalates.
+
+    The bid ceiling is what stops a spiral, and it needs a galaxy reference to
+    measure against. A bootstrap galaxy has none, and the escalation is how
+    the first fuel is called into existence; see
+    tests/test_ship_fuel_discipline.py for the capped case.
+    """
     # No fuel ask anywhere in the galaxy: fallback pricing applies.
     sim, fuel, _, (_, b) = _make_world([("A", 0, 0), ("B", 60, 0)])
     stranded = _make_ship(sim, b, fuel_units=0, money=1000, name="Stranded")
+    assert get_navigator(sim).fuel_value_reference() is None
 
     stranded.brain.decide_trade_actions()
     first = [o for o in b.market.buy_orders[fuel] if o.actor is stranded]

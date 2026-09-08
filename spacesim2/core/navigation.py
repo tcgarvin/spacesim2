@@ -70,6 +70,20 @@ FUEL_BID_FALLBACK_FLOOR = 15
 FUEL_STATION_MIN_DEPTH = 6
 FUEL_STATION_MAX_PRICE_MULT = 2.0
 
+# Highest price any fuel bid may carry, as a multiple of the galaxy fuel
+# reference. Sellers fill a resting bid at the bid price, so an escalating
+# bid pays its own escalation and the fill sets the next average price. The
+# cap breaks that ratchet: above it a ship flies to a station instead.
+FUEL_BID_CEILING_MULT = 2.0
+
+# The ceiling when no planet has believable fuel evidence, i.e. no cap. There
+# is nothing to measure a spike against then, and a bootstrap galaxy needs
+# high bids to call the first fuel into existence: capping them at the
+# fallback floor instead stopped fuel being produced at all, and over three
+# 200-turn 12-planet runs the whole fleet sat with 0 departures and no fuel
+# ask anywhere.
+FUEL_BID_CEILING_UNBOUNDED = 10**9
+
 # Ships are created with fuel_efficiency in [0.8, 1.2]. When estimating an
 # unknown deliverer's burn, assume the worst so the bid stays enticing.
 DELIVERER_WORST_FUEL_EFFICIENCY = 0.8
@@ -588,6 +602,22 @@ class Navigator:
     # Fuel pricing (market-derived)
     # ------------------------------------------------------------------
 
+    def fuel_bid_ceiling(self) -> int:
+        """Highest price any fuel bid should carry.
+
+        :data:`FUEL_BID_CEILING_MULT` times :meth:`fuel_value_reference`, or
+        :data:`FUEL_BID_CEILING_UNBOUNDED` when no planet has believable fuel
+        evidence and there is therefore no spike to measure. A seller hits the best resting bid at the bid price, so an
+        unbounded bid buys its own escalation: the fill becomes the next
+        average price and the next bid is higher still. Measured over 400
+        turns that loop took one planet's fuel price from 363 to 1020 a unit
+        with no change in real supply.
+        """
+        reference = self.fuel_value_reference()
+        if reference is None:
+            return FUEL_BID_CEILING_UNBOUNDED
+        return max(1, math.ceil(FUEL_BID_CEILING_MULT * reference))
+
     def fuel_delivery_bid_price(self, planet: "Planet", quantity: int) -> int:
         """Price for a standing fuel bid at ``planet`` that makes delivery pay.
 
@@ -683,10 +713,11 @@ class Navigator:
             )
 
         if best_delivered_cost is not None:
-            return max(1, math.ceil(best_delivered_cost * (1.0 + FUEL_BID_MARGIN)))
+            price = max(1, math.ceil(best_delivered_cost * (1.0 + FUEL_BID_MARGIN)))
+            return min(price, self.fuel_bid_ceiling())
 
         # No ask anywhere: fall back to what a local producer would need.
-        return self.local_fuel_reference_price(planet)
+        return min(self.local_fuel_reference_price(planet), self.fuel_bid_ceiling())
 
     def local_fuel_reference_price(self, planet: "Planet") -> int:
         """Scarcity-escalated price a local fuel producer would plausibly take.
@@ -709,7 +740,7 @@ class Navigator:
         if market.has_price_signal(fuel_commodity):
             reference = max(reference, float(market.get_avg_price(fuel_commodity)))
         escalated = reference * (1.0 + market.scarcity_pressure_for(fuel_commodity))
-        return max(1, math.ceil(escalated))
+        return max(1, min(math.ceil(escalated), self.fuel_bid_ceiling()))
 
     # ------------------------------------------------------------------
     # Internals
