@@ -4,6 +4,25 @@ Append-only record of closed decisions, postmortems, and landed campaigns.
 Newest first. Open work lives in `TODO.md`; current reference docs live
 alongside this file.
 
+## 2026-09-08 - Displacement bids: hand-made need goods post a buy order
+
+A need gate that spends a labor turn making a good left no order in the
+book, so the planet's demand for that good was invisible and nothing was
+ever shipped in. Biomass-poor planets paid 9.5-11 per processed_food where
+rich planets 2-3 fuel units away sold it at 1.3-2.6, and the median resting
+bid depth above the rich-planet ask was 6-15 units, but ship food deliveries
+ran at 0.4 units/turn galaxy-wide: a planet of hand-cooking colonists rested
+only 1-2 unit food bids each, too thin for a ship to plan a load against.
+Both brains now record what a need gate makes and
+`ActorBrain._displacement_bid_commands` posts a standing bid for it, sized
+to one run's base output (before planet-attribute scaling, since what a
+purchase displaces is the labor turn) and priced with the labor term set to
+the actor's `labor_opportunity_cost` rather than the flat government wage.
+`_replacement_cost` takes that as a `labor_value` argument and memoizes on
+`(commodity, labor value)`. The rule is generic: any process a need gate
+runs for self-consumption, for any drive, with recipe inputs such as biomass
+priced at their own replacement cost. See `docs/needs.md`.
+
 ## 2026-09-08 - Ship brain: fuel stations, price ceiling, refuel reposition, cost-basis selling
 
 Done (e7b71be, fc33876, 6ad6e80, 00d7420, bee4fe0). Fleet cash fell from

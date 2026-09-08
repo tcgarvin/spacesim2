@@ -150,14 +150,14 @@ class TestBrainCacheInvalidation:
 
         cache = brain._turn_cache(actor)
         cache.bid_ask["food"] = (3, 5)
-        cache.replacement_cost["food"] = 7.0
+        cache.replacement_cost[("food", 10)] = 7.0
         cache.imputed_cost["food"] = 7.0
         cache.best_result = (None, 0.0)
 
         # No state change: everything survives.
         cache = brain._turn_cache(actor)
         assert cache.bid_ask == {"food": (3, 5)}
-        assert cache.replacement_cost == {"food": 7.0}
+        assert cache.replacement_cost == {("food", 10): 7.0}
 
         # An inventory change, as after a ProcessCommand, drops the actor-state
         # group and keeps market quotes.
@@ -185,7 +185,7 @@ class TestBrainCacheInvalidation:
         actor, brain, sim = self._actor_and_brain()
         cache = brain._turn_cache(actor)
         cache.bid_ask["food"] = (3, 5)
-        cache.replacement_cost["food"] = 7.0
+        cache.replacement_cost[("food", 10)] = 7.0
         cache.ranked_profits = []
 
         sim.current_turn = 1

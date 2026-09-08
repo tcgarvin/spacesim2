@@ -152,6 +152,11 @@ class IndustrialistBrain(ActorBrain):
         # Shared with decide_market_actions later this turn; see BrainCache.
         cache = self._turn_cache(actor)
 
+        # Goods made by hand for the actor's own needs this turn draw a
+        # displacement bid in the market phase. See
+        # ActorBrain._displacement_bid_commands.
+        self._begin_self_supply_record()
+
         # 1% chance per turn to re-evaluate the recipe.
         self.turns_since_recipe_evaluation += 1
         if self._should_reevaluate_recipe():
@@ -203,23 +208,23 @@ class IndustrialistBrain(ActorBrain):
         # The pantry counts the bought staple as well as hand-cooked food.
         if food_pantry_units(actor) < 2:
             if actor.can_execute_process("make_food"):
-                return ProcessCommand("make_food")
+                return self._record_self_supply(actor, "make_food")
             if biomass_commodity:
                 # Available, not total: reserved units cannot be cooked.
                 biomass_quantity = actor.inventory.get_available_quantity(
                     biomass_commodity
                 )
                 if biomass_quantity < 4 and actor.can_execute_process("gather_biomass"):
-                    return ProcessCommand("gather_biomass")
+                    return self._record_self_supply(actor, "gather_biomass")
 
         if clothing_commodity and fiber_commodity:
             clothing_quantity = actor.inventory.get_quantity(clothing_commodity)
             if clothing_quantity < 1:
                 if actor.can_execute_process("make_clothing"):
-                    return ProcessCommand("make_clothing")
+                    return self._record_self_supply(actor, "make_clothing")
                 fiber_quantity = actor.inventory.get_available_quantity(fiber_commodity)
                 if fiber_quantity < 4 and actor.can_execute_process("gather_fiber"):
-                    return ProcessCommand("gather_fiber")
+                    return self._record_self_supply(actor, "gather_fiber")
 
         # Build facilities and tools the chosen recipe needs.
         if self.chosen_recipe_id:
@@ -638,6 +643,28 @@ class IndustrialistBrain(ActorBrain):
             return reference
         return min(reference, imputed * NEVER_TRADED_VALUE_CAP)
 
+    def labor_opportunity_cost(
+        self, actor: "Actor", cache: Optional[BrainCache] = None
+    ) -> int:
+        """What a turn of this industrialist's labor is worth.
+
+        The score of the chosen recipe, floored at GOVERNMENT_WAGE. Prices
+        the labor turn in tool make-or-buy and in the displacement bid for
+        goods the actor makes by hand.
+        """
+        if not actor.planet or not self.chosen_recipe_id:
+            return GOVERNMENT_WAGE
+        process = actor.sim.process_registry.get_process(self.chosen_recipe_id)
+        if not process:
+            return GOVERNMENT_WAGE
+        score = self._calculate_recipe_score(
+            actor,
+            actor.planet.market,
+            process,
+            memo=cache.imputed_cost if cache is not None else None,
+        )
+        return max(GOVERNMENT_WAGE, int(score))
+
     def _calculate_tool_willingness_to_pay(
         self, actor: "Actor", market: "Market", cache: Optional[BrainCache] = None
     ) -> int:
@@ -656,18 +683,7 @@ class IndustrialistBrain(ActorBrain):
         )
         input_cost = int(metal_price * 2)
 
-        opportunity_cost = GOVERNMENT_WAGE
-        if self.chosen_recipe_id:
-            process = actor.sim.process_registry.get_process(self.chosen_recipe_id)
-            if process:
-                score = self._calculate_recipe_score(
-                    actor,
-                    market,
-                    process,
-                    memo=cache.imputed_cost if cache is not None else None,
-                )
-                if score > GOVERNMENT_WAGE:
-                    opportunity_cost = int(score)
+        opportunity_cost = self.labor_opportunity_cost(actor, cache)
 
         return input_cost + opportunity_cost
 

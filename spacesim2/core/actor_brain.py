@@ -6,6 +6,7 @@ from spacesim2.core.commands import (
     MarketCommand,
     PlaceBuyOrderCommand,
     PlaceSellOrderCommand,
+    ProcessCommand,
 )
 from spacesim2.core.skill import SkillCheck
 
@@ -159,7 +160,10 @@ class BrainCache:
         ] = None
 
     def _reset_actor_group(self) -> None:
-        self.replacement_cost: Dict[str, Optional[float]] = {}
+        # Keyed on (commodity id, labor value), so a call that prices labor
+        # at the actor's opportunity cost is never served the wage-based
+        # entry. See _replacement_cost.
+        self.replacement_cost: Dict[Tuple[str, int], Optional[float]] = {}
         # Shared memo for make-or-buy imputation (see _imputed_unit_cost).
         self.imputed_cost: Dict[str, float] = {}
         # Colonist-specific: memoized (best_process, raw_profit) for the
@@ -239,6 +243,43 @@ class ActorBrain:
             self._cache = BrainCache()
         return self._cache.refresh(actor)
 
+    def labor_opportunity_cost(
+        self, actor: "Actor", cache: Optional[BrainCache] = None
+    ) -> int:
+        """What a turn of this actor's labor is worth, in credits.
+
+        The government wage by default, which is what a turn earns when it
+        has no better use. Subclasses that can value the actor's next-best
+        economic action override this and floor it at the wage. It is the
+        one definition used for tool make-or-buy pricing and for the labor
+        term of a self-supply replacement cost.
+        """
+        return GOVERNMENT_WAGE
+
+    # Goods the actor is making by hand this turn to serve a need, mapped to
+    # the base output of one run of the process (before planet-attribute
+    # scaling, since the labor turn is what a purchase would displace).
+    # Rebuilt at the top of every decide_economic_action; the class-level
+    # empty dict is only read, never mutated.
+    _self_supplied: Dict["CommodityDefinition", int] = {}
+
+    def _begin_self_supply_record(self) -> None:
+        """Start a fresh self-supply record for this turn."""
+        self._self_supplied = {}
+
+    def _record_self_supply(self, actor: "Actor", process_id: str) -> EconomicCommand:
+        """Note that a need gate is running ``process_id`` for the actor itself.
+
+        Returns the command to run, so a need gate can return it directly.
+        """
+        process = actor.sim.process_registry.get_process(process_id)
+        if process is not None:
+            for commodity, quantity in process.outputs_items:
+                previous = self._self_supplied.get(commodity, 0)
+                if quantity > previous:
+                    self._self_supplied[commodity] = quantity
+        return ProcessCommand(process_id)
+
     def decide_economic_action(self, actor: "Actor") -> Optional[EconomicCommand]:
         """Decide which economic action to take this turn."""
         raise NotImplementedError("Subclasses must implement this method")
@@ -270,10 +311,14 @@ class ActorBrain:
         remote demand is visible to ships. It runs after every drive has
         claimed budget for goods it can actually buy today, so an import
         signal never outbids a shelf purchase for a lower-priority need.
+
+        A third pass bids for whatever the actor made by hand this turn to
+        serve a need. See ``_displacement_bid_commands``.
         """
         if cache is None:
             cache = BrainCache()
         commands: List[MarketCommand] = []
+        bid_quantities: Dict[str, int] = {}
         substitutes: List[
             Tuple[List["CommodityDefinition"], "CommodityDefinition", int, int, int]
         ] = []
@@ -321,6 +366,9 @@ class ActorBrain:
             if qty > 0:
                 commands.append(PlaceBuyOrderCommand(target_commodity, qty, bid))
                 available -= qty * bid
+                bid_quantities[target_commodity.id] = (
+                    bid_quantities.get(target_commodity.id, 0) + qty
+                )
 
             if ask is not None:
                 substitutes.append((mats, target_commodity, need, wtp, ask))
@@ -337,9 +385,132 @@ class ActorBrain:
                 available,
                 commands,
                 cache,
+                bid_quantities,
             )
 
+        self._displacement_bid_commands(
+            actor, market, lam, available, commands, bid_quantities, cache
+        )
+
         return commands
+
+    def _displacement_bid_commands(
+        self,
+        actor: "Actor",
+        market: "Market",
+        lam: float,
+        available: int,
+        commands: List[MarketCommand],
+        bid_quantities: Dict[str, int],
+        cache: Optional[BrainCache],
+    ) -> int:
+        """Bid for the goods the actor is currently making by hand. Returns the budget left.
+
+        An actor whose need gate spends a labor turn cooking food shows the
+        market no demand for food once its pantry is full, so nothing is
+        ever shipped to it and it cooks again next turn. This posts a
+        standing order sized to one run's base output, so a fill means next
+        turn's gate does not trip and the labor goes to the actor's best
+        alternative work instead.
+
+        When the recorded good is a drive material, every material of that
+        drive is bid for, not only the one made by hand. The good that
+        displaces the labor is whatever a ship can bring cheaply, and for
+        the food drive that is the imported staple, not the hand-cooked
+        good the gate produced. Either material satisfies the need and
+        matching is deferred, so both orders may rest and both may fill;
+        the pantry then sits above target and the actor skips cooking for
+        longer, which is the point.
+
+        Price. The labor term of the self-supply cap is the actor's
+        ``labor_opportunity_cost``, not the flat government wage: the turn
+        is worth what the actor's next-best process earns, and that is what
+        a purchase saves. Pricing then follows the rest of this method:
+        take a local ask at or under the ceiling, otherwise rest a bid at
+        the reference price escalated by scarcity pressure and capped by
+        the ceiling.
+
+        Quantity. One run's base output per material, less whatever the
+        drive passes above already bid for that material, so the total
+        quantity resting in it is the larger of the two. The budget is the
+        caller's remaining money, so this never outbids an unmet need.
+
+        Recorded goods that no drive consumes, directly or as an input to a
+        drive material's recipe, draw no bid: this raises no price for a
+        good the actor is not hand-making for itself.
+        """
+        if lam <= 0 or not self._self_supplied:
+            return available
+
+        labor_value = self.labor_opportunity_cost(actor, cache)
+        for commodity, run_quantity in self._self_supplied.items():
+            match = self._drive_served_by(actor, commodity)
+            if match is None:
+                continue
+            drive, is_material = match
+            if not drive.can_purchase(actor):
+                continue
+
+            if is_material:
+                targets = drive.materials() or [commodity]
+            else:
+                # An input to a drive material's recipe, such as biomass for
+                # food. The actor still cooks, so what it buys is the
+                # gathering turn and only that good is bid for.
+                targets = [commodity]
+
+            for target in targets:
+                if is_material:
+                    ceiling = self._drive_willingness_to_pay(
+                        actor, market, drive, target, lam, cache, labor_value
+                    )
+                else:
+                    cost = self._replacement_cost(
+                        actor, market, target, cache, labor_value=labor_value
+                    )
+                    ceiling = 0 if cost is None else math.ceil(cost)
+                if ceiling <= 0:
+                    continue
+
+                _, ask = _get_bid_ask(market, target, cache)
+                if ask is not None and ask <= ceiling:
+                    price = ask
+                else:
+                    ref = self._drive_bid_reference(actor, market, target, cache)
+                    pressure = market.scarcity_pressure_for(target)
+                    price = min(ceiling, int(round(ref * (1.0 + pressure))))
+                if price <= 0:
+                    continue
+
+                need = run_quantity - bid_quantities.get(target.id, 0)
+                qty = min(need, available // price)
+                if qty > 0:
+                    commands.append(PlaceBuyOrderCommand(target, qty, price))
+                    available -= qty * price
+                    bid_quantities[target.id] = bid_quantities.get(target.id, 0) + qty
+        return available
+
+    def _drive_served_by(
+        self, actor: "Actor", commodity: "CommodityDefinition"
+    ) -> Optional[Tuple["ActorDrive", bool]]:
+        """Which drive a commodity serves, and whether it serves it directly.
+
+        Returns ``(drive, True)`` when the commodity is one of the drive's
+        own materials, ``(drive, False)`` when it is an input to a recipe
+        producing one, and ``None`` when no drive consumes it either way.
+        The relation is read from the process registry, so it holds for any
+        drive and any recipe.
+        """
+        for drive in actor.drives:
+            if commodity in drive.materials():
+                return (drive, True)
+        registry = actor.sim.process_registry
+        for drive in actor.drives:
+            for material in drive.materials():
+                for process in registry.get_processes_producing(material):
+                    if commodity in process.inputs:
+                        return (drive, False)
+        return None
 
     def _add_substitute_material_bids(
         self,
@@ -353,6 +524,7 @@ class ActorBrain:
         available: int,
         commands: List[MarketCommand],
         cache: Optional[BrainCache],
+        bid_quantities: Dict[str, int],
     ) -> int:
         """Bid for a drive's other materials below the shelf price. Returns the budget left.
 
@@ -395,6 +567,7 @@ class ActorBrain:
             if qty > 0:
                 commands.append(PlaceBuyOrderCommand(material, qty, price))
                 available -= qty * price
+                bid_quantities[material.id] = bid_quantities.get(material.id, 0) + qty
         return available
 
     def _drive_bid_reference(
@@ -585,6 +758,7 @@ class ActorBrain:
         commodity: "CommodityDefinition",
         lam: float,
         cache: Optional[BrainCache] = None,
+        labor_value: int = GOVERNMENT_WAGE,
     ) -> int:
         """Maximum price the actor pays for one unit of a drive material.
 
@@ -598,6 +772,12 @@ class ActorBrain:
         an actor already going without cannot produce fast enough for the
         cap to be real, so it accepts a scarcity premium of up to 2x at full
         deprivation.
+
+        ``labor_value`` prices the labor turn inside the self-supply cap.
+        The default government wage is what a turn earns with no other use;
+        the displacement bid passes the actor's opportunity cost, so an
+        actor with profitable work available values the good it hand-makes
+        at what that turn really costs it.
         """
         if lam <= 0:
             return 0
@@ -606,7 +786,9 @@ class ActorBrain:
         self_supply = [
             cost
             for cost in (
-                self._replacement_cost(actor, market, material, cache)
+                self._replacement_cost(
+                    actor, market, material, cache, labor_value=labor_value
+                )
                 for material in (drive.materials() or [commodity])
             )
             if cost is not None
@@ -626,6 +808,8 @@ class ActorBrain:
         market: "Market",
         commodity: "CommodityDefinition",
         cache: Optional[BrainCache] = None,
+        *,
+        labor_value: int = GOVERNMENT_WAGE,
     ) -> Optional[float]:
         """Per-unit cost for this actor to self-produce a commodity.
 
@@ -641,14 +825,21 @@ class ActorBrain:
         buyer ceilings so trade can clear. Returns None when the actor has
         no way to make the good, so there is no make-it-yourself ceiling.
 
-        Memoized per commodity in ``cache`` until the turn ends or the
+        ``labor_value`` is the credit value of the labor turn the recipe
+        spends. It defaults to the government wage, the wage a turn earns
+        with no other use. Callers pricing a good the actor is currently
+        making by hand pass ``labor_opportunity_cost`` instead, which is
+        what that turn is actually worth to this actor.
+
+        Memoized per (commodity, labor value) in ``cache`` until the turn ends or the
         actor's inventory or skills change (see ``BrainCache``). The
         quote-derived halves are also cached per process for the whole turn
         in ``cache.replacement_quote_parts``, so the post-ProcessCommand
         recompute only redoes the actor-dependent parts.
         """
-        if cache is not None and commodity.id in cache.replacement_cost:
-            return cache.replacement_cost[commodity.id]
+        memo_key = (commodity.id, labor_value)
+        if cache is not None and memo_key in cache.replacement_cost:
+            return cache.replacement_cost[memo_key]
 
         best: Optional[float] = None
         for process in actor.sim.process_registry.get_processes_producing(commodity):
@@ -678,14 +869,14 @@ class ActorBrain:
             # multiplier, so per-unit input cost is independent of skill.
             # Labor is spent on failed turns too.
             skill_factor = self._expected_skill_factor(actor, process, cache)
-            per_unit = input_cost / expected_out + GOVERNMENT_WAGE / (
+            per_unit = input_cost / expected_out + labor_value / (
                 expected_out * skill_factor
             )
             if best is None or per_unit < best:
                 best = per_unit
 
         if cache is not None:
-            cache.replacement_cost[commodity.id] = best
+            cache.replacement_cost[memo_key] = best
         return best
 
     def _replacement_quote_parts(

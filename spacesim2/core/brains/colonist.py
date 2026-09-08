@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from spacesim2.core.actor import Actor
 from spacesim2.core.actor_brain import (
+    GOVERNMENT_WAGE,
     ActorBrain,
     BrainCache,
     _get_avg_price,
@@ -40,6 +41,11 @@ class ColonistBrain(ActorBrain):
         # the economic command changes actor state. See BrainCache.
         cache = self._turn_cache(actor)
 
+        # Goods made by hand for the actor's own needs this turn draw a
+        # displacement bid in the market phase. See
+        # ActorBrain._displacement_bid_commands.
+        self._begin_self_supply_record()
+
         # Basic needs first: food, clothing, shelter.
         registry = actor.sim.commodity_registry
 
@@ -56,29 +62,29 @@ class ColonistBrain(ActorBrain):
         # hand-cooked food, so an actor living on processed food does not cook.
         if food_pantry_units(actor) < 5:
             if actor.can_execute_process("make_food"):
-                return ProcessCommand("make_food")
+                return self._record_self_supply(actor, "make_food")
 
             # Available, not total: units reserved in the actor's own sell
             # order cannot be cooked, so they must not satisfy the gate.
             biomass_quantity = actor.inventory.get_available_quantity(biomass_commodity)
             if biomass_quantity < 4 and actor.can_execute_process("gather_biomass"):
-                return ProcessCommand("gather_biomass")
+                return self._record_self_supply(actor, "gather_biomass")
 
         if clothing_commodity and fiber_commodity:
             clothing_quantity = actor.inventory.get_quantity(clothing_commodity)
             if clothing_quantity < 3:
                 if actor.can_execute_process("make_clothing"):
-                    return ProcessCommand("make_clothing")
+                    return self._record_self_supply(actor, "make_clothing")
 
                 fiber_quantity = actor.inventory.get_available_quantity(fiber_commodity)
                 if fiber_quantity < 4 and actor.can_execute_process("gather_fiber"):
-                    return ProcessCommand("gather_fiber")
+                    return self._record_self_supply(actor, "gather_fiber")
 
         # Keep a wood buffer; it feeds tools and building materials.
         if wood_commodity:
             wood_quantity = actor.inventory.get_quantity(wood_commodity)
             if wood_quantity < 2 and actor.can_execute_process("harvest_wood"):
-                return ProcessCommand("harvest_wood")
+                return self._record_self_supply(actor, "harvest_wood")
 
         # simple_building_materials feeds ShelterDrive.
         building_materials = registry.get_commodity("simple_building_materials")
@@ -87,12 +93,14 @@ class ColonistBrain(ActorBrain):
             if bm_quantity < 3:
                 # Bootstrap recipe: 2 wood + simple_tools -> 1 building material
                 if actor.can_execute_process("make_building_materials_wood"):
-                    return ProcessCommand("make_building_materials_wood")
+                    return self._record_self_supply(
+                        actor, "make_building_materials_wood"
+                    )
                 # Probably short on wood.
                 if wood_commodity:
                     wood_quantity = actor.inventory.get_quantity(wood_commodity)
                     if wood_quantity < 2 and actor.can_execute_process("harvest_wood"):
-                        return ProcessCommand("harvest_wood")
+                        return self._record_self_supply(actor, "harvest_wood")
 
         # Tools before productive work.
         tools_commodity = registry.get_commodity("simple_tools")
@@ -151,7 +159,7 @@ class ColonistBrain(ActorBrain):
         The best process is chosen on discounted expected profit, the same
         criterion as ``_find_most_profitable_process``. Its raw profit is
         undiscounted output_value - input_cost, which
-        ``_calculate_turn_opportunity_cost`` reports as the opportunity cost
+        ``labor_opportunity_cost`` reports as the opportunity cost
         of a turn.
 
         Three memo levels (see BrainCache), matching what changes when the
@@ -277,16 +285,15 @@ class ColonistBrain(ActorBrain):
             cache.best_result = result
         return result
 
-    def _calculate_turn_opportunity_cost(
+    def labor_opportunity_cost(
         self, actor: Actor, cache: Optional[BrainCache] = None
     ) -> int:
-        """Opportunity cost of spending a turn making tools.
+        """What a turn of this colonist's labor is worth.
 
-        The profit from the actor's next-best economic action, floored at
-        GOVERNMENT_WAGE.
+        The raw profit of the actor's next-best economic action, floored at
+        GOVERNMENT_WAGE. Prices the labor turn in tool make-or-buy and in
+        the displacement bid for goods the actor makes by hand.
         """
-        GOVERNMENT_WAGE = 10
-
         market = actor.planet.market if actor.planet else None
         if not market:
             return GOVERNMENT_WAGE
@@ -323,7 +330,7 @@ class ColonistBrain(ActorBrain):
         )
         input_cost = int(metal_price * 2)
 
-        opportunity_cost = self._calculate_turn_opportunity_cost(actor, cache)
+        opportunity_cost = self.labor_opportunity_cost(actor, cache)
 
         return input_cost + opportunity_cost
 

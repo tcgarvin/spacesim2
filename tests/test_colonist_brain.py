@@ -36,6 +36,9 @@ def _wire_producer_index(sim_mock):
         for p in registry.all_processes.return_value
         if any(out.id == commodity.id for out in p.outputs)
     ]
+    registry.get_process.side_effect = lambda process_id: next(
+        (p for p in registry.all_processes.return_value if p.id == process_id), None
+    )
 
 
 class TestColonistBrainToolMarket:
@@ -95,14 +98,14 @@ class TestColonistBrainToolMarket:
         """Opportunity cost is the government wage with no planet or no profit."""
         actor_no_planet = Mock(spec=Actor)
         actor_no_planet.planet = None
-        assert brain._calculate_turn_opportunity_cost(actor_no_planet) == 10
+        assert brain.labor_opportunity_cost(actor_no_planet) == 10
 
         mock_actor.planet.market.get_bid_ask_spread.return_value = (None, None)
         mock_actor.planet.market.get_avg_price.return_value = 10
         mock_actor.sim.process_registry.all_processes.return_value = []
         mock_actor.can_execute_process.return_value = False
 
-        result = brain._calculate_turn_opportunity_cost(mock_actor)
+        result = brain.labor_opportunity_cost(mock_actor)
         assert result == 10  # government wage
 
     def test_calculates_turn_opportunity_cost_from_profitable_process(
@@ -138,7 +141,7 @@ class TestColonistBrainToolMarket:
         mock_actor.planet.market.get_bid_ask_spread.side_effect = get_spread
         mock_actor.planet.market.get_avg_price.return_value = 10
 
-        result = brain._calculate_turn_opportunity_cost(mock_actor)
+        result = brain.labor_opportunity_cost(mock_actor)
         assert result == 25
 
     def test_calculates_tool_willingness_to_pay(

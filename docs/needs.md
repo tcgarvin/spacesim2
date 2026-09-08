@@ -127,6 +127,48 @@ Only `FoodDrive` lists more than one material, so today only
 `processed_food` is affected. Cost is one dict lookup per material:
 `_cheapest_material_ask` has already filled the quote cache.
 
+### Displacement bids for goods made by hand
+
+A need gate in `decide_economic_action` spends a labor turn making the good
+itself and leaves no order behind, so the planet shows no demand for it,
+nothing is shipped in, and the gate fires again next turn. On biomass-poor
+planets colonists cook food from a 2-unit gather while a neighbour two or
+three fuel units away sells processed food at 1-3 credits.
+
+Both brains record what a need gate makes (`ActorBrain._record_self_supply`,
+cleared each turn by `_begin_self_supply_record`) and
+`ActorBrain._displacement_bid_commands` posts a bid for it:
+
+| Term | Value |
+|------|-------|
+| ceiling | `_drive_willingness_to_pay` with `labor_value = labor_opportunity_cost`, or the good's own `_replacement_cost` at that labor value when it is a recipe input rather than a drive material |
+| price | the local ask if it is at or under the ceiling, else `min(ceiling, reference * (1 + scarcity_pressure))` |
+| targets | every material of the matched drive when the recorded good is one of them, else the recorded good alone |
+| quantity | one run's base output per target, less what the drive passes already bid for it, capped by the money left |
+| when | after the primary and substitute bids |
+
+The bid covers every material of the drive, not only the good the gate
+produced. What displaces the labor is whatever a ship can bring cheaply, and
+for the food drive that is the imported staple rather than the hand-cooked
+`food` the gate makes. Either material meets the need and matching is
+deferred, so both orders may rest and both may fill; the pantry then sits
+above target and the actor skips cooking for longer.
+
+`labor_opportunity_cost` is what a turn of the actor's labor is worth: the
+raw profit of a colonist's next-best process or an industrialist's recipe
+score, floored at `GOVERNMENT_WAGE`. `_replacement_cost` takes it as
+`labor_value` and memoizes on `(commodity, labor value)`, so the wage-based
+entry is never served to an opportunity-cost call. The same number prices
+tool make-or-buy, so there is one definition of the labor turn.
+
+The quantity is one run's base output, before planet-attribute scaling: what
+a purchase displaces is the labor turn, and on a poor planet the scaled
+output of that turn is small. The bid stands even with the pantry at target,
+because its point is that a fill stops the gate from tripping next turn.
+Goods no drive consumes, directly or as an input to a drive material's
+recipe, draw no bid, so this raises no price for a good the actor is not
+making for itself.
+
 ## Adding a new drive
 
 A drive needs a complete supply chain or it starves silently:

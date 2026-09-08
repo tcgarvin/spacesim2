@@ -149,6 +149,9 @@ class TestIndustrialistBrain:
             mock_food_commodity
         )
         mock_actor.sim.process_registry.all_processes.return_value = []
+        # No process definitions in this universe, so the self-supply record
+        # finds nothing to note.
+        mock_actor.sim.process_registry.get_process.return_value = None
         mock_actor.inventory.get_quantity.return_value = 1
         mock_actor.can_execute_process.return_value = True
 

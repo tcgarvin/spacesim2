@@ -25,6 +25,50 @@ perf levers live in `docs/performance.md`.
   shortfall is untested.
 - Operators still hold ~2k fuel units at turn 400 and never post delivery
   bids that a ship acts on; fuel does not move between planets by ship.
+- Fuel burn rounds twice: `Ship.fuel_required` is
+  `ceil(ceil(distance / 20) / fuel_efficiency)`, layered in fbef729 on the
+  older `calculate_fuel_needed`. On lane hops (mean 41 distance) a
+  1.2-efficiency ship burns 2.56 fuel per leg against 2.60 for a 1.0 ship.
+  Measured over 3030 real legs of an 800-turn 100-planet run, a 20%
+  efficiency gain saves 14.3% of fleet fuel under the double ceil and 18.5%
+  under a single `ceil(distance / (20 * efficiency))`. Legs at 3 fuel or
+  less are 30% of legs but 8% of fuel burned, so efficiency matters for
+  the fleet, not for the short staple hops. Move to a single ceil and a
+  named distance-per-fuel constant (travel time keeps its own 20 per turn);
+  a 20-25% fuel saving is then the constant at 24-25 or the efficiency
+  range shifted from [0.8, 1.2] to [1.0, 1.5]. Keep planning and departure
+  on the one function.
+- Ships sit docked a median 10 turns per visit (`ACCUMULATION_PATIENCE` is
+  8) while rich planets rest 500-1700 units of processed_food asks at 1-3
+  credits; the delivery cycle is 22 turns (12 transit) and the median load
+  is 19 of 100. Unverified: if the docked turns are spent accumulating
+  against a book that already covers the plan, lifting the resting asks in
+  one turn when depth covers the quantity would shorten the cycle and
+  raise fleet throughput up to about 2x. Probe where the docked turns go
+  (accumulating, laddering the sell, waiting on fuel) before changing it.
+
+## Food imports to biomass-poor planets (2026-09-08)
+
+Displacement bids landed: an actor that hand-makes a drive good posts a
+standing bid for every material of that drive, priced with its labor
+opportunity cost. Poor-planet processed_food resting depth rose from a
+median 6-15 to 14-140 units, but ship imports there stayed at about 0.15
+units a turn against 100 eaten. Left open:
+
+- Local hand-food sellers fill most of the new bids at 10-15 credits, so
+  the resting depth a ship can plan against is 14-50 units, which does not
+  cover fuel for even a 2-3 fuel hop; every processed_food plan the gate
+  probe saw sized under 25 units and lost money. The 34 units a turn of
+  hand-cooked `food` that clears on those planets is the real demand for
+  the drive, and no ship counts it.
+- 21-24 of about 60 docked ships have no plan at all: median money 19-158
+  credits and tanks at 4-6% of capacity, so every pair fails the cash
+  gate. Any fleet-share goal is capped by this underclass first.
+- Ships hauled 60% fewer biomass units after the change (A/B, 4 reps, 400
+  turns: 318 -> 128 per 50-turn window) while ship sales value in the same
+  window was flat to up (249k -> 266k credits in one paired export): the mix
+  moved to fiber, tools and building materials. Confirm with a value KPI in
+  the summary before treating `ship_delivered_total` as a regression.
 
 ## Medicine / upper tier (post 2026-09-03 fixes)
 
