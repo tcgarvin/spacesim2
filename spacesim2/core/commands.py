@@ -97,8 +97,9 @@ class ProcessCommand(EconomicCommand):
             return False
 
         planet_multiplier = 1.0
-        if process.resource_attribute and actor.planet and actor.planet.attributes:
-            availability = actor.planet.attributes.get_availability(
+        if process.resource_attribute:
+            # The actor's own land, not the planet mean. See core/land.py.
+            availability = actor.land.get_availability(
                 process.resource_attribute.commodity
             )
 

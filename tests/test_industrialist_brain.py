@@ -337,8 +337,8 @@ class TestIndustrialistBrain:
         assert food_buy_command.quantity == 3  # 3 more reaches the target of 6
         assert food_buy_command.price == 5
 
-    def test_recipe_viability_considers_planet_attributes(self, brain, mock_actor):
-        """Recipe score scales gathering output by planet availability."""
+    def test_recipe_viability_considers_land(self, brain, mock_actor):
+        """Recipe score scales gathering output by the actor's land."""
         from spacesim2.core.process import ResourceAttribute
 
         output_commodity = Mock()
@@ -361,8 +361,9 @@ class TestIndustrialistBrain:
         market.get_bid_ask_spread.return_value = (None, None)
         market.get_avg_price.return_value = 10
 
-        mock_actor.planet.attributes = Mock()
-        mock_actor.planet.attributes.get_availability.return_value = 0.9
+        from spacesim2.core.land import Land
+
+        mock_actor.land = Land({"biomass": 0.9})
 
         # Output 4 * 0.9 = 3.6, value 36, minus a turn of labor at the
         # government wage gives profit 26.
@@ -370,7 +371,7 @@ class TestIndustrialistBrain:
         assert score_good > 0
         assert score_good == pytest.approx(26.0, rel=0.01)
 
-        mock_actor.planet.attributes.get_availability.return_value = 0.2
+        mock_actor.land = Land({"biomass": 0.2})
 
         # Output 4 * 0.2 = 0.8, value 8, below the cost of the labor turn, so
         # gathering here is not viable.
@@ -421,16 +422,10 @@ class TestIndustrialistBrain:
         market.get_bid_ask_spread.return_value = (None, None)
         market.get_avg_price.return_value = 10
 
-        # The planet is rich in biomass and poor in fiber.
-        def get_availability(commodity_id):
-            if commodity_id == "biomass":
-                return 0.9
-            if commodity_id == "fiber":
-                return 0.1
-            return 1.0
+        # The actor's land is rich in biomass and poor in fiber.
+        from spacesim2.core.land import Land
 
-        mock_actor.planet.attributes = Mock()
-        mock_actor.planet.attributes.get_availability.side_effect = get_availability
+        mock_actor.land = Land({"biomass": 0.9, "fiber": 0.1})
 
         import random
 

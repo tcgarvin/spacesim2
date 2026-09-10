@@ -535,7 +535,7 @@ class IndustrialistBrain(ActorBrain):
         process: "ProcessDefinition",
         memo: Dict[str, float],
     ) -> float:
-        """Value of one run's outputs, scaled by local resource availability.
+        """Value of one run's outputs, scaled by the actor's land.
 
         Outputs are not imputed. Value is realized only if a real buyer bids,
         and the market maker bids on every transportable good, so an
@@ -548,8 +548,8 @@ class IndustrialistBrain(ActorBrain):
         that made it pick the recipe.
         """
         attribute_modifier = 1.0
-        if process.resource_attribute and actor.planet:
-            attribute_modifier = actor.planet.attributes.get_availability(
+        if process.resource_attribute:
+            attribute_modifier = actor.land.get_availability(
                 process.resource_attribute.commodity
             )
 

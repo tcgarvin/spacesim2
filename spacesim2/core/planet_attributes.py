@@ -1,7 +1,32 @@
 """Per-planet attributes that control resource availability."""
 
+import math
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Dict
+
+# Range of the per-resource land concentration rolled at setup, sampled
+# log-uniformly. At the low end the planet's land is U-shaped: a few rich
+# sites and many barren ones. Near 2 it is flat. At the high end nearly
+# every land sits at the planet mean. See ``land.sample_coefficient``.
+LAND_CONCENTRATION_MIN = 0.5
+LAND_CONCENTRATION_MAX = 50.0
+
+RESOURCE_ATTRIBUTES = (
+    "biomass",
+    "fiber",
+    "wood",
+    "common_metal_ore",
+    "nova_fuel_ore",
+    "simple_building_materials",
+    "silica",
+    "rare_earth_ore",
+)
+
+
+def _log_uniform(low: float, high: float) -> float:
+    """Sample uniformly in log space between ``low`` and ``high``."""
+    return math.exp(random.uniform(math.log(low), math.log(high)))
 
 
 def _bimodal_sample(
@@ -21,8 +46,10 @@ class PlanetAttributes:
     """Per-planet resource availability.
 
     Each resource attribute is a float in [0.0, 1.0]: 0.0 absent, 0.5
-    average, 1.0 abundant. Gathering processes use them to scale success
-    probability or output quantity, chosen per process.
+    average, 1.0 abundant. It is the mean of the planet's land curve for
+    that resource; ``land_concentration`` shapes the spread around it. An
+    actor's realized yield comes from the land it claimed (``core/land.py``),
+    never from these means directly.
     """
 
     # Availability of each extractable resource.
@@ -34,25 +61,30 @@ class PlanetAttributes:
     simple_building_materials: float = 1.0
     silica: float = 1.0
     rare_earth_ore: float = 1.0
+    # Beta concentration per resource for land draws. A missing entry means
+    # infinite concentration: every land gets the mean exactly.
+    land_concentration: Dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Validate attribute ranges."""
-        resource_attrs = [
-            "biomass",
-            "fiber",
-            "wood",
-            "common_metal_ore",
-            "nova_fuel_ore",
-            "simple_building_materials",
-            "silica",
-            "rare_earth_ore",
-        ]
-        for attr_name in resource_attrs:
+        for attr_name in RESOURCE_ATTRIBUTES:
             value = getattr(self, attr_name)
             if not (0.0 <= value <= 1.0):
                 raise ValueError(
                     f"{attr_name} must be between 0.0 and 1.0, got {value}"
                 )
+        for resource, concentration in self.land_concentration.items():
+            if resource not in RESOURCE_ATTRIBUTES:
+                raise ValueError(f"unknown resource in land_concentration: {resource}")
+            if concentration <= 0.0:
+                raise ValueError(
+                    f"land_concentration[{resource}] must be positive, "
+                    f"got {concentration}"
+                )
+
+    def land_concentration_for(self, resource: str) -> float:
+        """Concentration of the land curve for a resource; inf if unset."""
+        return self.land_concentration.get(resource, math.inf)
 
     @classmethod
     def generate_random(cls) -> "PlanetAttributes":
@@ -63,6 +95,9 @@ class PlanetAttributes:
         - nova_fuel_ore: bimodal, 0.0-0.3 or 0.7-1.0
         - rare_earth_ore: bimodal, 0.0-0.2 or 0.6-1.0
         - simple_building_materials: uniform 0.3-1.0, always some available
+
+        Each resource also gets a land concentration, log-uniform between
+        ``LAND_CONCENTRATION_MIN`` and ``LAND_CONCENTRATION_MAX``.
         """
         return cls(
             biomass=random.uniform(0.2, 1.0),
@@ -73,6 +108,10 @@ class PlanetAttributes:
             simple_building_materials=random.uniform(0.3, 1.0),
             silica=random.uniform(0.0, 1.0),
             rare_earth_ore=_bimodal_sample(0.0, 0.2, 0.6, 1.0),
+            land_concentration={
+                resource: _log_uniform(LAND_CONCENTRATION_MIN, LAND_CONCENTRATION_MAX)
+                for resource in RESOURCE_ATTRIBUTES
+            },
         )
 
     @classmethod
@@ -84,15 +123,9 @@ class PlanetAttributes:
         """Availability for a commodity; 1.0 if it has no attribute."""
         return getattr(self, commodity_id, 1.0)
 
-    def to_dict(self) -> dict:
-        """Serialize to a dict of attribute name to value."""
-        return {
-            "biomass": self.biomass,
-            "fiber": self.fiber,
-            "wood": self.wood,
-            "common_metal_ore": self.common_metal_ore,
-            "nova_fuel_ore": self.nova_fuel_ore,
-            "simple_building_materials": self.simple_building_materials,
-            "silica": self.silica,
-            "rare_earth_ore": self.rare_earth_ore,
-        }
+    def to_dict(self) -> Dict[str, float]:
+        """Serialize the resource means to a dict of attribute name to value.
+
+        Land concentration is exported separately, in ``lands.json``.
+        """
+        return {resource: getattr(self, resource) for resource in RESOURCE_ATTRIBUTES}

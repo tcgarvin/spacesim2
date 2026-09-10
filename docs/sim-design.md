@@ -71,9 +71,13 @@ Editing either file: see the `commodity-process-design` skill.
   extra local lanes are kept. See `core/galaxy.py`.
 - Travel follows lanes only. Distance is the shortest lane route, computed
   by all-pairs Dijkstra in `core/navigation.py`.
-- Every planet gets random resource availability ratings (0.0-1.0) that
-  scale gathering and mining yields. See the Planet Attributes section of
-  `CLAUDE.md` and `core/planet_attributes.py`.
+- Every planet gets random resource availability ratings (0.0-1.0). Each is
+  the mean of a per-resource land curve; the planet generates 100 lands from
+  those curves, and every regular actor claims one at placement and keeps it
+  for the run. Gathering and mining yields read the actor's land, so a
+  planet's supply of a resource is the sorted list of its residents' draws.
+  See the Planet Attributes and Land section of `CLAUDE.md`,
+  `core/planet_attributes.py`, and `core/land.py`.
 - Populations are fixed. Actors aim to meet basic needs (`docs/needs.md`).
 
 ## Interplanetary trade

@@ -3,6 +3,18 @@
 Genuinely open work only. Closed postmortems live in `docs/decision-log.md`;
 perf levers live in `docs/performance.md`.
 
+## Land (2026-09-10)
+
+- Migration: actors move between planets and claim from the destination's
+  `free_lands`. Needs a release path (`Planet.add_actor` only claims today)
+  and a rule for a full planet (`NoFreeLandError`).
+- The min-one-unit output floor in `ProcessCommand.execute` means a low
+  land draw barely affects 1 to 3 unit recipes (`harvest_wood`,
+  `gather_fiber`, mining) and bites `gather_biomass` (8) and `farm_biomass`
+  (64) hard. Decide whether to keep that asymmetry.
+- Refiner siting now imputes ore cost from the actor's own draw, not the
+  planet mean. Check the refiner-on-rich-planet fraction at 100 planets.
+
 ## Ship trading residuals (post fuel-station and cost-basis selling rework, 2026-09-08)
 
 - Plan expectations are inflated: median expected profit 1346 per plan trip

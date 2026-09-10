@@ -4,6 +4,53 @@ Append-only record of closed decisions, postmortems, and landed campaigns.
 Newest first. Open work lives in `TODO.md`; current reference docs live
 alongside this file.
 
+## 2026-09-10 - Land: per-actor extraction coefficients drawn per planet
+
+Extraction yield used to be one planet-wide number per resource, so every
+resident of a planet faced the same yield and a planet's supply curve was
+flat. The question was how to give extraction diminishing returns.
+
+Considered and rejected: a stack of ranked sites per planet with leases,
+released when an actor pauses. The stack is cheap; the lease is not. It
+needs a release hook for "did not act this turn", makes the coefficient a
+function of shuffled turn order, and moves the yield modifier out of the
+never-reset `BrainCache` group into a per-turn one across three valuation
+sites. A derived-rank variant (rank by extraction streak) removes the lease
+but keeps the cache cost.
+
+Landed: `core/land.py`. Each planet attribute is now the mean of a Beta
+curve; a per-resource concentration rolled log-uniform in [0.5, 50] shapes
+it from U-shaped through flat to tight. The planet generates 100 lands at
+construction, a regular actor claims one at random in `Planet.add_actor`,
+and keeps it for the run. Draws below 0.01 snap to 0.0, since a denormal
+coefficient overflowed the replacement-cost division to infinity. The four
+read sites (`ProcessCommand.execute`, `_expected_yield_modifier`,
+`_imputed_unit_cost`, the industrialist output value) read `actor.land`.
+No cache changes: land is fixed per actor, which is the invariant the
+`yield_modifier` group already assumed.
+
+Effect: a planet's supply curve is the sorted list of its residents' draws,
+so diminishing returns come from selection, not crowding. Actors with poor
+draws leave extraction first as price falls. The best sites belong to
+people and can sit idle. Unclaimed lands stay in `planet.free_lands` for a
+later migration mechanic. Exported to `lands.json`.
+
+A/B at 12 planets, 200 turns, 3 replicates each (`dev ab --base HEAD`),
+all six runs PASS:
+
+| KPI | before | after |
+|-----|--------|-------|
+| health mean_health | 0.227 | 0.596 |
+| health pct_deprived | 0.30 | 0.14 |
+| shelter mean_health | 0.81 | 0.88 |
+| clothing pct_deprived | 0.096 | 0.043 |
+| prosperity gate_pass_share | 0.17 | 0.47 |
+| food mean_health | 0.999 | 0.989 |
+| money mean | 637 | 530 |
+
+The spread in land forces specialization that a flat coefficient did not.
+Not yet checked at 100 planets.
+
 ## 2026-09-08 - Displacement bids: hand-made need goods post a buy order
 
 A need gate that spends a labor turn making a good left no order in the

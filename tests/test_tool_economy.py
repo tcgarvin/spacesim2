@@ -160,15 +160,14 @@ class TestBootstrapPath:
 
         actor = sim.actors[0]
 
-        # Skill checks always pass and planet attributes are perfect.
+        # Skill checks always pass and the actor's land is perfect.
+        from spacesim2.core.land import Land
+
+        actor.land = Land.default()
         with (
             patch("spacesim2.core.skill.SkillCheck.success_check", return_value=True),
             patch("spacesim2.core.commands.random.random", return_value=0.5),
         ):
-            if actor.planet and actor.planet.attributes:
-                actor.planet.attributes.wood = 1.0
-                actor.planet.attributes.common_metal_ore = 1.0
-
             # 4 wood for tools, the rest for building materials.
             for _ in range(20):
                 ProcessCommand("harvest_wood").execute(actor)

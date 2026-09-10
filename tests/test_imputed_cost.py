@@ -14,6 +14,7 @@ import pytest
 from spacesim2.core.actor import Actor
 from spacesim2.core.actor_brain import GOVERNMENT_WAGE, ActorBrain
 from spacesim2.core.commodity import CommodityDefinition, Inventory
+from spacesim2.core.land import Land
 from spacesim2.core.planet_attributes import PlanetAttributes
 from spacesim2.core.process import ProcessDefinition, ResourceAttribute
 
@@ -39,13 +40,14 @@ def _commodity(cid: str) -> Mock:
     return c
 
 
-def _actor(attributes: PlanetAttributes | None) -> Mock:
-    """Actor on a planet. ``attributes=None`` models the feature being off."""
+def _actor(attributes: PlanetAttributes) -> Mock:
+    """Actor holding a land at the planet mean of ``attributes``."""
     actor = Mock(spec=Actor)
     actor.sim = Mock()
     _wire_producer_index(actor.sim)
     actor.planet = Mock()
     actor.planet.attributes = attributes
+    actor.land = Land.at_mean(attributes)
     actor.inventory = Mock(spec=Inventory)
     actor.inventory.has_quantity.return_value = False
     return actor

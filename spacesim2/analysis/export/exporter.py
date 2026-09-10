@@ -79,6 +79,7 @@ class SimulationExporter:
         )
 
         self._export_planet_attributes(simulation)
+        self._export_lands(simulation)
         self._export_galaxy(simulation)
 
     def export_turn(self, simulation: "Simulation", turn: int) -> None:
@@ -200,6 +201,28 @@ class SimulationExporter:
         attrs_path = self.output_dir / "planet_attributes.json"
         with open(attrs_path, "w") as f:
             json.dump(planet_data, f, indent=2)
+
+    def _export_lands(self, simulation: "Simulation") -> None:
+        """Export land curves and claims to ``lands.json``.
+
+        Per planet: the per-resource land concentration, the unclaimed pool,
+        and each land-claiming actor's coefficients keyed by actor name.
+        """
+        land_data = {}
+        for planet in simulation.planets:
+            land_data[planet.name] = {
+                "land_concentration": dict(planet.attributes.land_concentration),
+                "free_lands": [land.to_dict() for land in planet.free_lands],
+                "claims": {
+                    actor.name: actor.land.to_dict()
+                    for actor in planet.actors
+                    if actor.claims_land
+                },
+            }
+
+        lands_path = self.output_dir / "lands.json"
+        with open(lands_path, "w") as f:
+            json.dump(land_data, f, indent=2)
 
     def _export_galaxy(self, simulation: "Simulation") -> None:
         """Export planet positions and star lanes to ``galaxy.json``."""

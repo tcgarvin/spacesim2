@@ -188,17 +188,32 @@ Commodities have no planet-specific attributes. Per-planet availability comes
 from Planet Attributes below. Use the `commodity-process-design` skill to
 modify commodities or processes.
 
-### Planet Attributes
+### Planet Attributes and Land
 
 Every planet gets random attributes at setup. A directly constructed `Planet`
 defaults to all availabilities 1.0.
 
-Core file: `core/planet_attributes.py`, `PlanetAttributes` dataclass.
+Core files: `core/planet_attributes.py` (`PlanetAttributes` dataclass) and
+`core/land.py` (`Land`, the per-actor coefficients).
 
 How it works:
 1. Each planet gets a random attribute (0.0-1.0) per extractable resource.
-2. Gathering processes in `data/processes.yaml` set a `resource_attribute` field.
-3. `ProcessCommand.execute()` applies the effect when the process runs.
+   That value is the mean of the planet's land curve for the resource, and
+   `land_concentration[resource]` shapes the spread (Beta distribution;
+   below 2 U-shaped, near 2 flat, large values tight around the mean, unset
+   means every land equals the mean).
+2. The planet generates `LANDS_PER_PLANET` (100) lands at construction, each
+   a draw per resource from that curve. Draws below `BARREN_FLOOR` are 0.0.
+3. `Planet.add_actor` gives every regular actor one land from the pool, at
+   random, for the run. Service actors never extract and keep the
+   penalty-free default. An exhausted pool raises `NoFreeLandError`.
+4. Gathering processes in `data/processes.yaml` set a `resource_attribute` field.
+5. `ProcessCommand.execute()` and the brain valuation sites read
+   `actor.land.get_availability(...)`, never the planet mean.
+
+Land is fixed for an actor's life, which is what the never-reset
+`yield_modifier` group of `BrainCache` requires. Tests that need a specific
+coefficient set `actor.land = Land({...})` or `Land.at_mean(attributes)`.
 
 Attributes: `biomass`, `fiber`, `wood` (organic), `common_metal_ore`,
 `nova_fuel_ore` (mineral).
@@ -221,12 +236,14 @@ are uniform(0.0, 1.0).
 
 Adding a new extractable resource:
 1. Add the attribute to `PlanetAttributes` with default 1.0.
-2. Add it to the `__post_init__` validation list.
+2. Add it to `RESOURCE_ATTRIBUTES`, which drives validation, `to_dict()`,
+   concentration rolls, and land draws.
 3. Add its distribution to `generate_random()`.
-4. Add it to `to_dict()` for export.
-5. Add `resource_attribute` to the gathering process in `processes.yaml`.
+4. Add `resource_attribute` to the gathering process in `processes.yaml`.
 
-`planet_attributes.json` is written with the other export files.
+`planet_attributes.json` (planet means) and `lands.json` (concentration,
+free pool, and each actor's claimed coefficients) are written with the other
+export files.
 
 ### Tool and Facility Requirements
 

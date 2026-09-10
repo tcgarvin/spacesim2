@@ -8,6 +8,7 @@ from spacesim2.core.commands import (
     prune_unchanged_order_commands,
 )
 from spacesim2.core.commodity import Inventory
+from spacesim2.core.land import Land
 from spacesim2.core.planet import Planet
 
 if TYPE_CHECKING:
@@ -27,9 +28,11 @@ class ActorType(enum.Enum):
 class Actor:
     """Represents an economic actor in the simulation."""
 
-    # Class-level default so Mock(spec=Actor) sees the attribute; instances
-    # shadow it.
+    # Class-level defaults so Mock(spec=Actor) sees the attributes; instances
+    # shadow them.
     skills_version: int = 0
+    land: Land = Land.default()
+    claims_land: bool = False
 
     def __init__(
         self,
@@ -55,6 +58,11 @@ class Actor:
         self.planet = planet
         self.inventory = Inventory()
         self.actor_type = actor_type
+        # Extraction coefficients. Regular actors claim a land from the
+        # planet's pool in Planet.add_actor; service actors never extract and
+        # keep the penalty-free default. See core/land.py.
+        self.claims_land: bool = actor_type is ActorType.REGULAR
+        self.land: Land = Land.default()
         self.active_orders: Dict[
             str, str
         ] = {}  # Track active order IDs and their types

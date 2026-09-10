@@ -939,22 +939,20 @@ class ActorBrain:
         process: "ProcessDefinition",
         cache: Optional[BrainCache] = None,
     ) -> float:
-        """Expected output fraction given planet resource availability.
+        """Expected output fraction given the actor's land.
 
         Both attribute effects reduce expected yield proportionally: output
         scales the quantity, success scales the chance the run succeeds.
 
         Memoized per process in ``cache`` for the brain's whole lifetime.
-        A planet's attributes never change during a run and an actor never
-        changes planet, so entries are never reset (see ``BrainCache``).
+        An actor's land is fixed for the run, so entries are never reset
+        (see ``BrainCache``).
         """
         if cache is not None and process.id in cache.yield_modifier:
             return cache.yield_modifier[process.id]
 
-        if process.resource_attribute and actor.planet:
-            value = actor.planet.attributes.get_availability(
-                process.resource_attribute.commodity
-            )
+        if process.resource_attribute:
+            value = actor.land.get_availability(process.resource_attribute.commodity)
         else:
             value = 1.0
 
@@ -1071,15 +1069,15 @@ class ActorBrain:
                     break
             if out_qty <= 0:
                 continue
-            # Local resource availability scales expected yield: output
-            # shrinks the quantity produced, success fails the whole turn
-            # with probability (1 - attr). Either way expected unit cost
-            # divides by attr, so a resource-poor planet imputes extraction
-            # as expensive instead of assuming full yield. Otherwise refiners
+            # The actor's land scales expected yield: output shrinks the
+            # quantity produced, success fails the whole turn with
+            # probability (1 - attr). Either way expected unit cost divides
+            # by attr, so an actor on poor land imputes extraction as
+            # expensive instead of assuming full yield. Otherwise refiners
             # cluster on ore-poor planets.
             attribute_modifier = 1.0
-            if process.resource_attribute and actor.planet:
-                attribute_modifier = actor.planet.attributes.get_availability(
+            if process.resource_attribute:
+                attribute_modifier = actor.land.get_availability(
                     process.resource_attribute.commodity
                 )
             if attribute_modifier <= 0.0:

@@ -34,7 +34,9 @@ class TestFullTechTree:
     """The complete tech tree can be traversed from scratch."""
 
     def _setup(self):
-        """One actor on a planet with every resource attribute at 1.0."""
+        """One actor holding land with every resource coefficient at 1.0."""
+        from spacesim2.core.land import Land
+
         sim = Simulation()
         sim.setup_simple(
             num_planets=1,
@@ -43,19 +45,7 @@ class TestFullTechTree:
             num_ships=0,
         )
         actor = sim.actors[0]
-
-        attrs = actor.planet.attributes
-        for field in (
-            "biomass",
-            "fiber",
-            "wood",
-            "common_metal_ore",
-            "nova_fuel_ore",
-            "simple_building_materials",
-            "silica",
-            "rare_earth_ore",
-        ):
-            setattr(attrs, field, 1.0)
+        actor.land = Land.default()
 
         return sim, actor
 
@@ -480,11 +470,11 @@ class TestFarmBiomassRecipe:
         """At biomass attribute 1.0, one run outputs the full base yield."""
         from unittest.mock import patch
 
-        from spacesim2.core.planet_attributes import PlanetAttributes
+        from spacesim2.core.land import Land
 
         sim = self._registry()
         actor = sim.actors[0]
-        actor.planet.attributes = PlanetAttributes(biomass=1.0)
+        actor.land = Land({"biomass": 1.0})
 
         farm = sim.commodity_registry.get_commodity("farm")
         simple_tools = sim.commodity_registry.get_commodity("simple_tools")
@@ -513,11 +503,11 @@ class TestFarmBiomassRecipe:
         """The output effect scales yield like gather_biomass does."""
         from unittest.mock import patch
 
-        from spacesim2.core.planet_attributes import PlanetAttributes
+        from spacesim2.core.land import Land
 
         sim = self._registry()
         actor = sim.actors[0]
-        actor.planet.attributes = PlanetAttributes(biomass=0.25)
+        actor.land = Land({"biomass": 0.25})
 
         farm = sim.commodity_registry.get_commodity("farm")
         simple_tools = sim.commodity_registry.get_commodity("simple_tools")

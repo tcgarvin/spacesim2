@@ -2,6 +2,7 @@
 
 import pytest
 
+from spacesim2.core.land import Land
 from spacesim2.core.planet_attributes import PlanetAttributes, _bimodal_sample
 from spacesim2.core.process import ResourceAttribute
 
@@ -178,11 +179,8 @@ class TestProcessCommandIntegration:
             num_market_makers=1,
         )
 
-        planet = sim.planets[0]
-        planet.attributes = PlanetAttributes(biomass=0.25)
-
         actor = sim.actors[0]
-        actor.planet = planet
+        actor.land = Land({"biomass": 0.25})
 
         # High agriculture skill so the process succeeds.
         actor.improve_skill("agriculture", 10.0)
@@ -216,11 +214,8 @@ class TestProcessCommandIntegration:
             num_market_makers=1,
         )
 
-        planet = sim.planets[0]
-        planet.attributes = PlanetAttributes(nova_fuel_ore=0.0)
-
         actor = sim.actors[0]
-        actor.planet = planet
+        actor.land = Land({"nova_fuel_ore": 0.0})
 
         simple_tools = sim.commodity_registry.get_commodity("simple_tools")
         actor.inventory.add_commodity(simple_tools, 1)
@@ -243,11 +238,10 @@ class TestProcessCommandIntegration:
             num_market_makers=1,
         )
 
-        planet = sim.planets[0]
-        planet.attributes = PlanetAttributes(biomass=0.1)
-
         actor = sim.actors[0]
-        actor.planet = planet
+        actor.land = Land({"biomass": 0.1})
+        # The culinary skill check fails with probability 1 - rating below 1.0.
+        actor.improve_skill("culinary", 10.0)
 
         biomass = sim.commodity_registry["biomass"]
         actor.inventory.add_commodity(biomass, 10)
