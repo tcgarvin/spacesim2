@@ -9,9 +9,11 @@ perf levers live in `docs/performance.md`.
   (landed 2026-09-11, `docs/contracts-design.md`) leaves most passengers
   waiting on the board; the first 400-turn 100-planet run had 1900
   waiting against 256 delivered, and every waiting actor is in leaving
-  mode (no investment, selling down). Levers: cap the time an actor stays
-  in leaving mode, more ships, a crowding term so fewer actors want the
-  same destination.
+  mode (no investment, selling down). Doubling ships was tried (decision
+  log, 2026-09-11): waiting fell a third, per-ship money fell two thirds,
+  not adopted. Levers left: cap the time an actor stays in leaving mode, a
+  crowding term so fewer actors want the same destination, and a probe of
+  why waiting stays high with twice the capacity.
 - Government freight is a subsidy: about 3.5k credits created per 100
   turns at 12 planets against a fleet cash stock of ~20k. Whether the
   fleet's solvency comes from carrying contracts or from the created

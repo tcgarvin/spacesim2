@@ -61,6 +61,26 @@ v1 moved 2444 actors in the same configuration. The fleet now bounds
 migration, which is intended, but 1322 actors waiting in leaving mode is a
 cost the economy pays; that is the open item.
 
+Doubling the fleet (`--ships 2`) was tried the same day and not adopted.
+12 planets, 300 turns, 6 replicates, then one 100-planet, 400-turn run:
+
+| KPI | 1 ship, 12 pl | 2 ships, 12 pl | 1 ship, 100 pl | 2 ships, 100 pl |
+|---|---|---|---|---|
+| migration departures | 127 | 152 | 617 | 959 |
+| waiting at end | 36 | 27 | 1322 | 856 |
+| passage expired | 45 | 19 | 278 | 177 |
+| ship money median | 1687 | 476 | 1618 | 469 |
+| ships solvent share | 0.64 | 0.35 | 0.64 | 0.41 |
+| government payouts | 25k | 67k | 73k | 230k |
+| market volume per planet-turn | 216 | 222 | | |
+
+Twice the hulls move 20 to 55% more people and leave a third fewer
+waiting, but the second ship chases the same trade: per-ship money falls by
+two thirds, the solvent share halves, and government payouts triple, so the
+extra fleet runs on created money. Actor-side KPIs were flat. The queue is
+not a capacity problem alone; the next probe is why waiting stays high with
+twice the capacity (acceptance versus reachability).
+
 ## 2026-09-11 - Migration v1: actors move between planets
 
 Poor planets do not import, so trade never equalized them. Migration is the
