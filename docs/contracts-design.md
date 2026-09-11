@@ -137,10 +137,19 @@ expected maintenance. The best group becomes a `ContractPlan` and takes the
 place of a trade plan in the lifecycle. It passes the same
 `_fuel_safe_destination` gate and the same cash gate for round-trip fuel,
 with one difference: the advance counts as cash for that gate, because it is
-paid at load, before the tank is charged. That is what lets a ship with no
-money and a dry tank take a government job, buy fuel with the advance, and
-leave. A contract-only trip is accepted when it more than covers its fuel
-and maintenance, the test a distressed ship already applies to trade plans.
+paid at load. A contract-only trip is accepted when it more than covers its
+fuel and maintenance, the test a distressed ship already applies to trade
+plans.
+
+Load happens in `start_journey`, after the fuel is deducted, so the advance
+is not in hand when the fuel bid goes in on the docked turn. When money alone
+does not cover the fuel, `_execute_contract_plan` therefore calls
+`load_contract` for the group's consignments on the docked turn, before the
+bid. A consignment load has no effect beyond the payment and the status, so
+an early load costs nothing if the departure slips; the payload is then
+pinned to the destination and core strands it if the ship never leaves.
+Passengers are never boarded early. That is what lets a ship with no money
+and a dry tank take a government job, buy fuel with the advance, and leave.
 
 **Pinning.** A ship holding a LOADED contract flies to its destination. In
 `decide_travel` this sits where the loaded-plan branch is: if the fuel gate
