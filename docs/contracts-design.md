@@ -240,7 +240,7 @@ turn with `refresh_planet_stats`. Every planet's board is kept at
 
 | Field | Value |
 |-------|-------|
-| payload | `ConsignmentPayload(GOVERNMENT_JOB_UNITS)`, proposed 20 |
+| payload | `ConsignmentPayload(units)`, units drawn from `GOVERNMENT_JOB_UNITS_MIN..MAX` (85 to 100), so a job is a whole trip and never a rider |
 | destination | a random planet within `GOVERNMENT_JOB_MAX_HOPS` (proposed 2) lanes |
 | advance | `ceil(fuel_required * fuel_reference * (1 + GOVERNMENT_JOB_MARGIN))`, margin proposed 0.25 |
 | on_delivery | 0 |
@@ -295,7 +295,9 @@ Before and after, `dev ab --base 619c4a8`, 12 planets and then 100:
    v1 moved 295 actors in 400 turns at 12 planets with 12 ships; at 100
    units that is 295 passenger-only trips against roughly 0.2 trips a ship
    can fly per turn, so about a third of the fleet's capacity. At 10 a
-   passenger is a rider on a trade the ship was making anyway. Proposal: 10.
+   passenger is a rider on a trade the ship was making anyway. Landed at
+   10, then raised to 20 the same day when government lots became 85 to
+   100 units, so that no passenger fits beside a lot.
 2. Government payload: abstract consignment, or real goods the government
    buys and sells. Consignment does not touch the goods economy; real goods
    would. Proposal: consignment now; real goods come free with

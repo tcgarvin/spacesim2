@@ -640,7 +640,7 @@ loading, delivering and stranding.
 
 | Constant | Value | Meaning |
 |----------|-------|---------|
-| `MIGRANT_CARGO_UNITS` | 10 | hold units one passenger occupies |
+| `MIGRANT_CARGO_UNITS` | 20 | hold units one passenger occupies; a government lot is 85 to 100, so the two never share a hold |
 | `CONTRACT_STRAND_PATIENCE` | 10 | docked turns short of a loaded contract's destination before core puts the payload down |
 | `REPOSITION_CONTRACT_PATIENCE` | 3 | docked turns with no plan before a ship repositions toward a contract queue on the payments alone |
 

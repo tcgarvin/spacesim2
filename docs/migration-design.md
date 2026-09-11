@@ -134,8 +134,9 @@ every wave to one planet and fill its pool.
   is priced off the same leg cost at a 0.25 margin, so a passage pays a
   carrier better than the job it competes with. The escalation then takes the
   offer from fuel x 1.5 to fuel x 2.25.
-- A passenger occupies `MIGRANT_CARGO_UNITS` (10) of hold, so it rides
-  along with a trade rather than taking a whole trip. Which contracts a
+- A passenger occupies `MIGRANT_CARGO_UNITS` (20) of hold, so it rides
+  along with a trade rather than taking a whole trip, and never shares a
+  hold with a government lot of 85 to 100 units. Which contracts a
   ship accepts is ship-brain logic; see `docs/contracts-design.md`.
 - Finding a live contract: `actor.passage_contract` holds the last one
   posted and is never cleared. Its status says whether the passage is

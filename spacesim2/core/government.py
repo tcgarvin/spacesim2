@@ -34,8 +34,13 @@ if TYPE_CHECKING:
 # ship.
 GOVERNMENT_JOBS_PER_PLANET = 1
 
-# Hold space one freight lot occupies.
-GOVERNMENT_JOB_UNITS = 20
+# Hold space one freight lot occupies, drawn uniformly per job. A lot is
+# most of a 100-unit hold, so a job is a whole trip: it cannot ride along
+# with trade cargo or a 20-unit passenger, and the created money it pays
+# cannot top up a trip the ship was flying anyway. Decided 2026-09-11 after
+# jobs taken as riders tripled payouts at 100 planets.
+GOVERNMENT_JOB_UNITS_MIN = 85
+GOVERNMENT_JOB_UNITS_MAX = 100
 
 # Longest job, in lanes of the shortest route. Short hauls keep the advance
 # small and put the ship back on a board quickly.
@@ -155,7 +160,11 @@ def refresh_government_jobs(sim: "Simulation") -> None:
                     poster=GOVERNMENT,
                     origin=planet,
                     destination=destination,
-                    payload=ConsignmentPayload(units=GOVERNMENT_JOB_UNITS),
+                    payload=ConsignmentPayload(
+                        units=random.randint(
+                            GOVERNMENT_JOB_UNITS_MIN, GOVERNMENT_JOB_UNITS_MAX
+                        )
+                    ),
                     advance=advance,
                     on_delivery=0,
                     posted_turn=sim.current_turn,

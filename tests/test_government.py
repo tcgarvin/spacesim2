@@ -11,7 +11,8 @@ from spacesim2.core.government import (
     GOVERNMENT_JOB_MARGIN,
     GOVERNMENT_JOB_MAX_HOPS,
     GOVERNMENT_JOB_TTL,
-    GOVERNMENT_JOB_UNITS,
+    GOVERNMENT_JOB_UNITS_MAX,
+    GOVERNMENT_JOB_UNITS_MIN,
     GOVERNMENT_JOBS_PER_PLANET,
     refresh_government_jobs,
 )
@@ -74,7 +75,11 @@ class TestRefresh:
         sim = _chain_sim(4)
         sim.run_turn()
         job = _government_jobs(sim.planets[0])[0]
-        assert job.payload.hold_units == GOVERNMENT_JOB_UNITS
+        assert (
+            GOVERNMENT_JOB_UNITS_MIN
+            <= job.payload.hold_units
+            <= GOVERNMENT_JOB_UNITS_MAX
+        )
         assert job.on_delivery == 0
         assert job.expires_turn == job.posted_turn + GOVERNMENT_JOB_TTL
         assert job.status is ContractStatus.OPEN
@@ -129,7 +134,7 @@ class TestFlyingAJob:
         # Exactly enough hold for this lot. With no room for riders the brain
         # has no reason to break the journey, so it is flown by hand as the
         # module docstring says.
-        ship.cargo_capacity = GOVERNMENT_JOB_UNITS
+        ship.cargo_capacity = job.payload.hold_units
 
         assert origin.contracts.accept(job, ship)
         assert job.status is ContractStatus.ACCEPTED

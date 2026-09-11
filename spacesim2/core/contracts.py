@@ -46,8 +46,10 @@ if TYPE_CHECKING:
 
 
 # Cargo units one migrant occupies on a ship. At this size a passenger is
-# a rider on a trade the ship was making anyway rather than a whole trip.
-MIGRANT_CARGO_UNITS = 10
+# a rider on a trade the ship was making anyway rather than a whole trip,
+# and no passenger fits beside a government lot of 85 to 100 units, so the
+# two kinds of contract never share a hold.
+MIGRANT_CARGO_UNITS = 20
 
 # Docked turns a ship may sit somewhere that is not a loaded contract's
 # destination before core strands the payload there. The ship is supposed
