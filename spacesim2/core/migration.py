@@ -220,6 +220,7 @@ def _sync_passage_contract(sim: "Simulation", actor: "Actor") -> None:
     # turns of the climb, and a reset clock would measure the last re-price
     # rather than how long the actor has been waiting.
     posted_turn = sim.current_turn
+    is_new = live is None
     if live is not None:
         if live.status is not ContractStatus.OPEN:
             return
@@ -246,7 +247,10 @@ def _sync_passage_contract(sim: "Simulation", actor: "Actor") -> None:
     )
     origin.contracts.post(contract)
     actor.passage_contract = contract
-    sim.contracts_posted += 1
+    # A re-price or re-aim replaces a contract; only a first posting is a
+    # new contract for the summary's count.
+    if is_new:
+        sim.contracts_posted += 1
 
 
 def live_passage_contract(actor: "Actor") -> Optional[Contract]:

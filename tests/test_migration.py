@@ -253,7 +253,8 @@ class TestPassageContracts:
         assert origin.contracts.open_contracts() == [contract]
         assert actor.money == money_before - 90
         assert actor.reserved_money == 90
-        assert sim.contracts_posted == 2
+        # A re-price replaces the contract; it is not a second posting.
+        assert sim.contracts_posted == 1
 
     def test_a_new_destination_replaces_the_contract(self) -> None:
         sim = _two_planet_sim(lands=10)
