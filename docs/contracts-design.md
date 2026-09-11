@@ -123,23 +123,35 @@ hold of cargo worth more elsewhere, or an empty reposition. Contracts join
 in two places and change nothing about how those three are judged.
 
 **Riders.** When the brain has settled on a destination for this departure,
-`_accept_riders(destination)` walks the local board for OPEN contracts to
-that destination, sorts by `(advance + on_delivery) / hold_units`, and
-accepts them while they fit the hold left after the plan's cargo and
-add-ons. Riders are pure revenue on a trip already paid for, so no margin
-test applies. This is the add-on cargo rule applied to contracts.
+`_accept_riders(destination)` walks the local board for OPEN contracts bound
+for any planet on `Navigator.route(origin, destination)`, sorts by
+`(advance + on_delivery) / hold_units`, and accepts them while they fit the
+hold left after the plan's cargo and add-ons. Riders are pure revenue on a
+trip already paid for, so no margin test applies. This is the add-on cargo
+rule applied to contracts.
 
-**Contract-only trips.** When `_find_best_trade_plan` returns nothing
-acceptable, `_best_contract_trip()` groups the OPEN contracts on the local
-board by destination and values each group as a plan: payments, less the
+An intermediate rider costs the trip nothing but hold space: the ship flies
+past those planets anyway, and `Ship._deliver_passed_contracts` drops the
+payload as the ship passes, without docking. A ship that docks at an
+intermediate planet for fuel has already delivered what was bound for it,
+since the deliveries run first. Both that and the refuel stop share one span
+test, `Ship._route_nodes_passed`.
+
+**Contract trips.** `_best_contract_trip()` groups the OPEN contracts on the
+local board by destination and values each group as a plan: payments, less the
 outbound fuel priced the way `TradePlan.total_fuel_cost` prices it, less
 expected maintenance. The best group becomes a `ContractPlan` and takes the
 place of a trade plan in the lifecycle. It passes the same
 `_fuel_safe_destination` gate and the same cash gate for round-trip fuel,
 with one difference: the advance counts as cash for that gate, because it is
-paid at load. A contract-only trip is accepted when it more than covers its
-fuel and maintenance, the test a distressed ship already applies to trade
-plans.
+paid at load. A contract trip must more than cover its fuel and maintenance,
+the test a distressed ship already applies to trade plans.
+
+The two compete directly: the brain evaluates both searches and adopts
+whichever has the higher `_trip_turn_value`, profit over the turns the trip
+occupies, with a trade plan winning ties. A ship listing cargo where it sits
+runs the contract search as well, since the trade-plan search there waits for
+the listing to go stale and a partly filled listing never does.
 
 Load happens in `start_journey`, after the fuel is deducted, so the advance
 is not in hand when the fuel bid goes in on the docked turn. When money alone
@@ -151,7 +163,10 @@ pinned to the destination and core strands it if the ship never leaves.
 Passengers are never boarded early. That is what lets a ship with no money
 and a dry tank take a government job, buy fuel with the advance, and leave.
 
-**Pinning.** A ship holding a LOADED contract flies to its destination. In
+**Pinning.** A ship holding a LOADED contract flies to its destination. With
+several aboard the pin goes to the destination whose route covers the most of
+the others, farthest first among equals; the rest are delivered as the ship
+passes them, and anything the route misses waits for the stranding rule. In
 `decide_travel` this sits where the loaded-plan branch is: if the fuel gate
 allows, depart; otherwise stay, and `decide_trade_actions` commits
 `_committed_fuel_need` to that leg so the top-up funds it. The cargo-hop and
@@ -163,10 +178,13 @@ strands the contract.
 
 **Remote pickup.** `_find_reposition_target` scores candidate origins by the
 best plan sourced there. It adds the best contract trip available there,
-so a planet with a queue of passengers and nothing to export can still pull
-an empty ship in. This is the only part of the design that reaches poor
-planets, and it is the part to measure first: v1's whole purpose was
-planets ships do not call at.
+valued against the whole hold, so a planet with a queue of passengers and
+nothing to export can still pull an empty ship in. A ship that has held no
+plan for `REPOSITION_CONTRACT_PATIENCE` docked turns will fly to such a queue
+on the payments alone, without that trip having to beat the trade plans
+elsewhere. This is the only part of the design that reaches poor planets, and
+it is the part to measure first: v1's whole purpose was planets ships do not
+call at.
 
 Everything above lives in `TraderBrain`; nothing in `Ship` decides. `Ship`
 gains `contracts`, `free_hold()` (capacity less cargo less accepted

@@ -137,6 +137,11 @@ HOLD_PATIENCE = 3
 # turn, and nearby origins need less fuel to reach anyway. Galaxies with
 # fewer planets than the cap are still surveyed exhaustively.
 REPOSITION_ORIGIN_CANDIDATES = 12
+# Docked turns with no plan of either kind after which an empty ship will
+# reposition toward a contract queue on the payments alone, without the
+# comparison against trade plans elsewhere picking that origin. A queue sits
+# on planets ships rarely call at, so nothing else brings a ship there.
+REPOSITION_CONTRACT_PATIENCE = 3
 
 # Chance per departure that a ship rolls a maintenance stop, and the fuel
 # units the legacy maintenance tier consumes. Used by Ship.check_maintenance
@@ -611,6 +616,11 @@ class TraderBrain(ShipBrain):
         # HOLD_PATIENCE the cargo is listed here instead.
         self._hold_planet: Optional[Planet] = None
         self._hold_refused_turns = 0
+        # Consecutive docked turns the ship has held no plan of either kind.
+        # Past REPOSITION_CONTRACT_PATIENCE a reposition toward a contract
+        # queue is worth flying on the payments alone; see
+        # _find_reposition_target.
+        self._turns_without_plan = 0
 
     def _recent_flow_per_turn(
         self, market: "Market", commodity: CommodityDefinition
@@ -2226,21 +2236,28 @@ class TraderBrain(ShipBrain):
             contract.origin.contracts.release(contract)
 
     def _accept_riders(self, destination: Planet) -> None:
-        """Take on every open contract to ``destination`` that fits the hold.
+        """Take on every open contract this trip's route serves that fits the hold.
 
         Called once the departure is settled, so the fuel is already paid for
         by whatever the ship is flying for and a rider is pure revenue. No
         margin test applies; the only limit is space, and the best-paying
         contracts per hold unit are taken first.
+
+        A contract to a planet the route passes counts as well as one to the
+        terminus. The ship flies past intermediate planets anyway and
+        :meth:`Ship._deliver_passed_contracts` puts the payload down as it
+        goes, so an intermediate rider costs the trip nothing but hold space.
         """
         planet = self.ship.planet
         if planet is None:
             return
+        served = set(self._nav.route(planet, destination))
+        served.discard(planet)
         riders = sorted(
             (
                 contract
-                for contract in planet.contracts.open_to(destination)
-                if contract.payload.hold_units > 0
+                for contract in planet.contracts.open_contracts()
+                if contract.destination in served and contract.payload.hold_units > 0
             ),
             key=lambda contract: contract.total_payment / contract.payload.hold_units,
             reverse=True,
@@ -2256,15 +2273,36 @@ class TraderBrain(ShipBrain):
         outranks cargo hops and repositions. Core strands the payload after
         CONTRACT_STRAND_PATIENCE docked turns short of it, which is what
         bounds the pin.
+
+        With several payloads aboard the pin goes to the destination whose
+        route covers the most of the others, farthest first among equals: a
+        payload on that route is put down as the ship passes it. Anything the
+        chosen route misses is left to the stranding rule. This is a choice
+        between single destinations, not a multi-stop plan.
         """
         planet = self.ship.planet
-        for contract in self.ship.contracts:
-            if (
-                contract.status is ContractStatus.LOADED
-                and contract.destination is not planet
-            ):
-                return contract.destination
-        return None
+        if planet is None:
+            return None
+        destinations = [
+            contract.destination
+            for contract in self.ship.contracts
+            if contract.status is ContractStatus.LOADED
+            and contract.destination is not planet
+        ]
+        if not destinations:
+            return None
+        best: Optional[Planet] = None
+        best_key = (-1, -1.0)
+        for candidate in destinations:
+            served = set(self._nav.route(planet, candidate))
+            key = (
+                sum(1 for other in destinations if other in served),
+                self._nav.distance(planet, candidate),
+            )
+            if key > best_key:
+                best_key = key
+                best = candidate
+        return best
 
     def _value_contract_group(
         self,
@@ -2416,6 +2454,17 @@ class TraderBrain(ShipBrain):
             if topup is not None:
                 actions.append("Topping up fuel tank")
         return actions
+
+    def _adopt_contract_trip(
+        self, plan: ContractPlan, placed_fuel_sell: bool
+    ) -> List[str]:
+        """Make ``plan`` this turn's trip and take its first actions."""
+        self._current_plan = plan
+        self._plan_loaded = False
+        self._addon_commodities = set()
+        self._turns_without_plan = 0
+        self._clear_reposition_intent()
+        return self._execute_contract_plan(plan, fuel_blocked=placed_fuel_sell)
 
     def _maintain_fuel(self) -> List[str]:
         """Keep the tank viable at the docked planet, returning action strings.
@@ -3072,6 +3121,14 @@ class TraderBrain(ShipBrain):
                     self._current_plan = None
                     self._plan_loaded = False
 
+        # How long the ship has gone with nothing to do, counted after the
+        # lifecycle has dropped whatever did not survive this turn. Adopting
+        # either kind of plan below resets it.
+        if self._current_plan is None:
+            self._turns_without_plan += 1
+        else:
+            self._turns_without_plan = 0
+
         # Fuel below the travel reserve is not trade cargo; see
         # _sellable_quantity. Judged after the plan lifecycle, which can drop
         # a fuel plan and with it the tank's standing as cargo.
@@ -3217,11 +3274,33 @@ class TraderBrain(ShipBrain):
             # Adopt the best trade plan. The search skips whatever this ship
             # is listing here, so it cannot plan to buy back its own cargo.
             plan = self._find_best_trade_plan()
+
+            # A trip flown for contract payments alone competes with that haul
+            # rather than waiting for it to fail. Both are judged on what they
+            # earn per turn they occupy, so a short well-paid job beats a long
+            # thin haul; a trade plan wins ties, since it also moves goods the
+            # economy wants. A contract trip still has to cover its own fuel
+            # and maintenance, which _best_contract_trip enforces.
+            contract_plan = None if pinned is not None else self._best_contract_trip()
+            if contract_plan is not None and (
+                plan is None
+                or self._trip_turn_value(
+                    contract_plan.expected_profit, contract_plan.destination
+                )
+                > self._trip_turn_value(plan.expected_profit, plan.destination)
+            ):
+                actions.extend(
+                    self._adopt_contract_trip(contract_plan, placed_fuel_sell)
+                )
+                self.ship.last_action = "; ".join(actions)
+                return
+
             if plan:
                 self._current_plan = plan
                 self._plan_loaded = False
                 self._plan_turns_left = ACCUMULATION_PATIENCE
                 self._addon_commodities = set()
+                self._turns_without_plan = 0
                 # The commitment spoke for cargo the ship was holding for a
                 # trip, or for a reposition it no longer needs; the plan's own
                 # fuel step owns the tank now.
@@ -3237,24 +3316,26 @@ class TraderBrain(ShipBrain):
                 return  # _execute_trade_plan sets last_action
             self._current_plan = None
 
-            # Nothing here is worth hauling. A trip flown for contract
-            # payments alone is the next best thing: it only has to cover its
-            # fuel and maintenance, and on a planet with nothing to export it
-            # is the only paid move available.
-            if pinned is None:
-                contract_plan = self._best_contract_trip()
-                if contract_plan is not None:
-                    self._current_plan = contract_plan
-                    self._plan_loaded = False
-                    self._addon_commodities = set()
-                    self._clear_reposition_intent()
-                    actions.extend(
-                        self._execute_contract_plan(
-                            contract_plan, fuel_blocked=placed_fuel_sell
-                        )
-                    )
-                    self.ship.last_action = "; ".join(actions)
-                    return
+        elif (
+            list_here
+            and self._current_plan is None
+            and pinned is None
+            and not self._selling_locally
+        ):
+            # The ship is listing cargo here, so the trade-plan search above is
+            # skipped until the listing goes a full turn untouched. A partly
+            # filled listing never goes stale, which left ships sitting beside
+            # a paying job for turns on end: 188 of 557 such docked turns at 12
+            # planets had a viable contract group out of that very planet. A
+            # contract trip buys nothing but fuel, so it does not compete with
+            # the sale; the asks stay in the book until the ship departs.
+            contract_plan = self._best_contract_trip()
+            if contract_plan is not None:
+                actions.extend(
+                    self._adopt_contract_trip(contract_plan, placed_fuel_sell)
+                )
+                self.ship.last_action = "; ".join(actions)
+                return
 
         # Fuel upkeep for the ships that did not need it before the plan
         # branches: above the stranding reserve this is opportunistic
@@ -3573,14 +3654,24 @@ class TraderBrain(ShipBrain):
         Buying it is the caller's job: :meth:`_reposition_destination` records
         the intent so the next docked turn commits ``_committed_fuel_need``
         to it, exactly as a ship holding cargo for a trip does.
+
+        A ship that has gone REPOSITION_CONTRACT_PATIENCE docked turns with no
+        plan at all takes a weaker second reason to move: any surveyed origin
+        whose contract queue pays more than its own fuel and maintenance. That
+        trip need not beat the trade plans elsewhere, because the ship has
+        nothing to compare it against, and a queue builds up exactly on the
+        planets no export would draw a ship to.
         """
         current_planet = self.ship.planet
         if current_planet is None:
             return None
 
+        starved = self._turns_without_plan >= REPOSITION_CONTRACT_PATIENCE
+
         # Cold galaxy: no commodity has both supply and demand anywhere, so
-        # no origin can back a plan; skip the per-origin surveys.
-        if not self._nav.has_any_trade_signal():
+        # no origin can back a plan; skip the per-origin surveys. A starved
+        # ship still surveys, since a contract queue needs no trade signal.
+        if not starved and not self._nav.has_any_trade_signal():
             return None
 
         buyable_fuel = self._affordable_local_fuel(current_planet)
@@ -3590,6 +3681,10 @@ class TraderBrain(ShipBrain):
 
         best_origin: Optional[Planet] = None
         best_profit = 0
+        # Fallback for a plan-starved ship: the best contract queue found,
+        # judged on its own profit rather than against the trade plans.
+        queue_origin: Optional[Planet] = None
+        queue_profit = 0
         surveyed = 0
 
         for origin in self._nav.planets_by_proximity(current_planet):
@@ -3617,10 +3712,16 @@ class TraderBrain(ShipBrain):
             contract_trip = self._best_contract_trip(origin)
             # A planet with a queue of jobs and nothing worth exporting is
             # still worth flying to, which is the case v1 migration could not
-            # reach: the poor planets ships do not call at.
+            # reach: the poor planets ships do not call at. The queue is valued
+            # against the whole hold, since the ship arrives empty.
+            contract_profit = (
+                contract_trip.expected_profit if contract_trip is not None else 0
+            )
+            if starved and contract_profit > queue_profit:
+                queue_profit = contract_profit
+                queue_origin = origin
             best_there = max(
-                plan.expected_profit if plan is not None else 0,
-                contract_trip.expected_profit if contract_trip is not None else 0,
+                plan.expected_profit if plan is not None else 0, contract_profit
             )
             if best_there <= 0:
                 continue
@@ -3629,7 +3730,7 @@ class TraderBrain(ShipBrain):
                 best_profit = net_profit
                 best_origin = origin
 
-        return best_origin
+        return best_origin if best_origin is not None else queue_origin
 
     def _reposition_destination(
         self, target: Planet, fuel_available: int
@@ -4049,14 +4150,16 @@ class Ship:
         self.departure_turns.append(self.simulation.current_turn)
 
         # Load here, once the departure is certain: a payload must never be
-        # taken aboard for a journey that then fails a check above. Contracts
-        # for anywhere else go back on their boards, since this ship is no
-        # longer going there.
+        # taken aboard for a journey that then fails a check above. A payload
+        # bound for any planet the route passes loads, since the ship gets
+        # there; contracts for anywhere else go back on their boards.
         self.docked_turns_with_undelivered_contracts = 0
+        served = set(route)
+        served.discard(self.planet)
         for contract in list(self.contracts):
             if contract.status is not ContractStatus.ACCEPTED:
                 continue
-            if contract.destination is destination:
+            if contract.destination in served:
                 load_contract(self, contract)
             else:
                 contract.origin.contracts.release(contract)
@@ -4067,6 +4170,44 @@ class Ship:
             f"({self.travel_time} turns, {hops} lane{'s' if hops != 1 else ''})"
         )
         return True
+
+    def _route_nodes_passed(self, previous_progress: float) -> List[Tuple[int, float]]:
+        """Intermediate route nodes whose distance falls in this turn's span.
+
+        Index into ``route`` and distance along it, in flight order. The
+        endpoints are excluded: the origin is behind the ship and the
+        destination is an arrival, not a pass. Both the en-route deliveries
+        and the refuel stop work off this one span test.
+        """
+        route = self.route
+        cumulative = self.route_cumulative_distance
+        if len(route) < 3 or len(cumulative) != len(route):
+            return []
+        total = cumulative[-1]
+        covered = self.travel_progress * total
+        previously_covered = previous_progress * total
+        return [
+            (index, cumulative[index])
+            for index in range(1, len(route) - 1)
+            if previously_covered < cumulative[index] <= covered
+        ]
+
+    def _deliver_passed_contracts(self, previous_progress: float) -> None:
+        """Drop off every loaded contract bound for a node passed this turn.
+
+        The ship flies past intermediate planets without docking, and a
+        payload bound for one gets off as it passes: a passenger disembarks,
+        a consignment is handed down. Nothing about the journey changes, so a
+        rider to a planet on the way costs the trip only its hold space.
+        """
+        for index, _reached in self._route_nodes_passed(previous_progress):
+            node = self.route[index]
+            for contract in list(self.contracts):
+                if (
+                    contract.status is ContractStatus.LOADED
+                    and contract.destination is node
+                ):
+                    deliver_contract(self, contract)
 
     def _take_refuel_stop(self, previous_progress: float) -> bool:
         """Dock at an intermediate planet passed this turn if the brain wants to.
@@ -4091,13 +4232,8 @@ class Ship:
             return False
 
         total = cumulative[-1]
-        covered = self.travel_progress * total
-        previously_covered = previous_progress * total
 
-        for index in range(1, len(route) - 1):
-            reached = cumulative[index]
-            if not (previously_covered < reached <= covered):
-                continue
+        for index, reached in self._route_nodes_passed(previous_progress):
             node = route[index]
             if node is destination or node is self.planet:
                 continue
@@ -4152,6 +4288,12 @@ class Ship:
         progress_increment = 1.0 / self.travel_time
         previous_progress = self.travel_progress
         self.travel_progress += progress_increment
+
+        # Payloads bound for a planet the route passes get off here, before a
+        # refuel stop can end the turn's flight: the ship has passed the node
+        # either way, and a stop at that node must not leave its own
+        # deliveries aboard.
+        self._deliver_passed_contracts(previous_progress)
 
         if self.travel_progress < 1.0 and self._take_refuel_stop(previous_progress):
             return False

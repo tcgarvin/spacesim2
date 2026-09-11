@@ -626,13 +626,25 @@ loading, delivering and stranding.
 |----------|-------|---------|
 | `MIGRANT_CARGO_UNITS` | 10 | hold units one passenger occupies |
 | `CONTRACT_STRAND_PATIENCE` | 10 | docked turns short of a loaded contract's destination before core puts the payload down |
+| `REPOSITION_CONTRACT_PATIENCE` | 3 | docked turns with no plan before a ship repositions toward a contract queue on the payments alone |
 
 **Riders.** `decide_travel` settles on a destination in `_choose_destination`
 and then calls `_accept_riders(destination)`, so every real departure — a
 loaded plan, a cargo hop, an empty or refuelling reposition, a contract trip
-— picks up the open contracts bound where the ship is already going. They are
-taken best-paying-per-hold-unit first while `Ship.free_hold()` has room. There
-is no margin test: the trip is paid for by whatever else is driving it.
+— picks up the open contracts the trip serves. They are taken
+best-paying-per-hold-unit first while `Ship.free_hold()` has room. There is no
+margin test: the trip is paid for by whatever else is driving it.
+
+A trip serves every planet on `Navigator.route(origin, destination)`, not only
+the terminus. Ships fly past intermediate planets, and
+`Ship._deliver_passed_contracts` puts a payload down as the ship passes its
+planet: a passenger disembarks, a consignment is handed over, and the journey
+continues. Both that and `_take_refuel_stop` work off
+`Ship._route_nodes_passed(previous_progress)`, the nodes whose distance along
+the route falls inside the span covered this turn. Deliveries run first, so a
+refuel stop at an intermediate planet has already dropped what was bound for
+it. `start_journey` loads every accepted contract whose destination is on the
+route and releases the rest.
 
 Acceptance is free and is re-made every turn. `decide_trade_actions` calls
 `_release_accepted_contracts` at the top of each docked turn, putting every
@@ -640,15 +652,28 @@ ACCEPTED (never a LOADED) contract back on its board, so a departure that
 fails its maintenance roll or fuel check leaves no job bound to a ship that
 is not going there.
 
-**Contract-only trips.** When `_find_best_trade_plan` returns nothing
-acceptable, `_best_contract_trip()` groups the local board's open contracts by
-destination, fills each group into the free hold by payment per unit, and
-prices the trip with `_trip_fuel_economics` — the same fuel logistics and
-safety gates `_pair_economics` applies to a haul. The result is a
+**Contract trips.** `_best_contract_trip()` groups the local board's open
+contracts by destination, fills each group into the free hold by payment per
+unit, and prices the trip with `_trip_fuel_economics` — the same fuel
+logistics and safety gates `_pair_economics` applies to a haul. The result is a
 `ContractPlan`, whose `expected_profit` is payments less the outbound leg's
-fuel and the expected maintenance. It is adopted when that is positive, the
-test a distressed ship already applies to a trade plan, since there is no
-cargo cost to take a margin on.
+fuel and the expected maintenance. It has to be positive, the test a distressed
+ship already applies to a trade plan, since there is no cargo cost to take a
+margin on.
+
+A contract trip competes with the haul rather than waiting for it to fail.
+`decide_trade_actions` evaluates `_best_contract_trip()` alongside
+`_find_best_trade_plan()` and adopts whichever has the higher
+`_trip_turn_value(expected_profit, destination)`, so a short well-paid job
+beats a long thin haul. A trade plan wins ties.
+
+A ship listing cargo where it sits does not run the trade-plan search until
+the listing has gone a full turn untouched, and a partly filled listing never
+goes stale. That left ships docked beside a paying job for turns on end: 188
+of 557 such docked turns at 12 planets had a viable contract group out of that
+very planet. The contract search therefore runs in that case too, once the
+turn's own asks have been placed (`not self._selling_locally`), since a
+contract trip buys nothing but fuel and does not compete with the sale.
 
 `_execute_contract_plan` is the whole of its execution: accept the jobs, set
 `_committed_fuel_need` to `_departure_fuel_requirement(destination)`, and top
@@ -665,8 +690,12 @@ are never boarded early — taking an actor off its planet before the ship can
 leave is a real cost to the actor.
 
 **Pinning.** While a LOADED contract for somewhere else is aboard,
-`_pinned_contract_destination` returns that destination and it outranks
-everything: `decide_travel` returns it if the fuel gate and
+`_pinned_contract_destination` returns a destination and it outranks
+everything. With several payloads aboard it picks the destination whose route
+covers the most of the others, farthest first among equals, so the rest are
+delivered as the ship passes them; anything the chosen route misses falls to
+the stranding rule. This is a choice between single destinations, not a
+multi-stop planner. `decide_travel` returns it if the fuel gate and
 `_fuel_safe_destination` allow and otherwise stays, and
 `decide_trade_actions` commits `_committed_fuel_need` to that leg. No cargo
 hop, reposition or trade-plan departure runs. Cargo aboard is still listed and
@@ -677,10 +706,18 @@ outranks the pin, since a ship that cannot move delivers nothing;
 
 **Remote pickup.** `_find_reposition_target` scores each candidate origin on
 `max(best plan profit, best contract trip profit)`, valuing the contract trip
-with `_best_contract_trip(origin)` against the whole hold. A planet with
-nothing worth exporting and a queue of jobs can therefore pull an empty ship
-in. `REPOSITION_ORIGIN_CANDIDATES` still bounds the survey, and a cold galaxy
-(no trade signal anywhere) still skips it.
+with `_best_contract_trip(origin)` against the whole hold, since the ship
+arrives empty. A planet with nothing worth exporting and a queue of jobs can
+therefore pull an empty ship in. `REPOSITION_ORIGIN_CANDIDATES` still bounds
+the survey.
+
+A ship that has gone `REPOSITION_CONTRACT_PATIENCE` docked turns with no plan
+of either kind (`_turns_without_plan`) takes a second, weaker reason to move:
+any surveyed origin whose contract queue pays more than its own fuel and
+maintenance, whether or not that beats the trade plans elsewhere, and without
+the cold-galaxy check skipping the survey. Queues build up on the planets no
+export would draw a ship to, so nothing else brings one there. The fuel gates
+are unchanged: the origin still has to be reachable, fundable and fuel-safe.
 
 ## Common pitfalls
 

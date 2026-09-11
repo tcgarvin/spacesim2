@@ -16,14 +16,30 @@ from spacesim2.core.contracts import (
     PassengerPayload,
     load_contract,
 )
+from spacesim2.core.galaxy import StarLaneNetwork
 from spacesim2.core.planet import Planet
-from spacesim2.core.ship import ContractPlan, Ship, TradePlan
+from spacesim2.core.ship import (
+    REPOSITION_CONTRACT_PATIENCE,
+    ContractPlan,
+    Ship,
+    TradePlan,
+)
 from tests.test_ship_fuel import _make_ship, _make_world
 
 
-def _world(planet_specs, fuel_price=5, fuel_depth=200):
-    """A galaxy with a deep fuel ask on every planet and contract counters."""
+def _world(planet_specs, fuel_price=5, fuel_depth=200, chain=False):
+    """A galaxy with a deep fuel ask on every planet and contract counters.
+
+    ``chain`` links the planets in a line instead of the default complete
+    graph, so the route from the first to the last passes through every
+    planet in between.
+    """
     sim, fuel, food, planets = _make_world(planet_specs)
+    if chain:
+        network = StarLaneNetwork()
+        for previous, planet in zip(planets, planets[1:]):
+            network.add_lane(previous, planet)
+        sim.star_lanes = network
     sim.actors = []
     sim.contracts_delivered = 0
     sim.contracts_stranded = 0
@@ -167,6 +183,69 @@ def test_a_rider_loads_at_departure_and_is_delivered_on_arrival():
     assert sim.contracts_delivered == 1
 
 
+def test_a_rider_to_a_planet_on_the_route_is_accepted():
+    """A contract to a planet the trip flies past is taken on like a terminus one."""
+    sim, _fuel, food, (a, b, c) = _world(
+        [("A", 0, 0), ("B", 50, 0), ("C", 100, 0)], chain=True
+    )
+    ship = _make_ship(sim, a, fuel_units=60, money=2000, name="Trader")
+    _loaded_plan(ship, a, c, food)
+    en_route = _consignment(sim, a, b)
+
+    assert ship.brain.decide_travel() is c
+    assert ship.contracts == [en_route]
+    assert en_route.status is ContractStatus.ACCEPTED
+
+
+def test_a_rider_is_delivered_when_its_planet_is_passed():
+    """The payload gets off as the ship flies past, without the ship docking."""
+    sim, _fuel, food, (a, b, c) = _world(
+        [("A", 0, 0), ("B", 50, 0), ("C", 100, 0)], chain=True
+    )
+    ship = _make_ship(sim, a, money=2000, name="Trader")
+    ship.fuel = ship.fuel_capacity  # a full tank wants no en-route refuel stop
+    _loaded_plan(ship, a, c, food)
+    contract = _consignment(sim, a, b, advance=200, on_delivery=50)
+
+    assert ship.brain.decide_travel() is c
+    money_before = ship.money
+    assert ship.start_journey(c)
+    assert contract.status is ContractStatus.LOADED
+
+    while contract.status is ContractStatus.LOADED:
+        assert ship.destination is c
+        ship.update_journey()
+
+    assert contract.status is ContractStatus.DELIVERED
+    assert ship.money == money_before + 250
+    # Delivered in flight: the ship never docked at B and is still going to C.
+    assert ship.planet is a
+    assert ship.destination is c
+    assert sim.contracts_delivered == 1
+
+
+def test_a_payload_off_the_route_is_not_delivered():
+    """Passing B delivers nothing bound for D, which this route never reaches."""
+    sim, _fuel, food, (a, b, c, d) = _world(
+        [("A", 0, 0), ("B", 50, 0), ("C", 100, 0), ("D", 150, 0)], chain=True
+    )
+    ship = _make_ship(sim, a, money=2000, name="Trader")
+    ship.fuel = ship.fuel_capacity
+    _loaded_plan(ship, a, c, food)
+
+    off_route = _consignment(sim, a, d)
+    assert a.contracts.accept(off_route, ship)
+    assert load_contract(ship, off_route)
+
+    assert ship.start_journey(c)
+    while ship.destination is not None:
+        ship.update_journey()
+
+    assert ship.planet is c
+    assert off_route.status is ContractStatus.LOADED
+    assert sim.contracts_delivered == 0
+
+
 # ---------------------------------------------------------------------------
 # Contract-only trips
 # ---------------------------------------------------------------------------
@@ -224,6 +303,56 @@ def test_a_broke_ship_funds_its_fuel_with_the_advance():
     assert contract.status is ContractStatus.DELIVERED
 
 
+def _haul_world(trade_bid: int):
+    """A world where A can export food to far-off C at ``trade_bid`` a unit."""
+    sim, fuel, food, planets = _world([("A", 0, 0), ("B", 20, 0), ("C", 0, 200)])
+    a, _b, c = planets
+    seller = _make_ship(sim, a, name="SellerA")
+    seller.cargo.add_commodity(food, 60)
+    a.market.place_sell_order(seller, food, 60, 10)
+    buyer = _make_ship(sim, c, money=100000, name="BuyerC")
+    c.market.place_buy_order(buyer, food, 60, trade_bid)
+    return sim, fuel, food, planets
+
+
+def test_a_well_paid_job_beats_a_longer_haul():
+    """The trip worth more per turn occupied wins, not the bigger total."""
+    sim, _fuel, _food, (a, b, c) = _haul_world(trade_bid=30)
+    ship = _make_ship(sim, a, fuel_units=60, money=4000, name="Trader")
+    _consignment(sim, a, b, advance=600)
+    ship.brain._nav.refresh_market_facts()
+
+    haul = ship.brain._find_best_trade_plan()
+    job = ship.brain._best_contract_trip()
+    assert haul is not None and job is not None
+    # The haul earns more in total; the job earns more per turn it occupies.
+    assert job.expected_profit < haul.expected_profit
+    assert ship.brain._trip_turn_value(
+        job.expected_profit, b
+    ) > ship.brain._trip_turn_value(haul.expected_profit, c)
+
+    ship.brain.decide_trade_actions()
+
+    plan = ship.brain._current_plan
+    assert isinstance(plan, ContractPlan)
+    assert plan.destination is b
+
+
+def test_a_thin_job_loses_to_the_haul():
+    """A job that pays its fuel and little else does not displace a trade plan."""
+    sim, _fuel, _food, (a, b, c) = _haul_world(trade_bid=30)
+    ship = _make_ship(sim, a, fuel_units=60, money=4000, name="Trader")
+    job = _consignment(sim, a, b, advance=30)
+    ship.brain._nav.refresh_market_facts()
+
+    ship.brain.decide_trade_actions()
+
+    plan = ship.brain._current_plan
+    assert isinstance(plan, TradePlan)
+    assert plan.destination is c
+    assert job.status is ContractStatus.OPEN
+
+
 # ---------------------------------------------------------------------------
 # Pinning
 # ---------------------------------------------------------------------------
@@ -272,4 +401,20 @@ def test_reposition_aims_at_a_planet_whose_only_export_is_jobs():
     for _ in range(3):
         _consignment(sim, b, c, advance=300)
 
+    assert ship.brain._find_reposition_target(ship.fuel, fuel) is b
+
+
+def test_a_plan_starved_ship_flies_to_a_queue_in_a_cold_galaxy():
+    """With nothing to trade anywhere, a waiting ship still goes where the jobs are."""
+    sim, fuel, _food, (a, b, c) = _world([("A", 0, 0), ("B", 50, 0), ("C", 0, 50)])
+    ship = _make_ship(sim, a, fuel_units=40, money=2000, name="Trader")
+    for _ in range(3):
+        _consignment(sim, b, c, advance=300)
+
+    # No commodity has both supply and demand, so no origin backs a plan and
+    # the survey is skipped - until the ship has waited long enough.
+    ship.brain._turns_without_plan = 0
+    assert ship.brain._find_reposition_target(ship.fuel, fuel) is None
+
+    ship.brain._turns_without_plan = REPOSITION_CONTRACT_PATIENCE
     assert ship.brain._find_reposition_target(ship.fuel, fuel) is b
