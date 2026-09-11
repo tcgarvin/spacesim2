@@ -110,9 +110,32 @@ def compute_summary(sim: Simulation) -> Dict[str, object]:
         "prices": prices,
         "markets": markets,
         "trade": trade,
+        "migration": _summarize_migration(sim, regular_actors),
     }
     summary["verdict"] = _build_verdict(drives, prices, markets, sim.current_turn)
     return summary
+
+
+def _summarize_migration(sim: Simulation, regular_actors: List) -> Dict[str, float]:
+    """Actor movement between planets. Not part of the verdict.
+
+    ``departures_per_100_turns_per_1000_actors`` normalizes the rate so runs
+    of different length and population compare directly. In-transit actors
+    are excluded from ``regular_actors``, so they are added back for the
+    denominator.
+    """
+    population = len(regular_actors) + len(sim.migrants_in_transit)
+    turns = sim.current_turn
+    if population > 0 and turns > 0:
+        rate = sim.migration_departures * 100.0 * 1000.0 / (turns * population)
+    else:
+        rate = 0.0
+    return {
+        "departures": sim.migration_departures,
+        "arrivals": sim.migration_arrivals,
+        "in_transit": len(sim.migrants_in_transit),
+        "departures_per_100_turns_per_1000_actors": round(rate, 2),
+    }
 
 
 def _summarize_service_actors(service_actors: List) -> Dict[str, int]:

@@ -8,6 +8,7 @@ from spacesim2.core.commands import (
     PlaceSellOrderCommand,
     ProcessCommand,
 )
+from spacesim2.core.migration import NO_MIGRATION, MigrationDecision
 from spacesim2.core.skill import SkillCheck
 
 if TYPE_CHECKING:
@@ -287,6 +288,25 @@ class ActorBrain:
     def decide_market_actions(self, actor: "Actor") -> List[MarketCommand]:
         """Decide what market actions to take this turn."""
         raise NotImplementedError("Subclasses must implement this method")
+
+    def decide_migration(self, actor: "Actor") -> "MigrationDecision":
+        """Decide whether the actor should leave its planet, and for where.
+
+        Every reason to move lives in the brain; ``core/migration.py`` only
+        executes the move. The default is to stay. Called once per actor
+        turn after the market actions, so implementations should be cheap
+        on the common path (check a cooldown before scoring anything).
+        """
+        return NO_MIGRATION
+
+    def on_relocated(self, actor: "Actor") -> None:
+        """Called once after the actor lands on a new planet.
+
+        ``core/migration.relocate_actor`` already drops the whole
+        ``BrainCache``, which is everything core owns. Brain-internal state
+        tied to the old planet, a chosen recipe or a built facility plan,
+        is the subclass's to reset here. The default does nothing.
+        """
 
     # Drive-backed demand: a generic willingness-to-pay for consumer goods.
     # Two layers (see docs/needs.md): a stable WTP ceiling grounded in welfare

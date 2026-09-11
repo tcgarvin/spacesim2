@@ -125,6 +125,19 @@ class Inventory:
 
         return True
 
+    def clear(self) -> None:
+        """Drop everything held, reserved included.
+
+        Migration uses it: a migrant travels with nothing. Reserved goods
+        back live sell orders, so cancel those first or the book will hold
+        orders against stock that is gone.
+        """
+        if not self.commodities and not self.reserved_commodities:
+            return
+        self.commodities.clear()
+        self.reserved_commodities.clear()
+        self.version += 1
+
     def reserve_commodity(self, commodity: CommodityDefinition, quantity: int) -> bool:
         """Move a quantity from available to reserved for a market order.
 

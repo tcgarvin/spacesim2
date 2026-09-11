@@ -177,8 +177,15 @@ class SimulationExporter:
                     }
                 )
 
-    def finalize(self) -> None:
-        """Close all writers and write metadata.json."""
+    def finalize(self, simulation: "Simulation") -> None:
+        """Close all writers, rewrite lands.json, and write metadata.json.
+
+        ``lands.json`` is rewritten because migration moves actors between
+        planets: the pools and claims written at setup are a snapshot of
+        turn 0, and what analysis wants is where everyone ended up.
+        """
+        self._export_lands(simulation)
+
         for writer in self.writers.values():
             writer.close()
 
@@ -207,6 +214,9 @@ class SimulationExporter:
 
         Per planet: the per-resource land concentration, the unclaimed pool,
         and each land-claiming actor's coefficients keyed by actor name.
+        Read live, so a re-export after the run reflects migration. A land
+        reserved for an actor still in transit appears in neither the pool
+        nor the claims.
         """
         land_data = {}
         for planet in simulation.planets:

@@ -1,6 +1,7 @@
 from spacesim2.core.actor import Actor, ActorType
 from spacesim2.core.commands import GovernmentWorkCommand
 from spacesim2.core.commodity import CommodityRegistry
+from spacesim2.core.migration import NO_MIGRATION
 
 
 def _get_mock_sim():
@@ -16,6 +17,7 @@ def _get_mock_brain():
         {
             "decide_economic_action": lambda _: GovernmentWorkCommand(),
             "decide_market_actions": lambda _: [],
+            "decide_migration": lambda _: NO_MIGRATION,
         },
     )
 

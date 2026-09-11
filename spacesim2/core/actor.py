@@ -9,6 +9,7 @@ from spacesim2.core.commands import (
 )
 from spacesim2.core.commodity import Inventory
 from spacesim2.core.land import Land
+from spacesim2.core.migration import NO_MIGRATION, MigrationDecision
 from spacesim2.core.planet import Planet
 
 if TYPE_CHECKING:
@@ -88,6 +89,16 @@ class Actor:
         self.last_market_check_turn: int = (
             0  # Track when actor last checked market status
         )
+        # This turn's migration decision, read and cleared by
+        # core/migration.run_migration_phase. Only land-claiming actors are
+        # ever asked; service actors stay put.
+        self.migration_request: MigrationDecision = NO_MIGRATION
+        # True between departure and arrival. An in-transit actor is in
+        # neither ``sim.actors`` nor any ``planet.actors``, so this flag, not
+        # ``planet``, is the authoritative answer to "is this actor placed?".
+        # ``planet`` keeps pointing at the origin until the actor lands, so
+        # no code has to handle a planet-less actor.
+        self.in_transit: bool = False
 
     def get_skill_rating(self, skill_id: str) -> float:
         """Rating for a skill; 0.5 (unskilled) if the actor lacks it."""
@@ -144,6 +155,11 @@ class Actor:
 
         for drive in self.drives:
             drive.tick(self)
+
+        # Only land-claiming actors migrate. Service actors are tied to the
+        # planet they serve, so they are never asked.
+        if self.claims_land:
+            self.migration_request = self.brain.decide_migration(self)
 
         self.sim.data_logger.log_actor_metrics(self)
         self.sim.data_logger.log_actor_inventory(self)

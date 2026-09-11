@@ -5,9 +5,11 @@ perf levers live in `docs/performance.md`.
 
 ## Land (2026-09-10)
 
-- Migration: actors move between planets and claim from the destination's
-  `free_lands`. Needs a release path (`Planet.add_actor` only claims today)
-  and a rule for a full planet (`NoFreeLandError`).
+- Migration v2: a ship brain accepts the `MigrationRequest` as a passage
+  contract at the spaceport and the move happens in the ship phase on
+  arrival; `MIGRANT_CARGO_UNITS` (10 or 100) is undecided. v1 (separate
+  phase, flat fare, ship-speed transit) landed 2026-09-11; see
+  `docs/migration-design.md`.
 - The min-one-unit output floor in `ProcessCommand.execute` means a low
   land draw barely affects 1 to 3 unit recipes (`harvest_wood`,
   `gather_fiber`, mining) and bites `gather_biomass` (8) and `farm_biomass`

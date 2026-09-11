@@ -18,6 +18,7 @@ uv run spacesim2 run --planets 12    # Smaller galaxy (defaults: 100 planets, 10
 uv run spacesim2 run --operators 2   # Spaceport operators per planet (default 2)
 uv run spacesim2 run --workers 12    # Thread the actor phase (needs free-threaded CPython)
 uv run spacesim2 run --arms 4 --lane-density 0.3  # Spiral arm count / extra star lanes beyond the spanning tree
+uv run spacesim2 run --lands-per-planet 200  # Land pool per planet (default 200); must exceed --actors so migrants can settle
 
 # Development
 uv run pytest tests/                           # Run all tests
@@ -151,6 +152,7 @@ committing on the default branch" behavior.
 | Turn flow & testing | `docs/dev-guide-simulation.md` | Debugging AI, market mechanics, testing |
 | Ship trading AI | `docs/dev-guide-ships.md` | Ship brains, fuel and trade logic |
 | Spaceport operators | `docs/spaceport-design.md` | Service actors; phase 1 landed, phases 2+ open |
+| Migration | `docs/migration-design.md` | Actors moving between planets; v1 landed, ship passage (v2) open |
 | Prosperity drives | `docs/prosperity-design.md` | Tier 2/3 consumption, tastes, prosperity index; drives landed, UI tiers open |
 | Notebook analysis | `notebooks/README.md` | Marimo notebooks |
 | Needs/drives system | `docs/needs.md` | Actor consumption |
@@ -202,17 +204,24 @@ How it works:
    `land_concentration[resource]` shapes the spread (Beta distribution;
    below 2 U-shaped, near 2 flat, large values tight around the mean, unset
    means every land equals the mean).
-2. The planet generates `LANDS_PER_PLANET` (100) lands at construction, each
-   a draw per resource from that curve. Draws below `BARREN_FLOOR` are 0.0.
+2. The planet generates `num_lands` lands at construction, each a draw per
+   resource from that curve. Draws below `BARREN_FLOOR` are 0.0. A directly
+   constructed `Planet` defaults to `LANDS_PER_PLANET` (100); `setup_simple`
+   and the CLI default to `DEFAULT_LANDS_PER_PLANET` (200, `--lands-per-planet`),
+   which leaves headroom above the 100-actor default for migrants to settle.
 3. `Planet.add_actor` gives every regular actor one land from the pool, at
-   random, for the run. Service actors never extract and keep the
-   penalty-free default. An exhausted pool raises `NoFreeLandError`.
+   random. Service actors never extract and keep the penalty-free default.
+   An exhausted pool raises `NoFreeLandError`. `Planet.remove_actor` returns
+   a land to the pool and `Planet.add_actor_with_land` attaches one the
+   migration phase reserved in advance; see `core/migration.py`.
 4. Gathering processes in `data/processes.yaml` set a `resource_attribute` field.
 5. `ProcessCommand.execute()` and the brain valuation sites read
    `actor.land.get_availability(...)`, never the planet mean.
 
-Land is fixed for an actor's life, which is what the never-reset
-`yield_modifier` group of `BrainCache` requires. Tests that need a specific
+Land is fixed for as long as an actor stays on a planet, which is what the
+never-reset `yield_modifier` group of `BrainCache` requires. A migrant draws
+a new land on arrival, and `relocate_actor` drops the whole cache for that
+reason. Tests that need a specific
 coefficient set `actor.land = Land({...})` or `Land.at_mean(attributes)`.
 
 Attributes: `biomass`, `fiber`, `wood` (organic), `common_metal_ore`,

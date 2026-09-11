@@ -14,6 +14,7 @@ from typing import Any
 from spacesim2.cli.common import configure_actor_logging, create_and_setup_simulation
 from spacesim2.cli.output import print_success, print_warning
 from spacesim2.core.galaxy import DEFAULT_ARMS, DEFAULT_LANE_DENSITY
+from spacesim2.core.simulation import DEFAULT_LANDS_PER_PLANET
 
 try:
     from spacesim2.analysis.export.exporter import SimulationExporter
@@ -67,6 +68,16 @@ def add_parser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParse
     )
     parser.add_argument(
         "--ships", type=int, default=1, help="Number of ships per planet"
+    )
+    parser.add_argument(
+        "--lands-per-planet",
+        type=int,
+        default=DEFAULT_LANDS_PER_PLANET,
+        help=(
+            "Size of each planet's land pool; must exceed --actors so "
+            f"migrants have somewhere to settle (default: "
+            f"{DEFAULT_LANDS_PER_PLANET})"
+        ),
     )
     parser.add_argument(
         "--workers",
@@ -171,6 +182,7 @@ def execute(args: argparse.Namespace) -> int:
         ships=args.ships,
         arms=args.arms,
         lane_density=args.lane_density,
+        lands_per_planet=args.lands_per_planet,
     )
     if args.workers > 1:
         sim.parallel_workers = args.workers
@@ -233,7 +245,7 @@ def execute(args: argparse.Namespace) -> int:
     if should_export and exporter is not None:
         print("\n" + "=" * 60)
         print("Finalizing export...")
-        exporter.finalize()
+        exporter.finalize(sim)
 
         print_success("Simulation complete!")
         print(f"  Data exported to: {output_path}")

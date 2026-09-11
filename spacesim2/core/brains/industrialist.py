@@ -9,6 +9,13 @@ from spacesim2.core.actor_brain import (
     _get_avg_price,
     _get_bid_ask,
 )
+from spacesim2.core.brains.migration import (
+    MigrationIntent,
+    clear_intent,
+    draw_propensity,
+    is_leaving,
+)
+from spacesim2.core.brains.migration import decide_migration as decide_migration_for
 from spacesim2.core.commands import (
     CancelOrderCommand,
     EconomicCommand,
@@ -23,6 +30,7 @@ if TYPE_CHECKING:
     from spacesim2.core.actor import Actor
     from spacesim2.core.commodity import CommodityDefinition
     from spacesim2.core.market import Market
+    from spacesim2.core.migration import MigrationDecision
     from spacesim2.core.process import ProcessDefinition
 
 # Notional value of a non-transportable facility when it is itself a recipe
@@ -146,6 +154,30 @@ class IndustrialistBrain(ActorBrain):
         self.stuck_signature: Optional[tuple[tuple[str, int], ...]] = None
         # process id -> turn the recipe becomes selectable again.
         self.recipe_cooldown_until: Dict[str, int] = {}
+        # Migration state. The propensity is fixed for the actor's life.
+        self.migration_intent = MigrationIntent()
+        self.migration_propensity = draw_propensity()
+
+    def decide_migration(self, actor: "Actor") -> "MigrationDecision":
+        """Delegate to the shared migration reasoning."""
+        return decide_migration_for(self, actor)
+
+    def on_relocated(self, actor: "Actor") -> None:
+        """Reset planet-specific state after a move.
+
+        The recipe is the main one: it was chosen on the old planet's prices
+        and the old land, and its facility did not come along, so the actor
+        re-selects from scratch on arrival. The cooldown list goes with it,
+        since a recipe that was unrunnable there may be the obvious line
+        here. The brain cache is dropped because its ``yield_modifier``
+        group is never invalidated, on the assumption that an actor's land
+        is fixed; a migrant's is not.
+        """
+        clear_intent(self)
+        self._adopt_recipe(None)
+        self.recipe_cooldown_until = {}
+        self.turns_since_recipe_evaluation = 0
+        self._cache = None
 
     def decide_economic_action(self, actor: "Actor") -> Optional[EconomicCommand]:
         """Decide which economic action to take this turn."""
@@ -157,9 +189,15 @@ class IndustrialistBrain(ActorBrain):
         # ActorBrain._displacement_bid_commands.
         self._begin_self_supply_record()
 
+        # An actor that has decided to leave stops investing in this planet:
+        # it adopts no new line and builds no facility it would abandon. It
+        # keeps running the line it already has, which is still income while
+        # it waits out the intent window.
+        leaving = is_leaving(self)
+
         # 1% chance per turn to re-evaluate the recipe.
         self.turns_since_recipe_evaluation += 1
-        if self._should_reevaluate_recipe():
+        if not leaving and self._should_reevaluate_recipe():
             self._adopt_recipe(self._select_new_recipe(actor, cache))
             self.turns_since_recipe_evaluation = 0
         elif (
@@ -190,7 +228,7 @@ class IndustrialistBrain(ActorBrain):
         if self.chosen_recipe_id:
             self._update_stuck_tracking(actor)
 
-        if not self.chosen_recipe_id:
+        if not self.chosen_recipe_id and not leaving:
             self._adopt_recipe(self._select_new_recipe(actor, cache))
             self.turns_since_recipe_evaluation = 0
 
@@ -227,7 +265,7 @@ class IndustrialistBrain(ActorBrain):
                     return self._record_self_supply(actor, "gather_fiber")
 
         # Build facilities and tools the chosen recipe needs.
-        if self.chosen_recipe_id:
+        if self.chosen_recipe_id and not leaving:
             process = actor.sim.process_registry.get_process(self.chosen_recipe_id)
             if process:
                 for facility in process.facilities_required:
@@ -274,8 +312,12 @@ class IndustrialistBrain(ActorBrain):
         # demand colonists use.
         commands.extend(self._drive_buy_commands(actor, market, cache))
 
-        # Recipe inputs and outputs.
-        if self.chosen_recipe_id:
+        # Recipe inputs and outputs. Skipped entirely while leaving: that
+        # pass procures inputs, tools and facility build materials, all of
+        # which the liquidation sweep below is simultaneously trying to sell.
+        # Outputs still reach the market, because the sweep offers everything
+        # once the reservation list is empty.
+        if self.chosen_recipe_id and not is_leaving(self):
             recipe_commands = self._get_recipe_trading_commands(actor, market, cache)
             commands.extend(recipe_commands)
 
@@ -300,14 +342,34 @@ class IndustrialistBrain(ActorBrain):
         because ``_get_recipe_trading_commands`` already offers them, and two
         sell orders for one commodity in one turn would double-count the
         inventory.
+
+        While the actor is leaving, nothing is reserved and nothing is kept
+        except need-drive materials: the facility and the stock built up for
+        a line the actor is walking away from are worth more as fare money,
+        and non-transportable goods are offered too, since a facility cannot
+        follow its owner. The pantry is exempt because the actor still eats
+        through the intent window and the transit, and it cannot buy its own
+        stock back.
         """
-        reserved = self._reserved_commodity_ids(actor)
+        leaving = is_leaving(self)
+        reserved = set() if leaving else self._reserved_commodity_ids(actor)
+        need_materials = {
+            material.id
+            for drive in actor.drives
+            if drive.WELLBEING
+            for material in drive.materials()
+        }
         keep_levels = self._keep_levels_by_commodity(actor)
         commands: List[MarketCommand] = []
         for commodity in actor.sim.commodity_registry.all_commodities():
-            if not commodity.transportable or commodity.id in reserved:
+            if commodity.id in reserved:
                 continue
-            keep = keep_levels.get(commodity.id, 0)
+            if not commodity.transportable and not leaving:
+                continue
+            if leaving and commodity.id not in need_materials:
+                keep = 0
+            else:
+                keep = keep_levels.get(commodity.id, 0)
             available = actor.inventory.get_available_quantity(commodity)
             if available <= keep:
                 continue

@@ -9,6 +9,13 @@ from spacesim2.core.actor_brain import (
     _get_avg_price,
     _get_bid_ask,
 )
+from spacesim2.core.brains.migration import (
+    MigrationIntent,
+    clear_intent,
+    draw_propensity,
+    is_leaving,
+)
+from spacesim2.core.brains.migration import decide_migration as decide_migration_for
 from spacesim2.core.commands import (
     CancelOrderCommand,
     EconomicCommand,
@@ -22,6 +29,7 @@ from spacesim2.core.drives.food_drive import food_pantry_units
 if TYPE_CHECKING:
     from spacesim2.core.commodity import CommodityDefinition
     from spacesim2.core.market import Market
+    from spacesim2.core.migration import MigrationDecision
     from spacesim2.core.process import ProcessDefinition
 
 # Sort key for ranked-profit entries: the discounted profit. itemgetter
@@ -32,6 +40,27 @@ _DISCOUNTED_PROFIT_KEY = itemgetter(0)
 
 class ColonistBrain(ActorBrain):
     """Decision-making logic for regular colonist actors."""
+
+    def __init__(self) -> None:
+        # Migration state. The propensity is fixed for the actor's life, so
+        # two colonists under identical pressure do not move in lockstep.
+        self.migration_intent = MigrationIntent()
+        self.migration_propensity = draw_propensity()
+
+    def decide_migration(self, actor: Actor) -> "MigrationDecision":
+        """Delegate to the shared migration reasoning."""
+        return decide_migration_for(self, actor)
+
+    def on_relocated(self, actor: Actor) -> None:
+        """Reset planet-specific state after a move.
+
+        Two things are tied to the old planet: the intent that brought the
+        actor here, and the brain cache, whose ``yield_modifier`` group is
+        never invalidated because an actor's land was assumed fixed. A
+        migrant's land is not, so the cache is dropped outright.
+        """
+        clear_intent(self)
+        self._cache = None
 
     def decide_economic_action(self, actor: Actor) -> Optional[EconomicCommand]:
         """Decide which economic action to take this turn."""
@@ -383,6 +412,10 @@ class ColonistBrain(ActorBrain):
         self, actor: Actor, market: "Market", cache: Optional[BrainCache] = None
     ) -> List[MarketCommand]:
         """Buy simple_tools up to a buffer, bounded by willingness to pay."""
+        if is_leaving(self):
+            # An actor on its way out is turning stock into fare money, not
+            # buying equipment for work it is about to abandon.
+            return []
         tools = actor.sim.commodity_registry.get_commodity("simple_tools")
         if not tools:
             return []
@@ -424,13 +457,33 @@ class ColonistBrain(ActorBrain):
     def _sell_excess_commands(
         self, actor: Actor, market: "Market", cache: Optional[BrainCache] = None
     ) -> List[MarketCommand]:
-        """Sell inventory above keep levels, floored at replacement cost."""
+        """Sell inventory above keep levels, floored at replacement cost.
+
+        While the actor is leaving, the sweep also offers non-transportable
+        goods and drops every working buffer: a facility is worth nothing
+        once the actor is off-planet, and tools and raw stock are worth more
+        as fare than as a hedge against work the actor will not do here.
+        Need-drive materials keep their target, since the actor still eats
+        through the intent window and the transit, and a market cannot match
+        an actor against itself, so selling the pantry would mean buying it
+        back from someone else at the ask every turn.
+        """
+        leaving = is_leaving(self)
+        need_materials = {
+            material.id
+            for drive in actor.drives
+            if drive.WELLBEING
+            for material in drive.materials()
+        }
         commands: List[MarketCommand] = []
         keep_levels = self._keep_levels_by_commodity(actor)
         for commodity in actor.sim.commodity_registry.all_commodities():
-            if not commodity.transportable:
+            if not commodity.transportable and not leaving:
                 continue
-            keep = keep_levels.get(commodity.id, 0)
+            if leaving and commodity.id not in need_materials:
+                keep = 0
+            else:
+                keep = keep_levels.get(commodity.id, 0)
             available = actor.inventory.get_available_quantity(commodity)
             if available <= keep:
                 continue

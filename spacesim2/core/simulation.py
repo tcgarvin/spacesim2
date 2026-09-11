@@ -31,6 +31,13 @@ from spacesim2.core.galaxy import (
     generate_spiral_layout,
 )
 from spacesim2.core.market import Market
+from spacesim2.core.migration import (
+    MigrantInTransit,
+    MigrationEvent,
+    PlanetStats,
+    refresh_planet_stats,
+    run_migration_phase,
+)
 from spacesim2.core.navigation import get_navigator
 from spacesim2.core.planet import Planet
 from spacesim2.core.planet_attributes import PlanetAttributes
@@ -113,6 +120,11 @@ _NAME_CODAS = [
 # commodity tree grows. MarketMakerBrain allocates the pool.
 MARKET_MAKER_CAPITAL_PER_MARKET = 100
 
+# Land pool per planet for a set-up galaxy. Larger than the 100-actor default
+# so migration has somewhere to land; ``LANDS_PER_PLANET`` stays the bare
+# ``Planet`` default. See core/land.py.
+DEFAULT_LANDS_PER_PLANET = 200
+
 
 class Simulation:
     """Main simulation controller."""
@@ -129,6 +141,14 @@ class Simulation:
         self.actors: List[Actor] = []
         self.ships: List[Ship] = []
         self.current_turn = 0
+        # Migration state; see core/migration.py. planet_stats is rebuilt at
+        # the top of every turn, migrants_in_transit holds actors that are in
+        # neither sim.actors nor any planet.actors.
+        self.planet_stats: Dict[Planet, PlanetStats] = {}
+        self.migrants_in_transit: List[MigrantInTransit] = []
+        self.migration_log: List[MigrationEvent] = []
+        self.migration_departures: int = 0
+        self.migration_arrivals: int = 0
         # Threaded actor phase (core/parallel.py). Above 1, planets are
         # sharded across a thread pool; a real speedup needs a free-threaded
         # interpreter. See docs/performance.md.
@@ -311,6 +331,7 @@ class Simulation:
         num_ships: int = 2,
         arms: int = DEFAULT_ARMS,
         lane_density: float = DEFAULT_LANE_DENSITY,
+        lands_per_planet: int = DEFAULT_LANDS_PER_PLANET,
     ) -> None:
         """Build a galaxy of planets, actors, and ships.
 
@@ -325,6 +346,8 @@ class Simulation:
             arms: Spiral arm count.
             lane_density: Fraction of optional local lanes kept beyond the
                 spanning tree; 0 is tree only, 1 is every local lane.
+            lands_per_planet: Size of each planet's land pool. It must
+                exceed ``num_regular_actors`` or nobody can ever move in.
         """
         names = self._generate_planet_names(num_planets)
         layout = generate_spiral_layout(
@@ -349,7 +372,14 @@ class Simulation:
             # See Market.order_event_filter.
             planet_market.order_event_filter = self.data_logger.logged_actor_names()
 
-            planet = Planet(name, planet_market, x=x, y=y, attributes=attributes)
+            planet = Planet(
+                name,
+                planet_market,
+                x=x,
+                y=y,
+                attributes=attributes,
+                num_lands=lands_per_planet,
+            )
             self.planets.append(planet)
 
             self._setup_planet_actors(
@@ -542,6 +572,10 @@ class Simulation:
         for planet in self.planets:
             planet.market.set_current_turn(self.current_turn)
 
+        # Destination scoring reads these, so they must be current before any
+        # brain decides anything.
+        refresh_planet_stats(self)
+
         if self.parallel_workers > 1 and len(self.planets) >= 2:
             from spacesim2.core.parallel import run_actor_phase_threaded
 
@@ -556,6 +590,10 @@ class Simulation:
 
         for ship in self.ships:
             ship.take_turn()
+
+        # Before matching: a departing actor's orders are cancelled here, so
+        # nothing it left resting can fill after it has gone.
+        run_migration_phase(self)
 
         self._process_markets()
 

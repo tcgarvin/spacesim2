@@ -4,7 +4,7 @@ import random
 
 from spacesim2.core.actor import ActorType
 from spacesim2.core.galaxy import DEFAULT_ARMS, DEFAULT_LANE_DENSITY
-from spacesim2.core.simulation import Simulation
+from spacesim2.core.simulation import DEFAULT_LANDS_PER_PLANET, Simulation
 
 
 def create_and_setup_simulation(
@@ -15,6 +15,7 @@ def create_and_setup_simulation(
     ships: int = 1,
     arms: int = DEFAULT_ARMS,
     lane_density: float = DEFAULT_LANE_DENSITY,
+    lands_per_planet: int = DEFAULT_LANDS_PER_PLANET,
 ) -> Simulation:
     """Create a simulation with the standard setup.
 
@@ -24,6 +25,8 @@ def create_and_setup_simulation(
         operators: Spaceport operators per planet.
         arms: Spiral arms in the galaxy layout.
         lane_density: Fraction of optional local star lanes kept, 0..1.
+        lands_per_planet: Size of each planet's land pool; must exceed
+            ``actors`` so migrants have somewhere to settle.
     """
     sim = Simulation()
     sim.setup_simple(
@@ -34,6 +37,7 @@ def create_and_setup_simulation(
         num_ships=ships,
         arms=arms,
         lane_density=lane_density,
+        lands_per_planet=lands_per_planet,
     )
     return sim
 

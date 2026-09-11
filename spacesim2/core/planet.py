@@ -34,16 +34,47 @@ class Planet:
         self.free_lands: List[Land] = generate_lands(self.attributes, num_lands)
 
     def add_actor(self, actor: "Actor") -> None:
-        """Add an actor to this planet.
+        """Add an actor to this planet, drawing it a land from the pool.
 
-        A land-claiming actor draws one land from the pool here and keeps it
-        for the run. Placement is the only claim event today; migration will
-        need a release.
+        A land-claiming actor draws one land here and keeps it until it
+        leaves. Migration reserves the destination land before the actor
+        departs, so it arrives through ``add_actor_with_land`` instead.
         """
         self.actors.append(actor)
         actor.planet = self
         if actor.claims_land:
             actor.land = self.claim_land()
+
+    def add_actor_with_land(self, actor: "Actor", land: Land) -> None:
+        """Add an actor that already holds a land reserved from this pool.
+
+        The migration path claims the destination land at departure, so the
+        arrival must not draw a second one. A non-claiming actor keeps its
+        penalty-free default and ``land`` is returned to the pool.
+        """
+        self.actors.append(actor)
+        actor.planet = self
+        if actor.claims_land:
+            actor.land = land
+        else:
+            self.release_land(land)
+
+    def remove_actor(self, actor: "Actor") -> None:
+        """Remove an actor from this planet and return its land to the pool.
+
+        The actor keeps ``planet`` pointing here until it is placed
+        somewhere else; membership of ``self.actors`` is what this changes.
+        """
+        if actor not in self.actors:
+            raise ValueError(f"{actor.name} is not on {self.name}")
+        self.actors.remove(actor)
+        if actor.claims_land:
+            self.release_land(actor.land)
+            actor.land = Land.default()
+
+    def release_land(self, land: Land) -> None:
+        """Return a land to the unclaimed pool."""
+        self.free_lands.append(land)
 
     def claim_land(self) -> Land:
         """Remove and return one land chosen at random from the pool."""

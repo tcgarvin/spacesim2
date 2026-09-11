@@ -20,7 +20,7 @@ from spacesim2.core.land import (
 from spacesim2.core.market import Market
 from spacesim2.core.planet import Planet
 from spacesim2.core.planet_attributes import RESOURCE_ATTRIBUTES, PlanetAttributes
-from spacesim2.core.simulation import Simulation
+from spacesim2.core.simulation import DEFAULT_LANDS_PER_PLANET, Simulation
 
 
 class TestLand:
@@ -165,7 +165,7 @@ class TestPlanetPool:
             regulars = [a for a in planet.actors if a.claims_land]
             assert len(regulars) == 6
             assert len({id(a.land) for a in regulars}) == 6
-            assert len(planet.free_lands) == LANDS_PER_PLANET - 6
+            assert len(planet.free_lands) == DEFAULT_LANDS_PER_PLANET - 6
             for actor in regulars:
                 for resource in RESOURCE_ATTRIBUTES:
                     assert 0.0 <= actor.land.get_availability(resource) <= 1.0
