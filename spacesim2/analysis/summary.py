@@ -14,6 +14,7 @@ import statistics
 from typing import Dict, List, Sequence
 
 from spacesim2.core.actor import Actor, ActorType
+from spacesim2.core.contracts import GOVERNMENT
 from spacesim2.core.drives.prosperity_drive import (
     PROSPERITY_CATEGORIES,
     ProsperityDriveMetrics,
@@ -111,6 +112,7 @@ def compute_summary(sim: Simulation) -> Dict[str, object]:
         "markets": markets,
         "trade": trade,
         "migration": _summarize_migration(sim, regular_actors),
+        "contracts": _summarize_contracts(sim),
     }
     summary["verdict"] = _build_verdict(drives, prices, markets, sim.current_turn)
     return summary
@@ -135,6 +137,34 @@ def _summarize_migration(sim: Simulation, regular_actors: List) -> Dict[str, flo
         "arrivals": sim.migration_arrivals,
         "in_transit": len(sim.migrants_in_transit),
         "departures_per_100_turns_per_1000_actors": round(rate, 2),
+    }
+
+
+def _summarize_contracts(sim: Simulation) -> Dict[str, float]:
+    """Transport jobs posted and how they ended. Not part of the verdict.
+
+    ``government_payouts`` is money the government created paying carriers,
+    the number the freight design says to check rather than assume; the per
+    100 turns rate makes runs of different length comparable.
+    """
+    government_open = sum(
+        1
+        for planet in sim.planets
+        for contract in planet.contracts.open_contracts()
+        if contract.poster is GOVERNMENT
+    )
+    open_total = sum(len(planet.contracts.open_contracts()) for planet in sim.planets)
+    turns = sim.current_turn
+    payout_rate = sim.government_payouts * 100.0 / turns if turns > 0 else 0.0
+    return {
+        "posted": sim.contracts_posted,
+        "delivered": sim.contracts_delivered,
+        "stranded": sim.contracts_stranded,
+        "expired": sim.contracts_expired,
+        "government_open": government_open,
+        "government_payouts": sim.government_payouts,
+        "government_payouts_per_100_turns": round(payout_rate, 1),
+        "open_total": open_total,
     }
 
 

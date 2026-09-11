@@ -184,6 +184,15 @@ and `fuel_reference` is `Navigator.fuel_value_reference()`, or
 replaced the next turn, so the supply is one job per planet at a time, not
 one per ship.
 
+Landed. `refresh_government_jobs` runs in `run_turn` right after the board
+expiry loop, and the five constants above are module constants in
+`core/government.py` at their proposed values. Destination membership is
+decided by `Navigator.route`, as written; a breadth-first walk of the lane
+graph bounds the candidate set first, and the in-range set is cached per
+planet since the galaxy is static after setup. `sim.government_payouts`
+counts created money at the one place in `contracts.py` where the
+government pays a carrier, and the summary's `contracts` block reports it.
+
 Sizing. The advance covers one leg's fuel at the typical galaxy price and a
 quarter more. A trade plan needs 15% on its purchase cost, which at the
 cargo values ships move is several times a leg's fuel, so a job beats a

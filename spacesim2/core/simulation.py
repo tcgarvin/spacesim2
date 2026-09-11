@@ -30,6 +30,7 @@ from spacesim2.core.galaxy import (
     StarLaneNetwork,
     generate_spiral_layout,
 )
+from spacesim2.core.government import refresh_government_jobs
 from spacesim2.core.market import Market
 from spacesim2.core.migration import (
     MigrantInTransit,
@@ -156,6 +157,9 @@ class Simulation:
         self.contracts_delivered: int = 0
         self.contracts_stranded: int = 0
         self.contracts_expired: int = 0
+        # Money the government has created paying carriers for freight; see
+        # core/government.py.
+        self.government_payouts: int = 0
         # Threaded actor phase (core/parallel.py). Above 1, planets are
         # sharded across a thread pool; a real speedup needs a free-threaded
         # interpreter. See docs/performance.md.
@@ -586,6 +590,9 @@ class Simulation:
         # Stale offers come off the boards before any brain reads one.
         for planet in self.planets:
             self.contracts_expired += len(planet.contracts.expire(self.current_turn))
+
+        # Every board back to its quota, so an idle ship always has a job.
+        refresh_government_jobs(self)
 
         if self.parallel_workers > 1 and len(self.planets) >= 2:
             from spacesim2.core.parallel import run_actor_phase_threaded

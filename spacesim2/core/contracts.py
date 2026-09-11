@@ -211,7 +211,9 @@ def _pay(poster: Poster, amount: int, ship: "Ship") -> None:
     """
     if amount <= 0:
         return
-    if not isinstance(poster, Government):
+    if isinstance(poster, Government):
+        ship.simulation.government_payouts += amount
+    else:
         poster.reserved_money -= amount
     ship.money += amount
 
