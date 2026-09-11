@@ -27,6 +27,10 @@ def _world(planet_specs, fuel_price=5, fuel_depth=200):
     sim.actors = []
     sim.contracts_delivered = 0
     sim.contracts_stranded = 0
+    sim.government_payouts = 0
+    sim.migration_departures = 0
+    sim.passage_wait_turns = []
+    sim.migration_log = []
     for index, planet in enumerate(planets):
         supplier = _make_ship(
             sim, planet, hold_fuel=fuel_depth, name=f"Supplier{index}"

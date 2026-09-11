@@ -158,6 +158,10 @@ class TestFlyingAJob:
         ship.fuel = 50
         assert origin.contracts.accept(job, ship)
         assert _government_jobs(origin) == []
+        # The brain releases a contract that is merely accepted at the top of
+        # its docked turn, so the job has to be loaded to count as taken.
+        assert ship.start_journey(job.destination)
+        assert job.status is ContractStatus.LOADED
 
         sim.run_turn()
         replacements = _government_jobs(origin)

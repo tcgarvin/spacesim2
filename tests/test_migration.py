@@ -504,5 +504,6 @@ class TestSimulationIntegration:
             for ship in sim.ships
             for contract in ship.contracts
             if contract.status is ContractStatus.LOADED
+            and isinstance(contract.payload, PassengerPayload)
         )
         assert sim.migration_departures - sim.migration_arrivals == aboard
