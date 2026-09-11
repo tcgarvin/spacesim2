@@ -5,20 +5,18 @@ perf levers live in `docs/performance.md`.
 
 ## Land (2026-09-10)
 
-- Passage queue at 100 planets: with one ship per planet, migration v2
-  (landed 2026-09-11, `docs/contracts-design.md`) leaves most passengers
-  waiting on the board; the first 400-turn 100-planet run had 1900
-  waiting against 256 delivered, and every waiting actor is in leaving
-  mode (no investment, selling down). Doubling ships was tried (decision
-  log, 2026-09-11): waiting fell a third, per-ship money fell two thirds,
-  not adopted. Levers left: cap the time an actor stays in leaving mode, a
-  crowding term so fewer actors want the same destination, and a probe of
-  why waiting stays high with twice the capacity.
-- Government freight is a subsidy: about 3.5k credits created per 100
-  turns at 12 planets against a fleet cash stock of ~20k. Whether the
-  fleet's solvency comes from carrying contracts or from the created
-  money is being A/B'd (jobs on versus off); resize `GOVERNMENT_JOB_MARGIN`
-  or `GOVERNMENT_JOBS_PER_PLANET` on the result.
+- Government freight is now the fleet's main income at 100 planets:
+  payouts 256k over 400 turns after pickups and rider ranking (decision
+  log, 2026-09-11, "Passage queue"), tripled from 73k, while hauled cargo
+  fell in the one run measured. Jobs-off A/B at 12 planets showed the
+  jobs are a solvency floor, not a freight market. Resize: an A/B at
+  `GOVERNMENT_JOB_MARGIN` 0 or 0.1, fewer hops, or exclude government
+  jobs from rider ranking so they never steer a trade trip.
+- Passage queue residual at 100 planets: 354 waiting at turn 400 after the
+  fare and pickup changes (was 1900), median wait 17 turns. The fare now
+  gates the poorest actors out entirely (departures -36% at 12 planets).
+  Levers: a cap on leaving mode, a crowding term in the destination score,
+  a fare summary key so the fare level can be tuned from data.
 - `CargoPayload` (freight and procurement contracts for real goods) is
   typed but no brain posts or carries one. First candidates: spaceport
   operators ordering fuel, industrialists ordering inputs.

@@ -4,6 +4,69 @@ Append-only record of closed decisions, postmortems, and landed campaigns.
 Newest first. Open work lives in `TODO.md`; current reference docs live
 alongside this file.
 
+## 2026-09-11 - Passage queue: pickups en route and a fare priced off fuel
+
+Two landings after the contracts entry below, 8a64170 and 492e610, from a
+100-planet probe of why doubling the fleet did not clear the passage queue.
+The probe (one run per arm, 300 turns) found hull count was not the bind:
+67% of waiting turns had no ship at the origin but three quarters of those
+origins were already inside some idle ship's reposition survey; the ships
+that were there stayed for a trade plan (52%) or a local sale (36%); and
+only 27% of passenger-group valuations had positive expected profit
+because the fare, 2 credits per lane unit, paid about one fuel unit's price
+per fuel unit burned and nothing toward maintenance.
+
+8a64170: riders count in the trip ranking (`_route_rider_value`, used in
+`_best_plan_from`, the contract-trip comparison, the cargo-hop choice and
+the reposition score, never in the profitability test), and a ship passing
+an intermediate route planet may dock one turn to take on contracts bound
+further along the route, on the refuel-stop machinery (`wants_pickup_stop`,
+`Ship._take_route_stop`, `pickup_stops_window` in the summary).
+
+492e610: `passage_fare` is the leg's fuel at the galaxy reference times
+1.5, the government-job formula at double the margin, via the shared
+`leg_fuel_cost` in `core/navigation.py`. The brain's escalation to 1.5x of
+the estimate is unchanged.
+
+A/B at 12 planets, 300 turns, 6 replicates per arm:
+
+| KPI | fec8710 | +pickups (8a64170) | +fare (492e610) |
+|---|---|---|---|
+| migration departures | 126 | 152 (185 in the fare batch's base) | 118 |
+| waiting at end | 62 | 26 | 21 |
+| passage expired | 40 | 29 | 5 |
+| median wait, turns | 28 | 23.5 | 17 |
+| ship departures, window | 37 | 47 | 43 |
+| ship money median | 1383 | 2285 | 4942 |
+| actor money mean | 804 | 800 | 734 |
+
+Pickups: waiting and wait time significant, ship departures significant,
+ship money up and nothing else moved. Fare: expiries significant, waiting
+and wait weak, departures down about a third because poorer actors can no
+longer afford to post, actor mean money down 8% (the fare is paid by
+migrants). The trade accepted: fewer migrations that nearly all complete
+against more that stalled in leaving mode and expired.
+
+100 planets, 400 turns, one run each:
+
+| KPI | ac52dc7 | 492e610 |
+|---|---|---|
+| migration departures | 617 | 906 |
+| waiting at end | 1322 | 354 |
+| passage expired | 278 | 18 |
+| median wait, turns | 34 | 17 |
+| pickup stops, window | | 102 |
+| ship money median | 1618 | 5887 |
+| ships solvent share | 0.64 | 0.85 |
+| government payouts | 73k | 256k |
+| ship delivered cargo units, window | 1528 | 1160 |
+
+The queue is a quarter of what it was and passages complete. The cost is
+in the last two rows: ships now take government jobs as riders and on
+pickup stops, payouts tripled, and cargo hauled fell in this one run. The
+fleet's wealth at 100 planets is now mostly created money; resizing the
+subsidy is the next item.
+
 ## 2026-09-11 - Transport contracts: migration v2 and government freight
 
 Landed in five commits, 89e05eb..ac52dc7. Design in
