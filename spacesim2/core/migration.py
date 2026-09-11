@@ -61,9 +61,8 @@ PASSAGE_FARE_MINIMUM = 20
 # (``Ship.travel_time``), so v1 transit takes as long as the v2 passage will.
 TRANSIT_DISTANCE_PER_TURN = 20
 
-# Cargo units one migrant occupies on a ship in v2. Unused in v1. The value
-# is undecided (10 or 100); keep it a single constant.
-MIGRANT_CARGO_UNITS = 10
+# MIGRANT_CARGO_UNITS, the hold space one migrant occupies, lives in
+# core/contracts.py with the passage contract that carries the passenger.
 
 
 @dataclass(frozen=True)

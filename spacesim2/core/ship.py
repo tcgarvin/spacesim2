@@ -5,6 +5,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple
 
 from spacesim2.core.commodity import CommodityDefinition, Inventory
+from spacesim2.core.contracts import (
+    CONTRACT_STRAND_PATIENCE,
+    Contract,
+    ContractStatus,
+    deliver_contract,
+    load_contract,
+    strand_contract,
+)
 from spacesim2.core.navigation import (
     DELIVERER_WORST_FUEL_EFFICIENCY,  # noqa: F401  re-exported for callers
     FLOW_RECENCY_TURNS,
@@ -3303,6 +3311,14 @@ class Ship:
         self.cargo = Inventory()
         self.inventory = self.cargo  # Alias for compatibility with market code
         self.cargo_capacity = cargo_capacity
+        # Transport jobs this ship has taken on, accepted or loaded; see
+        # core/contracts.py. Their hold units are committed space, so
+        # free_hold, not the raw cargo total, is what a buy decision has.
+        self.contracts: List[Contract] = []
+        # Consecutive docked turns spent somewhere that is not the
+        # destination of a loaded contract. Past CONTRACT_STRAND_PATIENCE the
+        # payload is put down where the ship is rather than ridden around.
+        self.docked_turns_with_undelivered_contracts = 0
         # The tank is separate from the hold. ``fuel`` is what the ship
         # burns; nova_fuel in ``cargo`` is trade goods like anything else.
         # Market fills land in the hold, and ``pump_fuel`` moves them into
@@ -3339,6 +3355,27 @@ class Ship:
     def refuel_stops(self) -> int:
         """En-route refuel stops this ship has made."""
         return len(self.refuel_stop_turns)
+
+    def contract_hold_units(self) -> int:
+        """Hold space committed to contracts.
+
+        Accepted contracts count as well as loaded ones: the space is spoken
+        for from acceptance, so a ship cannot take a job and then fill the
+        hold the job needs.
+        """
+        return sum(
+            contract.payload.hold_units
+            for contract in self.contracts
+            if contract.status in (ContractStatus.ACCEPTED, ContractStatus.LOADED)
+        )
+
+    def free_hold(self) -> int:
+        """Hold units available for cargo, after contracts."""
+        return (
+            self.cargo_capacity
+            - self.cargo.get_total_quantity()
+            - self.contract_hold_units()
+        )
 
     def pump_fuel(self, keep_in_hold: int = 0) -> int:
         """Move nova_fuel from the hold into the tank, up to capacity.
@@ -3597,6 +3634,19 @@ class Ship:
         self.last_departure_turn = self.simulation.current_turn
         self.departure_turns.append(self.simulation.current_turn)
 
+        # Load here, once the departure is certain: a payload must never be
+        # taken aboard for a journey that then fails a check above. Contracts
+        # for anywhere else go back on their boards, since this ship is no
+        # longer going there.
+        self.docked_turns_with_undelivered_contracts = 0
+        for contract in list(self.contracts):
+            if contract.status is not ContractStatus.ACCEPTED:
+                continue
+            if contract.destination is destination:
+                load_contract(self, contract)
+            else:
+                contract.origin.contracts.release(contract)
+
         hops = len(route) - 1
         self.last_action = (
             f"Departed for {destination.name} "
@@ -3708,12 +3758,47 @@ class Ship:
                 if self not in self.planet.ships:
                     self.planet.ships.append(self)
 
-            self.last_action = f"Arrived at {self.planet.name}"
+            arrival = self.planet
+            for contract in list(self.contracts):
+                if (
+                    contract.status is ContractStatus.LOADED
+                    and contract.destination is arrival
+                ):
+                    deliver_contract(self, contract)
+
+            self.last_action = f"Arrived at {arrival.name}"
             return True
         else:
             remaining_turns = math.ceil((1.0 - self.travel_progress) * self.travel_time)
             self.last_action = f"En route to {self.destination.name} ({remaining_turns} turns remaining)"
             return False
+
+    def _age_undelivered_contracts(self) -> None:
+        """Count a docked turn against loaded contracts, and strand the stale.
+
+        A loaded contract pins the ship to its destination, so sitting
+        anywhere else means the departure gate keeps refusing. Past
+        CONTRACT_STRAND_PATIENCE the payload is better off put down here than
+        carried around indefinitely; a passenger stranding also needs a free
+        land here, so it can fail and be retried at the next planet.
+        """
+        planet = self.planet
+        if planet is None:
+            return
+        undelivered = [
+            contract
+            for contract in self.contracts
+            if contract.status is ContractStatus.LOADED
+            and contract.destination is not planet
+        ]
+        if not undelivered:
+            self.docked_turns_with_undelivered_contracts = 0
+            return
+        self.docked_turns_with_undelivered_contracts += 1
+        if self.docked_turns_with_undelivered_contracts < CONTRACT_STRAND_PATIENCE:
+            return
+        for contract in undelivered:
+            strand_contract(self, contract, planet)
 
     def take_turn(self) -> None:
         """Perform actions for this turn.
@@ -3751,6 +3836,7 @@ class Ship:
             if not self.perform_maintenance():
                 self._buy_maintenance_supplies()
         elif self.status == ShipStatus.DOCKED:
+            self._age_undelivered_contracts()
             self.brain.decide_trade_actions()
 
             destination = self.brain.decide_travel()

@@ -1,6 +1,7 @@
 import random
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
+from spacesim2.core.contracts import ContractBoard
 from spacesim2.core.land import LANDS_PER_PLANET, Land, NoFreeLandError, generate_lands
 from spacesim2.core.planet_attributes import PlanetAttributes
 
@@ -28,6 +29,8 @@ class Planet:
         self.actors: List["Actor"] = []
         self.ships: List["Ship"] = []  # Ships docked at this planet
         self.market: "Market" = market
+        # Transport jobs posted here, read by every ship; see core/contracts.py.
+        self.contracts = ContractBoard(self)
         # Default: no resource penalties (all availabilities 1.0).
         self.attributes = attributes if attributes is not None else PlanetAttributes()
         # Unclaimed lands. Claiming removes one at random; see claim_land.

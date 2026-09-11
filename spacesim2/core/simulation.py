@@ -149,6 +149,13 @@ class Simulation:
         self.migration_log: List[MigrationEvent] = []
         self.migration_departures: int = 0
         self.migration_arrivals: int = 0
+        # Transport contracts; see core/contracts.py. The three endings are
+        # counted by core as they happen; ``contracts_posted`` is counted by
+        # whoever posts, since a board has no simulation to reach.
+        self.contracts_posted: int = 0
+        self.contracts_delivered: int = 0
+        self.contracts_stranded: int = 0
+        self.contracts_expired: int = 0
         # Threaded actor phase (core/parallel.py). Above 1, planets are
         # sharded across a thread pool; a real speedup needs a free-threaded
         # interpreter. See docs/performance.md.
@@ -575,6 +582,10 @@ class Simulation:
         # Destination scoring reads these, so they must be current before any
         # brain decides anything.
         refresh_planet_stats(self)
+
+        # Stale offers come off the boards before any brain reads one.
+        for planet in self.planets:
+            self.contracts_expired += len(planet.contracts.expire(self.current_turn))
 
         if self.parallel_workers > 1 and len(self.planets) >= 2:
             from spacesim2.core.parallel import run_actor_phase_threaded
