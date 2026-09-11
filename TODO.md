@@ -10,6 +10,11 @@ perf levers live in `docs/performance.md`.
   arrival; `MIGRANT_CARGO_UNITS` (10 or 100) is undecided. v1 (separate
   phase, flat fare, ship-speed transit) landed 2026-09-11; see
   `docs/migration-design.md`.
+- Migration herding: at 100 planets the top destinations fill to the land
+  cap and the worst origin loses 76% of its residents (decision log,
+  2026-09-11). The destination score has no crowding term and the softmax
+  temperature (0.1) is near argmax. Candidates: a fill-ratio penalty from
+  `PlanetStats.population` against pool size, a higher temperature.
 - The min-one-unit output floor in `ProcessCommand.execute` means a low
   land draw barely affects 1 to 3 unit recipes (`harvest_wood`,
   `gather_fiber`, mining) and bites `gather_biomass` (8) and `farm_biomass`

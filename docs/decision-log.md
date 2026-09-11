@@ -4,6 +4,42 @@ Append-only record of closed decisions, postmortems, and landed campaigns.
 Newest first. Open work lives in `TODO.md`; current reference docs live
 alongside this file.
 
+## 2026-09-11 - Migration v1: actors move between planets
+
+Poor planets do not import, so trade never equalized them. Migration is the
+other equalizer. Landed as `core/migration.py` (mechanics) and
+`core/brains/migration.py` (every reason to move); design in
+`docs/migration-design.md`. v2, a ship-carried passage contract, is open.
+
+The one tuning decision that mattered: pressure alone is a push with no
+pull. Every actor's need debt is 1.0 for the first hundred turns of a run
+while the economy bootstraps, and a push-only rule moved 60% of the
+population in 200 turns between planets that were all equally bad. An
+intent now forms only when a destination beats staying by a gain floor of
+0.1 on the same score. Departures at 12 planets over 200 turns fell from
+726 to 201. Transit was also 20x slower than a ship until it was set to
+the ship speed; 17% of actors were in flight.
+
+`notebooks/migration_probe.py`, 400 turns, migrants against stayers from
+the same origin matched on pressure at the departure turn:
+
+| | 12 planets | 100 planets |
+|---|---|---|
+| departures | 295 | 2444 |
+| per 100 turns per 1000 actors | 61 | 61 |
+| pressure at departure, both cohorts | 0.66 | 0.64 |
+| pressure +100 turns, migrant / stayer | 0.17 / 0.37 | 0.19 / 0.29 |
+| pressure +200 turns, migrant / stayer | 0.14 / 0.23 | 0.17 / 0.17 |
+| money +200 turns, migrant / stayer | 984 / 1369 | 802 / 1153 |
+| population min / max (start 100) | 44 / 200 | 24 / 200 |
+
+Moving helps on needs within 100 turns and costs about a third of the
+stayer's money (the fare plus the lost stock). Herding is the open
+problem: the top five destinations each fill to the 200-land cap and the
+pool being empty is the only thing that stops them, while the worst origin
+loses three quarters of its residents. The softmax at temperature 0.1 is
+close to an argmax over a score that has no crowding term.
+
 ## 2026-09-10 - Land: per-actor extraction coefficients drawn per planet
 
 Extraction yield used to be one planet-wide number per resource, so every
