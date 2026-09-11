@@ -345,7 +345,9 @@ def test_reposition_counts_fuel_the_ship_can_buy_here():
     # A warm galaxy where every origin backs a lucrative plan, so fuel is the
     # only thing that can hold the ship here.
     ship.brain._nav.has_any_trade_signal = lambda: True
-    ship.brain._best_plan_from = lambda origin: SimpleNamespace(expected_profit=1000)
+    ship.brain._best_plan_from = lambda origin: SimpleNamespace(
+        expected_profit=1000, origin=origin, destination=b, quantity=0
+    )
     # ...except right here, so the ship has a reason to leave.
     ship.brain._find_best_trade_plan = lambda: None
 

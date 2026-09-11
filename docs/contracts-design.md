@@ -135,8 +135,41 @@ An intermediate rider costs the trip nothing but hold space: the ship flies
 past those planets anyway, and `Ship._deliver_passed_contracts` drops the
 payload as the ship passes, without docking. A ship that docks at an
 intermediate planet for fuel has already delivered what was bound for it,
-since the deliveries run first. Both that and the refuel stop share one span
+since the deliveries run first. Both that and the en-route stop share one span
 test, `Ship._route_nodes_passed`.
+
+**Riders decide the trip.** Accepting riders after the destination is settled
+leaves the board out of the choice of destination, which is where it belongs:
+a queue at the origin is a reason to pick one haul over another. The value of
+that queue for a given trip is `_route_rider_value(origin, destination,
+free_hold)`, the open contracts the route serves filled greedily by payment
+per hold unit, and it enters every ranking the brain does — the best trade
+plan out of an origin, the trade-plan side of the contract-trip comparison,
+the cargo hop's destination, and the origin score in
+`_find_reposition_target`.
+
+It stays out of `TradePlan.is_profitable` and the `MIN_MARGIN` test. A rider
+rides a trip the ship was flying anyway, so it must not make a marginal haul
+look worth flying; it decides between hauls that already qualify on their own
+cargo. A `ContractPlan` is not credited with it, since the jobs it would carry
+are already its profit.
+
+**Pickup stops.** A ship already in flight can break the journey at an
+intermediate node for a turn to take on contracts bound farther along its own
+route. The mechanics are the refuel stop's: `Ship._take_route_stop` asks both
+`wants_refuel_stop` and `wants_pickup_stop` about each node passed, a stop may
+serve either reason or both, the shortfall accounting and
+`REFUEL_STOP_MAX_SHORTFALL` are shared, and the resume is
+`start_journey(..., resuming=True)`, which loads what the stop accepted.
+`wants_pickup_stop` accepts when the riders' payment beats the trip's own
+per-turn value over the stop's turns plus the shortfall fuel, and the ship can
+pay that shortfall. A stop that cannot depart within `REFUEL_STOP_MAX_TURNS`
+is abandoned and the contracts go back on the board. Stops are counted in
+`Ship.pickup_stop_turns` and reported as `contracts.pickup_stops_window`.
+
+This is what reaches contracts posted after a ship departed, and boards on
+planets no ship treats as an origin. It is the in-flight counterpart of remote
+pickup below.
 
 **Contract trips.** `_best_contract_trip()` groups the OPEN contracts on the
 local board by destination and values each group as a plan: payments, less the
@@ -178,9 +211,11 @@ destination after `CONTRACT_STRAND_PATIENCE` (proposed 10) turns, core
 strands the contract.
 
 **Remote pickup.** `_find_reposition_target` scores candidate origins by the
-best plan sourced there. It adds the best contract trip available there,
-valued against the whole hold, so a planet with a queue of passengers and
-nothing to export can still pull an empty ship in. A ship that has held no
+best plan sourced there, plus the riders that plan's route would carry, against
+the best contract trip available there valued on the whole hold — the two are
+alternative uses of one hold, so the score is the larger, not the sum. A planet
+with a queue of passengers and nothing to export can still pull an empty ship
+in. A ship that has held no
 plan for `REPOSITION_CONTRACT_PATIENCE` docked turns will fly to such a queue
 on the payments alone, without that trip having to beat the trade plans
 elsewhere. This is the only part of the design that reaches poor planets, and

@@ -126,6 +126,10 @@ class TestFlyingAJob:
         sim.ships.append(ship)
         origin.add_ship(ship)
         ship.fuel = 50
+        # Exactly enough hold for this lot. With no room for riders the brain
+        # has no reason to break the journey, so it is flown by hand as the
+        # module docstring says.
+        ship.cargo_capacity = GOVERNMENT_JOB_UNITS
 
         assert origin.contracts.accept(job, ship)
         assert job.status is ContractStatus.ACCEPTED

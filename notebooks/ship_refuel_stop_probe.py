@@ -1,6 +1,6 @@
 """Why en-route refuel stops are refused: the first criterion that rejects each node.
 
-Tier-1b in-process probe. Wraps ``Ship._take_refuel_stop`` to see every
+Tier-1b in-process probe. Wraps ``Ship._take_route_stop`` to see every
 intermediate route node a ship passes, and re-evaluates
 ``TraderBrain.wants_refuel_stop``'s criteria in the order the code applies
 them so each node is attributed to the first one that rejected it. Records the
@@ -83,11 +83,11 @@ def _classify(brain: Any, planet: Any, refund: int, shortfall: int, stop_turns: 
     return "accept", ratio
 
 
-_orig_take = Ship._take_refuel_stop
+_orig_take = Ship._take_route_stop
 _orig_start = Ship.start_journey
 
 
-def _take_refuel_stop(self: Ship, previous_progress: float) -> bool:
+def _take_route_stop(self: Ship, previous_progress: float) -> bool:
     destination = self.destination
     route = self.route
     cumulative = self.route_cumulative_distance
@@ -134,7 +134,7 @@ def _start_journey(self: Ship, destination: Any, resuming: bool = False) -> bool
     return started
 
 
-Ship._take_refuel_stop = _take_refuel_stop  # type: ignore[method-assign]
+Ship._take_route_stop = _take_route_stop  # type: ignore[method-assign]
 Ship.start_journey = _start_journey  # type: ignore[method-assign]
 
 

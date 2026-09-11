@@ -182,7 +182,7 @@ station is better off flying there than paying a spiked local ask:
   reachable, `_opportunistic_fuel_topup` buys nothing, `_post_standing_fuel_bid`
   posts no standing bid, and the plan fuel step in `_execute_trade_plan`
   buys no fuel at the origin - each leaves fuel money for the reposition
-  below instead. A ship mid refuel stop (`Ship.refuel_stop_resume` set) is
+  below instead. A ship mid en-route stop (`Ship.stop_resume` set) is
   exempt from the top-up cutoff and still buys, capped at
   `fuel_bid_ceiling()`; a ship with no reachable station (a trapped ship)
   also still buys, rationed to `_fuel_escape_target()`.
@@ -206,20 +206,25 @@ Measured over 400 turns, 46% of the fleet's spiked fuel spend had come from
 ships that could already fly to a station under the departure gate and
 posted a rescue bid instead.
 
-### Stopping for fuel en route
+### Stopping en route
 
-A ship passing an intermediate planet with cheap fuel may dock there for a
-turn, bunker, and fly on to its original destination.
+A ship passing an intermediate planet may dock there for a turn and then fly
+on to its original destination. There are two reasons to and one stop may
+serve both: cheap fuel, and contracts waiting on that planet's board.
+
 `Ship.update_journey` finds the route nodes whose distance along the route
 falls in the span covered this turn and offers each to
-`ShipBrain.wants_refuel_stop`, which defaults to `False`; only `TraderBrain`
-ever stops. `Ship._take_refuel_stop` performs the stop.
+`ShipBrain.wants_refuel_stop` and `ShipBrain.wants_pickup_stop`, both of which
+default to `False`; only `TraderBrain` ever stops. `Ship._take_route_stop`
+performs the stop and records which reasons applied in `Ship.stop_for_fuel`
+and `Ship.stop_for_pickup`. The fuel criteria are below; the pickup criteria
+are under Contracts.
 
 Departure charged `route_fuel_charged` for the whole route, so the stop
 refunds what is not yet burned and the resumed leg is charged normally. Route
 fuel is rounded up per leg, so splitting a route can cost fuel:
 `shortfall = max(0, fuel_required(remaining) - refund)`.
-`Ship._take_refuel_stop` allows up to `REFUEL_STOP_MAX_SHORTFALL` (2) units and
+`Ship._take_route_stop` allows up to `REFUEL_STOP_MAX_SHORTFALL` (2) units and
 refuses more. Travel turns alone can only cost one unit, since
 `ceil(total/20) <= ceil(covered/20) + ceil(remaining/20)`, but `fuel_required`
 ceils a second time when it divides by fuel efficiency, so a ship under 1.0
@@ -227,7 +232,7 @@ efficiency can lose two. At a cap of one, that guard was refusing 25.6% of the
 intermediate nodes ships passed at 40 planets; at two it refuses under 1%. The one unit is bought rather than treated as a reason to
 fly on: the stop's criteria already establish a cheap ask with a deep book, so
 it is the cheapest fuel the trip will see. The purchase goes in as the
-top-up's `required_floor`, and `_refuel_stop_travel` holds the ship docked
+top-up's `required_floor`, and `_route_stop_travel` holds the ship docked
 until the tank covers the remaining route.
 
 `TraderBrain.wants_refuel_stop` requires all of:
@@ -250,24 +255,35 @@ a destination: `_trip_turn_value` of a loaded plan's expected profit, or of the
 cargo destination's net value. An empty reposition records 0, so any positive
 saving justifies a stop for a ship with nothing to lose.
 
-While `Ship.refuel_stop_resume` is set the brain does fuel and nothing else.
-`_refuel_stop_trade_actions` refreshes market facts, pumps, cancels resting
-orders and runs `_opportunistic_fuel_topup` on the turn the ship docked, and
-again on any later turn where the tank still does not cover the remaining
-route; `take_turn` calls it from the traveling branch so the first bid rests
-in the same turn's auction. `_current_plan`, `_plan_loaded`, `_addon_commodities` and
-`_committed_fuel_need` are untouched, so arrival at the plan's destination
-sells normally - the plan lifecycle would abandon the plan, since the stop is
-not its origin. `_refuel_stop_travel` returns the resume destination once the
+While `Ship.stop_resume` is set the brain buys fuel and takes riders aboard
+and does nothing else. `_route_stop_trade_actions` refreshes market facts,
+pumps, and cancels resting orders. A fuel stop runs `_opportunistic_fuel_topup`
+on the turn the ship docked and again on any later turn where the tank still
+does not cover the remaining route; a pickup-only stop runs it only in that
+second case, since it is not there for the price but still has to cover the
+per-leg rounding. `take_turn` calls the whole thing from the traveling branch
+so the first bid rests in the same turn's auction. `_current_plan`,
+`_plan_loaded`, `_addon_commodities` and `_committed_fuel_need` are untouched,
+so arrival at the plan's destination sells normally - the plan lifecycle would
+abandon the plan, since the stop is not its origin. So is
+`_release_accepted_contracts`, which would put back the very contracts a
+pickup stop was made for.
+
+`_route_stop_travel` returns the resume destination once the
 fill has been pumped and the leg is funded, and `take_turn` departs with
 `start_journey(destination, resuming=True)`, which skips the maintenance roll
-the original departure already made. A stop that has not resumed within
+the original departure already made and loads the contracts the stop accepted.
+A stop that has not resumed within
 `REFUEL_STOP_MAX_TURNS` (3) turns is abandoned and the ship goes back to
 normal docked logic; so is one whose resume destination is where the ship
-already sits, and one interrupted by maintenance.
+already sits, and one interrupted by maintenance. `Ship.clear_stop` is what
+leaves the mode, and the next ordinary docked turn releases any contract the
+abandoned stop had accepted.
 
-Stops are counted per ship in `Ship.refuel_stop_turns`, exposed as
-`Ship.refuel_stops` and as `refuel_stops_window` in the KPI summary. They are
+Fuel stops are counted per ship in `Ship.refuel_stop_turns`, exposed as
+`Ship.refuel_stops` and as `fleet.refuel_stops_window` in the KPI summary;
+pickup stops in `Ship.pickup_stop_turns`, `Ship.pickup_stops` and
+`contracts.pickup_stops_window`. Fuel stops are
 uncommon: 11 and 9 stops over 397 and 363 departures in two 40-planet,
 150-turn runs, against 4 and 8 before the shortfall cap was raised to 2 and
 the tank fraction to 0.6. What now refuses a stop is almost entirely supply:
@@ -639,7 +655,7 @@ A trip serves every planet on `Navigator.route(origin, destination)`, not only
 the terminus. Ships fly past intermediate planets, and
 `Ship._deliver_passed_contracts` puts a payload down as the ship passes its
 planet: a passenger disembarks, a consignment is handed over, and the journey
-continues. Both that and `_take_refuel_stop` work off
+continues. Both that and `_take_route_stop` work off
 `Ship._route_nodes_passed(previous_progress)`, the nodes whose distance along
 the route falls inside the span covered this turn. Deliveries run first, so a
 refuel stop at an intermediate planet has already dropped what was bound for
@@ -650,7 +666,49 @@ Acceptance is free and is re-made every turn. `decide_trade_actions` calls
 `_release_accepted_contracts` at the top of each docked turn, putting every
 ACCEPTED (never a LOADED) contract back on its board, so a departure that
 fails its maintenance roll or fuel check leaves no job bound to a ship that
-is not going there.
+is not going there. The one docked turn that skips the release is an en-route
+stop, which returns before it; a pickup stop's whole point is the contracts it
+just accepted.
+
+**Riders in the ranking.** `_route_rider_value(origin, destination, free_hold)`
+is what those riders are worth: the open contracts on `origin`'s board bound
+for a planet the route serves, filled greedily by payment per hold unit into
+`free_hold`. It is what `_accept_riders` will actually take on.
+
+It is used for ranking only, never for a profitability test. Nothing reaches
+`TradePlan.is_profitable` or `_plan_acceptable`, so riders cannot make a
+marginal haul look worth flying; they decide between hauls that each already
+qualify, so a good haul whose route also clears the board beats a slightly
+richer one whose route does not. Four places rank with it:
+
+| Site | What it adds |
+|------|--------------|
+| `_best_plan_from` | plan profit plus `_plan_rider_value`, so two hauls to different destinations no longer come down to cargo profit alone |
+| `decide_trade_actions` | the same, on the trade-plan side of the contract-trip comparison |
+| `_choose_destination` | the cargo hop's net value per candidate destination |
+| `_find_reposition_target` | the plan side of `max(plan value, contract trip profit)` for each candidate origin |
+
+A `ContractPlan` is not credited with rider value: the contracts it would
+carry are its own profit already, and `_accept_riders` still tops its hold up
+at departure.
+
+**Pickup stops.** A trip that starts before a contract is posted, or passes a
+planet whose board it never read as an origin, can still take the job: the
+ship breaks the journey at an intermediate node for a turn, accepts what is
+bound farther along its own route, and resumes. The mechanics are the refuel
+stop's, above — same span test, same shortfall accounting, same resume path.
+
+`TraderBrain.wants_pickup_stop(planet, destination, refund, shortfall,
+stop_turns)` accepts when `_route_rider_value(planet, destination,
+free_hold())` — the jobs bound for a later node on the remaining route, the
+terminus included — beats `_departed_trip_turn_value * stop_turns` plus the
+shortfall fuel at the local ask, or at the galaxy reference where no ask
+rests (`_stop_fuel_price`). The ship must also be able to pay for that
+shortfall, or it would dock somewhere it cannot leave. A ship with a full hold
+never stops.
+
+Deliveries run before the stop test, so a ship that stops at a planet has
+already put down whatever it was carrying there.
 
 **Contract trips.** `_best_contract_trip()` groups the local board's open
 contracts by destination, fills each group into the free hold by payment per

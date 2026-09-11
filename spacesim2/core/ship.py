@@ -512,6 +512,22 @@ class ShipBrain:
         """
         return False
 
+    def wants_pickup_stop(
+        self,
+        planet: Planet,
+        destination: Planet,
+        fuel_refund: int,
+        fuel_shortfall: int,
+        stop_turns: int,
+    ) -> bool:
+        """Whether to break the journey at ``planet`` to take contracts aboard.
+
+        Asked about the same nodes and with the same numbers as
+        :meth:`wants_refuel_stop`, and one stop may be made for both reasons.
+        The default is never to stop.
+        """
+        return False
+
 
 class TraderBrain(ShipBrain):
     """Trader ship brain that maximizes profit.
@@ -1386,7 +1402,7 @@ class TraderBrain(ShipBrain):
             # trip needs. A ship mid refuel stop is not repositioned, so it
             # still buys, at the capped price. A trapped ship, one with no
             # station in tank range, buys the rationed minimum and no bunker.
-            if ship.refuel_stop_resume is None and self._can_reach_station():
+            if ship.stop_resume is None and self._can_reach_station():
                 return None
             fuel_bid = min(fuel_bid, self._nav.fuel_bid_ceiling())
             escape_target = self._fuel_escape_target()
@@ -1493,7 +1509,7 @@ class TraderBrain(ShipBrain):
         origin = ship.planet
         if origin is None or ship.status != ShipStatus.DOCKED:
             return None
-        if ship.refuel_stop_resume is not None:
+        if ship.stop_resume is not None:
             return None
         if self._nav.fuel_station_at(origin):
             return None
@@ -1634,7 +1650,7 @@ class TraderBrain(ShipBrain):
         on. The criteria
         below already establish that the ask is cheap and the book deep, so
         the purchase is the cheapest fuel the trip will see; the resume is
-        held until it lands (:meth:`_refuel_stop_travel`).
+        held until it lands (:meth:`_route_stop_travel`).
 
         Conditions, all required: the tank after the refund is below
         FUEL_STOP_TANK_FRACTION of capacity; a fuel ask rests here; the planet
@@ -1679,6 +1695,58 @@ class TraderBrain(ShipBrain):
         # anything, so only the units past it count toward the saving.
         saving = (fillable - fuel_shortfall) * saving_per_unit
         return saving > self._departed_trip_turn_value * stop_turns
+
+    def _stop_fuel_price(self, planet: Planet) -> int:
+        """What the shortfall costs a unit at ``planet``.
+
+        The local ask when one rests there, and otherwise the galaxy fuel
+        reference: a stop is decided in flight, before the ship can see what
+        the board will hold when it docks, so a planet with no ask is priced
+        at the typical galaxy price rather than refused outright.
+        """
+        fuel_commodity = self._fuel_commodity()
+        reference = self._fuel_value_reference() or FUEL_BID_FALLBACK_FLOOR
+        if fuel_commodity is None:
+            return math.ceil(reference)
+        _, ask = planet.market.get_bid_ask_spread(fuel_commodity)
+        if ask is None or ask <= 0:
+            return math.ceil(reference)
+        return ask
+
+    def wants_pickup_stop(
+        self,
+        planet: Planet,
+        destination: Planet,
+        fuel_refund: int,
+        fuel_shortfall: int,
+        stop_turns: int,
+    ) -> bool:
+        """Whether the contracts waiting at ``planet`` are worth stopping for.
+
+        The candidates are the open contracts on the local board bound for a
+        planet farther along the remaining route, the terminus included: the
+        ship is going there anyway, so such a rider costs the trip only its
+        hold space. They are filled greedily by payment per hold unit into the
+        free hold, the same order :meth:`_accept_riders` uses.
+
+        The stop is worth it when that payment beats what the stop costs: the
+        turns it takes, valued at the trip's own per-turn value, plus the
+        shortfall fuel the per-leg rounding charges. The ship must also be
+        able to pay for the shortfall, or it would dock somewhere it cannot
+        leave.
+        """
+        ship = self.ship
+        free_hold = ship.free_hold()
+        if free_hold <= 0:
+            return False
+        payment = self._route_rider_value(planet, destination, free_hold)
+        if payment <= 0:
+            return False
+        fuel_price = self._stop_fuel_price(planet)
+        shortfall_cost = fuel_shortfall * fuel_price
+        if ship.money < shortfall_cost:
+            return False
+        return payment > self._departed_trip_turn_value * stop_turns + shortfall_cost
 
     def _linger_to_bunker(self, turn_value: float) -> bool:
         """Take this stop's one linger turn if it is worth more than the trip.
@@ -2165,6 +2233,12 @@ class TraderBrain(ShipBrain):
         Goods this ship is itself offering here are skipped. A ship cannot
         profitably buy what it is trying to sell in the same book, and
         planning to would have it bid against - and match - its own ask.
+
+        Plans are ranked on their expected profit plus the riders the trip
+        could take on (:meth:`_route_rider_value`), which is why two hauls to
+        different destinations no longer come down to profit alone. The
+        acceptance test is untouched: riders never qualify a haul, only pick
+        between qualified ones.
         """
         nav = self._nav
         if not nav.has_any_trade_signal():
@@ -2178,7 +2252,14 @@ class TraderBrain(ShipBrain):
         }
 
         best_plan: Optional[TradePlan] = None
-        best_profit = 0
+        best_score = 0
+        # The ship arrives empty at an origin it is not at, so the whole hold
+        # is free for riders there.
+        hold = (
+            self.ship.free_hold()
+            if origin is self.ship.planet
+            else self.ship.cargo_capacity
+        )
         # Per-pair facts for this search only; the navigator owns all
         # cross-ship, cross-turn caching.
         pair_economics: Dict[Planet, Optional[_PairEconomics]] = {}
@@ -2204,13 +2285,12 @@ class TraderBrain(ShipBrain):
                     pair=pair,
                     acquisition=acquisition,
                 )
-                if (
-                    plan
-                    and self._plan_acceptable(plan)
-                    and plan.expected_profit > best_profit
-                ):
+                if plan is None or not self._plan_acceptable(plan):
+                    continue
+                score = plan.expected_profit + self._plan_rider_value(plan, hold)
+                if score > best_score:
                     best_plan = plan
-                    best_profit = plan.expected_profit
+                    best_score = score
 
         return best_plan
 
@@ -2265,6 +2345,52 @@ class TraderBrain(ShipBrain):
         for contract in riders:
             if contract.payload.hold_units <= self.ship.free_hold():
                 planet.contracts.accept(contract, self.ship)
+
+    def _route_rider_value(
+        self, origin: Planet, destination: Planet, free_hold: int
+    ) -> int:
+        """Payment the open contracts on this route would add to the trip.
+
+        The contracts on ``origin``'s board bound for any planet the route
+        from ``origin`` to ``destination`` serves, filled greedily by payment
+        per hold unit into ``free_hold``. That is exactly what
+        :meth:`_accept_riders` takes on once the departure is settled, so it
+        is what the trip is worth beyond whatever else it carries.
+
+        Ranking only. A rider rides a trip the ship was flying anyway, so it
+        must never make a marginal haul look worth flying: nothing here
+        reaches :meth:`TradePlan.is_profitable` or :meth:`_plan_acceptable`.
+        It decides between trips that each already clear those tests, so a
+        good haul with riders beats a slightly better haul without.
+        """
+        if free_hold <= 0:
+            return 0
+        offers = [
+            contract
+            for contract in origin.contracts.open_contracts()
+            if contract.payload.hold_units > 0
+        ]
+        if not offers:
+            return 0
+        served = set(self._nav.route(origin, destination))
+        served.discard(origin)
+        remaining = free_hold
+        value = 0
+        for contract in sorted(
+            (contract for contract in offers if contract.destination in served),
+            key=lambda contract: contract.total_payment / contract.payload.hold_units,
+            reverse=True,
+        ):
+            if contract.payload.hold_units <= remaining:
+                remaining -= contract.payload.hold_units
+                value += contract.total_payment
+        return value
+
+    def _plan_rider_value(self, plan: TradePlan, hold: int) -> int:
+        """Rider payment a trade plan's trip could add, after its own cargo."""
+        return self._route_rider_value(
+            plan.origin, plan.destination, hold - plan.quantity
+        )
 
     def _pinned_contract_destination(self) -> Optional[Planet]:
         """Where a loaded contract obliges the ship to fly, if anywhere.
@@ -2902,22 +3028,29 @@ class TraderBrain(ShipBrain):
                 quantity_listed += quantity
         return actions, listed, quantity_listed
 
-    def _refuel_stop_trade_actions(self, planet: Planet) -> None:
-        """Buy fuel and nothing else while docked for an en-route refuel stop.
+    def _route_stop_trade_actions(self, planet: Planet) -> None:
+        """Take on riders and buy fuel while docked for an en-route stop.
 
-        The plan, its loaded flag, its add-on set and the committed fuel need
-        all survive the stop untouched, so arrival at the plan's destination
-        sells the cargo normally. In particular the plan lifecycle does not
-        run: the ship is not at the plan's origin, so it would read the stop
-        as a diversion and abandon the plan.
+        These are the only two things a stop does. The plan, its loaded flag,
+        its add-on set and the committed fuel need all survive untouched, so
+        arrival at the plan's destination sells the cargo normally. In
+        particular the plan lifecycle does not run: the ship is not at the
+        plan's origin, so it would read the stop as a diversion and abandon
+        the plan. Nor does the release of accepted contracts that opens a
+        normal docked turn, which would put back the very contracts a pickup
+        stop was made for; they stay aboard until ``start_journey`` loads them
+        on the resume, or until the stop is abandoned and the next ordinary
+        docked turn releases them.
 
-        The top-up runs on the turn the ship docks, which is the same turn the
-        journey was interrupted, so the bid rests in that turn's auction. It
-        runs again on any later turn where the tank still does not cover the
-        rest of the route, since the fuel the lane rounding cost has to be
-        replaced before the ship can leave. The fuel the remaining route needs
-        is passed as the top-up's required floor, so it is bought rather than
-        left to the bunker budget.
+        A pickup stop accepts the riders on the turn it docks, taking them off
+        the board before another ship can. A fuel stop tops the tank up on
+        that same turn, so the bid rests in the auction of the turn the
+        journey was interrupted, and again on any later turn where the tank
+        still does not cover the rest of the route. A pickup-only stop runs
+        the top-up only in that second case: it is not here for cheap fuel,
+        but the per-leg rounding still has to be paid for before it can leave.
+        The fuel the remaining route needs goes in as the top-up's required
+        floor, so it is bought rather than left to the bunker budget.
         """
         ship = self.ship
         self._nav.refresh_market_facts(turn=ship.simulation.current_turn)
@@ -2928,28 +3061,39 @@ class TraderBrain(ShipBrain):
         for order in resting["buy"] + resting["sell"]:
             market.cancel_order(order.order_id)
 
-        destination = ship.refuel_stop_resume
+        destination = ship.stop_resume
         remaining_need = (
             ship.fuel_required(self._nav.distance(planet, destination))
             if destination is not None
             else 0
         )
-        first_turn = ship.simulation.current_turn == ship.refuel_stop_turn
-        if first_turn or ship.fuel < remaining_need:
-            self._opportunistic_fuel_topup(required_floor=remaining_need)
-            ship.last_action = f"Refuel stop at {planet.name}: bidding for fuel"
-        else:
-            ship.last_action = f"Refuel stop at {planet.name}: waiting to resume"
+        first_turn = ship.simulation.current_turn == ship.stop_turn
 
-    def _refuel_stop_travel(self) -> Optional[Planet]:
-        """Resume the interrupted journey once the stop's fuel is in the tank.
+        if ship.stop_for_pickup and destination is not None and first_turn:
+            self._accept_riders(destination)
+
+        if (ship.stop_for_fuel and first_turn) or ship.fuel < remaining_need:
+            self._opportunistic_fuel_topup(required_floor=remaining_need)
+            ship.last_action = f"Stopped at {planet.name}: bidding for fuel"
+        elif ship.stop_for_pickup and first_turn:
+            ship.last_action = (
+                f"Stopped at {planet.name}: {len(self._accepted_contracts())} "
+                f"job(s) aboard"
+            )
+        else:
+            ship.last_action = f"Stopped at {planet.name}: waiting to resume"
+
+    def _route_stop_travel(self) -> Optional[Planet]:
+        """Resume the interrupted journey once the leg's fuel is in the tank.
 
         Returns the destination the ship was flying to when it stopped, or
-        None while it is still waiting for fuel. The bound on the mode lives
-        in :meth:`Ship.take_turn`, not here.
+        None while it is still waiting for fuel; :meth:`Ship.take_turn`
+        departs with ``start_journey(destination, resuming=True)``, which is
+        what loads the contracts a pickup stop took on. The bound on the mode
+        lives in ``take_turn`` too, not here.
         """
         ship = self.ship
-        destination = ship.refuel_stop_resume
+        destination = ship.stop_resume
         planet = ship.planet
         if destination is None or planet is None:
             return None
@@ -2980,8 +3124,8 @@ class TraderBrain(ShipBrain):
         if current_planet is None:
             return
 
-        if self.ship.refuel_stop_resume is not None:
-            self._refuel_stop_trade_actions(current_planet)
+        if self.ship.stop_resume is not None:
+            self._route_stop_trade_actions(current_planet)
             return
 
         # The first ship deciding this turn rebuilds the market-fact snapshot;
@@ -3280,14 +3424,26 @@ class TraderBrain(ShipBrain):
             # earn per turn they occupy, so a short well-paid job beats a long
             # thin haul; a trade plan wins ties, since it also moves goods the
             # economy wants. A contract trip still has to cover its own fuel
-            # and maintenance, which _best_contract_trip enforces.
+            # and maintenance, which _best_contract_trip enforces. The haul is
+            # credited with the riders its own route could carry, so a haul
+            # that also clears the board's queue is not displaced by a job
+            # worth slightly more on its own.
             contract_plan = None if pinned is not None else self._best_contract_trip()
+            plan_turn_value = (
+                self._trip_turn_value(
+                    plan.expected_profit
+                    + self._plan_rider_value(plan, self.ship.free_hold()),
+                    plan.destination,
+                )
+                if plan is not None
+                else 0.0
+            )
             if contract_plan is not None and (
                 plan is None
                 or self._trip_turn_value(
                     contract_plan.expected_profit, contract_plan.destination
                 )
-                > self._trip_turn_value(plan.expected_profit, plan.destination)
+                > plan_turn_value
             ):
                 actions.extend(
                     self._adopt_contract_trip(contract_plan, placed_fuel_sell)
@@ -3379,8 +3535,8 @@ class TraderBrain(ShipBrain):
         # interrupted journey can resume. Returning before the reset below
         # keeps the original trip's turn value, which the resumed leg may need
         # again if it passes another cheap planet.
-        if self.ship.refuel_stop_resume is not None:
-            return self._refuel_stop_travel()
+        if self.ship.stop_resume is not None:
+            return self._route_stop_travel()
 
         self._departed_trip_turn_value = 0.0
 
@@ -3553,7 +3709,15 @@ class TraderBrain(ShipBrain):
                 current_planet.market.get_avg_price(fuel_commodity) or 10
             )
             fuel_cost = fuel_needed * origin_fuel_price
-            net_value = total_value - fuel_cost
+            # Riders the hop could take on. The hop is already paid for by the
+            # cargo aboard, so this only decides between destinations.
+            net_value = (
+                total_value
+                - fuel_cost
+                + self._route_rider_value(
+                    current_planet, destination, self.ship.free_hold()
+                )
+            )
 
             if net_value > best_expected_value:
                 best_expected_value = net_value
@@ -3638,8 +3802,9 @@ class TraderBrain(ShipBrain):
 
         Surveys up to REPOSITION_ORIGIN_CANDIDATES reachable planets, nearest
         first, as candidate origins and finds the best profitable export plan
-        from each. Returns the origin backing the most profitable one, or
-        None if none is reachable or profitable.
+        from each, credited with the riders that plan's route would carry.
+        Returns the origin backing the most profitable one, or None if none is
+        reachable or profitable.
 
         Reach is the tank *plus* the fuel the ship could buy here, since
         repositioning may buy fuel like any other trip. Judging it on the
@@ -3720,9 +3885,16 @@ class TraderBrain(ShipBrain):
             if starved and contract_profit > queue_profit:
                 queue_profit = contract_profit
                 queue_origin = origin
-            best_there = max(
-                plan.expected_profit if plan is not None else 0, contract_profit
+            # A plan out of this origin can also carry the riders its route
+            # serves, so the two are alternatives rather than a sum: the
+            # origin is worth whichever use of the hold pays more.
+            plan_value = (
+                plan.expected_profit
+                + self._plan_rider_value(plan, self.ship.cargo_capacity)
+                if plan is not None
+                else 0
             )
+            best_there = max(plan_value, contract_profit)
             if best_there <= 0:
                 continue
             net_profit = best_there - fuel_to_buy * fuel_price
@@ -3817,12 +3989,16 @@ class Ship:
         # measures itself against.
         self.route_fuel_charged = 0
         self.route_cumulative_distance: List[float] = []
-        # Destination to fly on to after an en-route refuel stop, the turn the
-        # stop began, and the turn of every stop this ship has made. None
-        # outside a stop.
-        self.refuel_stop_resume: Optional[Planet] = None
-        self.refuel_stop_turn = 0
+        # En-route stop: the destination to fly on to, the turn the stop
+        # began, and what the stop is for. One stop may serve both reasons.
+        # ``stop_resume`` is None outside a stop. The two turn lists count the
+        # stops of each kind this ship has made.
+        self.stop_resume: Optional[Planet] = None
+        self.stop_turn = 0
+        self.stop_for_fuel = False
+        self.stop_for_pickup = False
         self.refuel_stop_turns: List[int] = []
+        self.pickup_stop_turns: List[int] = []
         self.cargo = Inventory()
         self.inventory = self.cargo  # Alias for compatibility with market code
         self.cargo_capacity = cargo_capacity
@@ -3870,6 +4046,17 @@ class Ship:
     def refuel_stops(self) -> int:
         """En-route refuel stops this ship has made."""
         return len(self.refuel_stop_turns)
+
+    @property
+    def pickup_stops(self) -> int:
+        """En-route stops this ship has made to take contracts aboard."""
+        return len(self.pickup_stop_turns)
+
+    def clear_stop(self) -> None:
+        """Leave the en-route stop mode, whatever the stop was for."""
+        self.stop_resume = None
+        self.stop_for_fuel = False
+        self.stop_for_pickup = False
 
     def contract_hold_units(self) -> int:
         """Hold space committed to contracts.
@@ -4145,7 +4332,7 @@ class Ship:
         self.route = route
         self.route_fuel_charged = adjusted_fuel_needed
         self.route_cumulative_distance = _cumulative_lane_distances(navigator, route)
-        self.refuel_stop_resume = None
+        self.clear_stop()
         self.last_departure_turn = self.simulation.current_turn
         self.departure_turns.append(self.simulation.current_turn)
 
@@ -4209,14 +4396,21 @@ class Ship:
                 ):
                     deliver_contract(self, contract)
 
-    def _take_refuel_stop(self, previous_progress: float) -> bool:
+    def _take_route_stop(self, previous_progress: float) -> bool:
         """Dock at an intermediate planet passed this turn if the brain wants to.
 
         A node counts as passed when its distance along the route falls in the
         span covered this turn. The first such node the brain accepts becomes
         a stop: the ship docks there, the tank is credited with the route fuel
-        it has not burned, and ``refuel_stop_resume`` holds the destination to
-        fly on to.
+        it has not burned, and ``stop_resume`` holds the destination to fly on
+        to.
+
+        There are two reasons to stop and one stop may serve both: cheap fuel
+        (:meth:`ShipBrain.wants_refuel_stop`) and contracts on the local board
+        bound farther along the route
+        (:meth:`ShipBrain.wants_pickup_stop`). The accounting is the same
+        either way, so both are asked about the same node with the same
+        numbers and ``stop_for_fuel`` / ``stop_for_pickup`` record the answers.
 
         Route fuel is charged with a ceiling per leg, so splitting a route in
         two costs fuel: the shortfall. Up to REFUEL_STOP_MAX_SHORTFALL units
@@ -4247,9 +4441,13 @@ class Ship:
                 + Ship.calculate_fuel_needed(total - reached)
                 - Ship.calculate_fuel_needed(total)
             )
-            if not self.brain.wants_refuel_stop(
+            for_fuel = self.brain.wants_refuel_stop(
                 node, destination, refund, shortfall, stop_turns
-            ):
+            )
+            for_pickup = self.brain.wants_pickup_stop(
+                node, destination, refund, shortfall, stop_turns
+            )
+            if not (for_fuel or for_pickup):
                 continue
 
             old_planet = self.planet
@@ -4264,11 +4462,22 @@ class Ship:
                 old_planet.ships.remove(self)
             if self not in node.ships:
                 node.ships.append(self)
-            self.refuel_stop_resume = destination
-            self.refuel_stop_turn = self.simulation.current_turn
-            self.refuel_stop_turns.append(self.simulation.current_turn)
+            self.stop_resume = destination
+            self.stop_turn = self.simulation.current_turn
+            self.stop_for_fuel = for_fuel
+            self.stop_for_pickup = for_pickup
+            if for_fuel:
+                self.refuel_stop_turns.append(self.simulation.current_turn)
+            if for_pickup:
+                self.pickup_stop_turns.append(self.simulation.current_turn)
+            reasons = []
+            if for_fuel:
+                reasons.append("cheap fuel")
+            if for_pickup:
+                reasons.append("contracts")
             self.last_action = (
-                f"Stopped at {node.name} for cheap fuel, resuming to {destination.name}"
+                f"Stopped at {node.name} for {' and '.join(reasons)}, "
+                f"resuming to {destination.name}"
             )
             return True
         return False
@@ -4295,7 +4504,7 @@ class Ship:
         # deliveries aboard.
         self._deliver_passed_contracts(previous_progress)
 
-        if self.travel_progress < 1.0 and self._take_refuel_stop(previous_progress):
+        if self.travel_progress < 1.0 and self._take_route_stop(previous_progress):
             return False
 
         if self.travel_progress >= 1.0:
@@ -4366,10 +4575,12 @@ class Ship:
         """
         if self.status == ShipStatus.TRAVELING:
             self.update_journey()
-            if self.refuel_stop_resume is not None:
-                # The journey broke for a refuel stop this turn. Trade now, in
-                # the same turn, so the fuel bid rests in this turn's auction;
-                # the resume decision waits until the fill has been pumped.
+            if self.stop_resume is not None:
+                # The journey broke for an en-route stop this turn. Act now, in
+                # the same turn, so a fuel bid rests in this turn's auction and
+                # the contracts the stop was made for are taken off the board
+                # before another ship can take them; the resume decision waits
+                # until the fill has been pumped.
                 self.brain.decide_trade_actions()
             return
         # Last turn's fuel fills landed in the hold; tank them before any
@@ -4377,18 +4588,19 @@ class Ship:
         self.pump_fuel(keep_in_hold=self.brain.fuel_cargo_to_keep())
         # Give up on a stop that is going nowhere, or on one whose resume
         # destination is where the ship already sits, and let normal docked
-        # logic take over.
-        if self.refuel_stop_resume is not None and (
-            self.refuel_stop_resume is self.planet
-            or self.simulation.current_turn - self.refuel_stop_turn
-            >= REFUEL_STOP_MAX_TURNS
+        # logic take over. Contracts accepted for a pickup stop go back on the
+        # board with it: the release at the top of the next docked turn is
+        # reached only once the stop mode is off.
+        if self.stop_resume is not None and (
+            self.stop_resume is self.planet
+            or self.simulation.current_turn - self.stop_turn >= REFUEL_STOP_MAX_TURNS
         ):
-            self.refuel_stop_resume = None
+            self.clear_stop()
         if self.status == ShipStatus.NEEDS_MAINTENANCE:
             # Buy supplies locally when repair fails so the ship can repair
             # next turn instead of stranding. Repairing is the whole turn, so
-            # any pending refuel stop is abandoned.
-            self.refuel_stop_resume = None
+            # any pending stop is abandoned.
+            self.clear_stop()
             if not self.perform_maintenance():
                 self._buy_maintenance_supplies()
         elif self.status == ShipStatus.DOCKED:
@@ -4397,7 +4609,7 @@ class Ship:
 
             destination = self.brain.decide_travel()
             if destination:
-                resuming = destination is self.refuel_stop_resume
+                resuming = destination is self.stop_resume
                 self.start_journey(destination, resuming=resuming)
 
 

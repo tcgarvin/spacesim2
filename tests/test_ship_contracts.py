@@ -19,6 +19,7 @@ from spacesim2.core.contracts import (
 from spacesim2.core.galaxy import StarLaneNetwork
 from spacesim2.core.planet import Planet
 from spacesim2.core.ship import (
+    REFUEL_STOP_MAX_TURNS,
     REPOSITION_CONTRACT_PATIENCE,
     ContractPlan,
     Ship,
@@ -351,6 +352,181 @@ def test_a_thin_job_loses_to_the_haul():
     assert isinstance(plan, TradePlan)
     assert plan.destination is c
     assert job.status is ContractStatus.OPEN
+
+
+def _two_haul_world():
+    """A world where A can export food to B or to C on near-equal terms.
+
+    C pays a credit a unit more, so C wins the plan search on cargo alone.
+    """
+    sim, fuel, food, planets = _world([("A", 0, 0), ("B", 60, 0), ("C", 0, 60)])
+    a, b, c = planets
+    seller = _make_ship(sim, a, name="SellerA")
+    seller.cargo.add_commodity(food, 120)
+    a.market.place_sell_order(seller, food, 120, 10)
+    buyer_b = _make_ship(sim, b, money=100000, name="BuyerB")
+    b.market.place_buy_order(buyer_b, food, 60, 30)
+    buyer_c = _make_ship(sim, c, money=100000, name="BuyerC")
+    c.market.place_buy_order(buyer_c, food, 60, 31)
+    return sim, fuel, food, planets
+
+
+def test_riders_decide_between_two_similar_hauls():
+    """The haul whose route also clears the board beats the slightly richer one."""
+    sim, _fuel, _food, (a, b, c) = _two_haul_world()
+    ship = _make_ship(sim, a, fuel_units=60, money=8000, name="Trader")
+    ship.brain._nav.refresh_market_facts()
+
+    # On cargo alone C pays more, so C is the plan.
+    without_riders = ship.brain._find_best_trade_plan()
+    assert without_riders is not None
+    assert without_riders.destination is c
+
+    # A well-paid job bound for B rides along on the B haul and nothing rides
+    # on the C haul, which is enough to reverse the ranking.
+    _consignment(sim, a, b, advance=900)
+    ship.brain._plan_search_memo = None
+    with_riders = ship.brain._find_best_trade_plan()
+    assert with_riders is not None
+    assert with_riders.destination is b
+    # The riders decided it; they did not make a bad haul look good.
+    assert with_riders.is_profitable()
+
+
+def test_rider_value_stays_out_of_the_profitability_test():
+    """A haul that fails the margin test is not rescued by the riders it could carry."""
+    sim, _fuel, food, (a, b) = _world([("A", 0, 0), ("B", 50, 0)])
+    ship = _make_ship(sim, a, fuel_units=60, money=8000, name="Trader")
+    plan = _loaded_plan(ship, a, b, food, quantity=10)
+    # A wafer-thin spread: profitable but under MIN_MARGIN.
+    plan.expected_sell_price_per_unit = 11
+    assert not plan.is_profitable()
+
+    _consignment(sim, a, b, advance=5000)
+    assert ship.brain._route_rider_value(a, b, ship.free_hold()) == 5000
+    # The riders are worth far more than the haul, and change neither test.
+    assert not plan.is_profitable()
+    assert not ship.brain._plan_acceptable(plan)
+
+
+# ---------------------------------------------------------------------------
+# Pickup stops
+# ---------------------------------------------------------------------------
+
+
+def _chain_trip(advance: int, sell_price: int = 30):
+    """A ship flying A to C down a chain, with a job waiting at B bound for C."""
+    sim, _fuel, food, (a, b, c) = _world(
+        [("A", 0, 0), ("B", 50, 0), ("C", 100, 0)], chain=True
+    )
+    ship = _make_ship(sim, a, money=4000, name="Trader")
+    ship.fuel = ship.fuel_capacity  # a full tank wants no en-route refuel stop
+    plan = _loaded_plan(ship, a, c, food)
+    plan.expected_sell_price_per_unit = sell_price
+    contract = _consignment(sim, b, c, advance=advance)
+    return sim, ship, (a, b, c), contract, food
+
+
+def _fly_until_docked(sim, ship, limit=12):
+    """Run turns until the ship is docked somewhere, or ``limit`` runs out."""
+    for _ in range(limit):
+        sim.current_turn += 1
+        for planet in sim.planets:
+            planet.market.match_orders()
+        ship.take_turn()
+        if ship.status.value == "docked":
+            return
+
+
+def test_a_ship_stops_to_pick_up_a_job_bound_for_its_own_destination():
+    """A job at a planet on the route is worth a turn, and rides the rest of the way."""
+    sim, ship, (a, b, c), contract, _food = _chain_trip(advance=900)
+    assert ship.brain.decide_travel() is c
+    assert ship.start_journey(c)
+
+    _fly_until_docked(sim, ship)
+
+    assert ship.planet is b
+    assert ship.stop_resume is c
+    assert ship.stop_for_pickup
+    assert ship.pickup_stops == 1
+    assert contract.status is ContractStatus.ACCEPTED
+    assert contract.carrier is ship
+
+    # The resume loads it, and the terminus delivers it.
+    sim.current_turn += 1
+    ship.take_turn()
+    assert ship.destination is c
+    assert contract.status is ContractStatus.LOADED
+
+    while ship.destination is not None:
+        ship.update_journey()
+
+    assert ship.planet is c
+    assert contract.status is ContractStatus.DELIVERED
+    assert sim.contracts_delivered == 1
+
+
+def test_a_job_worth_less_than_the_delay_is_flown_past():
+    """A rider paying less than the trip's own per-turn value does not stop it."""
+    sim, ship, (a, b, c), contract, _food = _chain_trip(advance=20, sell_price=400)
+    assert ship.brain.decide_travel() is c
+    assert ship.brain._departed_trip_turn_value > 20
+    assert ship.start_journey(c)
+
+    while ship.destination is not None:
+        ship.update_journey()
+
+    assert ship.planet is c
+    assert ship.pickup_stops == 0
+    assert contract.status is ContractStatus.OPEN
+
+
+def test_a_pickup_stop_that_cannot_leave_puts_the_job_back():
+    """A stop stuck past REFUEL_STOP_MAX_TURNS is abandoned and the job re-posted."""
+    sim, ship, (a, b, c), contract, food = _chain_trip(advance=900)
+    assert ship.brain.decide_travel() is c
+    assert ship.start_journey(c)
+
+    _fly_until_docked(sim, ship)
+    assert ship.planet is b
+    assert contract.status is ContractStatus.ACCEPTED
+
+    # Nothing to fly on with, and a hold too full to take the job a second
+    # time, so the stop runs out of patience and nothing re-adopts the job.
+    ship.fuel = 0
+    ship.money = 0
+    ship.cargo.add_commodity(food, 75)
+    for _ in range(REFUEL_STOP_MAX_TURNS + 1):
+        sim.current_turn += 1
+        ship.take_turn()
+
+    assert ship.stop_resume is None
+    assert not ship.stop_for_pickup
+    assert contract.status is ContractStatus.OPEN
+    assert contract.carrier is None
+    assert ship.contracts == []
+
+
+def test_a_pickup_stop_still_delivers_what_was_bound_for_that_planet():
+    """The payload for the stop's own planet gets off before the ship docks there."""
+    sim, ship, (a, b, c), waiting, _food = _chain_trip(advance=900)
+    # A second job, aboard from A and bound for B, the planet the ship stops at.
+    for_b = _consignment(sim, a, b, advance=200, on_delivery=50)
+    assert a.contracts.accept(for_b, ship)
+
+    assert ship.brain.decide_travel() is c
+    assert ship.start_journey(c)
+    assert for_b.status is ContractStatus.LOADED
+
+    _fly_until_docked(sim, ship)
+
+    assert ship.planet is b
+    assert ship.stop_for_pickup
+    # Delivered as the ship passed B, not carried on through the stop.
+    assert for_b.status is ContractStatus.DELIVERED
+    assert waiting.status is ContractStatus.ACCEPTED
+    assert ship.contracts == [waiting]
 
 
 # ---------------------------------------------------------------------------

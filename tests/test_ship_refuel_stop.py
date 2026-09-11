@@ -136,7 +136,7 @@ def test_ship_stops_at_the_middle_planet_and_resumes_with_more_fuel():
     _advance(sim, ship)
     assert ship.status == ShipStatus.DOCKED
     assert ship.planet is b
-    assert ship.refuel_stop_resume is c
+    assert ship.stop_resume is c
     assert ship.refuel_stops == 1
     # Charged 2 for the whole route, burned 1 to B.
     assert ship.fuel == 19
@@ -150,7 +150,7 @@ def test_ship_stops_at_the_middle_planet_and_resumes_with_more_fuel():
     _advance(sim, ship)
     assert ship.status == ShipStatus.TRAVELING
     assert ship.destination is c
-    assert ship.refuel_stop_resume is None
+    assert ship.stop_resume is None
 
     # Turn 3: arrive at C with more fuel than a straight flight would leave.
     _advance(sim, ship)
@@ -181,7 +181,7 @@ def test_a_one_unit_rounding_shortfall_is_bought_rather_than_refused():
     _advance(sim, ship)
     _advance(sim, ship)
     assert ship.planet is b
-    assert ship.refuel_stop_resume is c
+    assert ship.stop_resume is c
     buys = [o for o in b.market.buy_orders[fuel] if o.actor is ship]
     assert len(buys) == 1 and buys[0].quantity > 0
 
@@ -199,7 +199,7 @@ def test_no_stop_when_the_shortfall_is_over_the_cap():
     _advance(sim, ship)
     _advance(sim, ship)
     assert ship.status == ShipStatus.TRAVELING
-    assert ship.refuel_stop_resume is None
+    assert ship.stop_resume is None
 
 
 def test_an_unaffordable_shortfall_refuses_the_stop():
@@ -210,7 +210,7 @@ def test_an_unaffordable_shortfall_refuses_the_stop():
     _advance(sim, ship)
     _advance(sim, ship)
     assert ship.status == ShipStatus.TRAVELING
-    assert ship.refuel_stop_resume is None
+    assert ship.stop_resume is None
 
 
 def test_an_unfilled_shortfall_is_re_bought_before_the_resume():
@@ -228,7 +228,7 @@ def test_an_unfilled_shortfall_is_re_bought_before_the_resume():
     # Nothing fills: the ship must not depart, and must bid again.
     _advance(sim, ship)
     assert ship.status == ShipStatus.DOCKED
-    assert ship.refuel_stop_resume is c
+    assert ship.stop_resume is c
     buys = [o for o in b.market.buy_orders[fuel] if o.actor is ship]
     assert len(buys) == 1 and buys[0].quantity > 0
 
@@ -249,7 +249,7 @@ def _stop_taken(**kwargs):
     sim, _, _, (a, b, c), ship = _world(**kwargs)
     _depart(ship, c, turn_value=turn_value)
     _advance(sim, ship)
-    return ship.refuel_stop_resume is not None
+    return ship.stop_resume is not None
 
 
 def test_no_stop_with_a_full_enough_tank():
@@ -259,7 +259,7 @@ def test_no_stop_with_a_full_enough_tank():
     # After the refund the tank is back above the fraction.
     assert ship.fuel + 1 >= FUEL_STOP_TANK_FRACTION * ship.fuel_capacity
     _advance(sim, ship)
-    assert ship.refuel_stop_resume is None
+    assert ship.stop_resume is None
     assert _stop_taken(tank=20) is True
 
 
@@ -289,7 +289,7 @@ def test_no_stop_when_the_book_is_too_thin_to_beat_the_trip_value():
     ship.brain._nav.refresh_market_facts(turn=0)
     _depart(ship, c, turn_value=100.0)
     _advance(sim, ship)
-    assert ship.refuel_stop_resume is None
+    assert ship.stop_resume is None
     # The same thin book is worth stopping for when the trip is worth nothing.
     assert _stop_taken(middle_ask=5, turn_value=100.0) is True
 
@@ -370,14 +370,14 @@ def test_the_mode_clears_after_the_maximum_stop_turns():
     sim, _, _, (a, b, c), ship = _world()
     _depart(ship, c)
     _advance(sim, ship)
-    assert ship.refuel_stop_resume is c
+    assert ship.stop_resume is c
 
     # Nothing fills and the ship cannot fund the remaining leg.
     ship.fuel = 0
     ship.money = 0
     for _ in range(REFUEL_STOP_MAX_TURNS):
         _advance(sim, ship)
-    assert ship.refuel_stop_resume is None
+    assert ship.stop_resume is None
     assert ship.status == ShipStatus.DOCKED
     assert ship.planet is b
 

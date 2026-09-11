@@ -168,6 +168,11 @@ def _summarize_contracts(sim: Simulation) -> Dict[str, float]:
     ``government_payouts`` is money the government created paying carriers,
     the number the freight design says to check rather than assume; the per
     100 turns rate makes runs of different length comparable.
+
+    ``pickup_stops_window`` counts the journeys broken in the last
+    `_ACTIVITY_WINDOW_TURNS` turns so the ship could take contracts aboard at
+    a planet it was flying past, the same window `fleet.refuel_stops_window`
+    uses.
     """
     government_open = sum(
         1
@@ -178,6 +183,11 @@ def _summarize_contracts(sim: Simulation) -> Dict[str, float]:
     open_total = sum(len(planet.contracts.open_contracts()) for planet in sim.planets)
     turns = sim.current_turn
     payout_rate = sim.government_payouts * 100.0 / turns if turns > 0 else 0.0
+    cutoff = sim.current_turn - _ACTIVITY_WINDOW_TURNS
+    pickup_stops_window = sum(
+        sum(1 for turn in ship.pickup_stop_turns if turn >= cutoff)
+        for ship in sim.ships
+    )
     return {
         "posted": sim.contracts_posted,
         "delivered": sim.contracts_delivered,
@@ -187,6 +197,7 @@ def _summarize_contracts(sim: Simulation) -> Dict[str, float]:
         "government_payouts": sim.government_payouts,
         "government_payouts_per_100_turns": round(payout_rate, 1),
         "open_total": open_total,
+        "pickup_stops_window": pickup_stops_window,
     }
 
 

@@ -876,7 +876,9 @@ def test_reposition_target_rejected_when_it_leaves_no_escape():
     # A warm galaxy where every origin backs a lucrative plan, so the fuel
     # gate is the only thing that can reject a candidate.
     ship.brain._nav.has_any_trade_signal = lambda: True
-    ship.brain._best_plan_from = lambda origin: SimpleNamespace(expected_profit=1000)
+    ship.brain._best_plan_from = lambda origin: SimpleNamespace(
+        expected_profit=1000, origin=origin, destination=b, quantity=0
+    )
 
     leg = ship.fuel_required(ship.route_distance(a, b))
 
