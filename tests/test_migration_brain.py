@@ -9,6 +9,7 @@ from spacesim2.core.brains import migration as mig
 from spacesim2.core.brains.colonist import ColonistBrain
 from spacesim2.core.brains.industrialist import IndustrialistBrain
 from spacesim2.core.commands import PlaceBuyOrderCommand, PlaceSellOrderCommand
+from spacesim2.core.contracts import Contract, ContractStatus, PassengerPayload
 from spacesim2.core.drives.food_drive import FoodDrive
 from spacesim2.core.land import Land
 from spacesim2.core.market import Market
@@ -81,6 +82,35 @@ def _stats_with_worse_origin(sim: Simulation) -> Dict[Planet, PlanetStats]:
 def _check_turn(actor: Actor, interval_index: int = 0) -> int:
     """A turn on which ``actor`` runs its migration check."""
     return mig._check_offset(actor) + interval_index * mig.MIGRATION_CHECK_INTERVAL
+
+
+def _quiet_turn(actor: Actor) -> int:
+    """A turn past MIN_INTENT_TURNS on which ``actor`` runs no check."""
+    return _check_turn(actor, 5) + 1
+
+
+def _passage(sim: Simulation, actor: Actor, status: ContractStatus, advance: int = 60):
+    """A passage contract in ``status``, built without going through a board."""
+    contract = Contract(
+        poster=actor,
+        origin=sim.planets[0],
+        destination=sim.planets[1],
+        payload=PassengerPayload(actor=actor),
+        advance=advance,
+        on_delivery=0,
+        posted_turn=0,
+        expires_turn=sim.current_turn,
+    )
+    contract.status = status
+    return contract
+
+
+def _open_contract(sim: Simulation, actor: Actor, advance: int = 60):
+    return _passage(sim, actor, ContractStatus.OPEN, advance)
+
+
+def _expired_contract(sim: Simulation, actor: Actor):
+    return _passage(sim, actor, ContractStatus.EXPIRED)
 
 
 class TestMigrationPressure:
@@ -304,17 +334,38 @@ class TestDepartureRequest:
         decision = brain.decide_migration(actor)
         assert isinstance(decision, MigrationRequest)
         assert decision.destination is brain.migration_intent.destination
-        # Distance 100 at 2 credits per unit, with 1.5x headroom.
-        assert decision.max_fare == 300
+        # Distance 100 at 2 credits per unit: the opening offer is the estimate.
+        assert decision.fare_offer == 200
+        assert brain.migration_intent.first_request_turn == sim.current_turn
 
-    def test_max_fare_caps_at_the_actors_money(self, leaving):
+    def test_the_offer_climbs_to_the_headroom_cap(self, leaving):
         sim, actor, brain = leaving
-        sim.current_turn = brain.migration_intent.since_turn + mig.MIN_INTENT_TURNS
-        actor.money = 250
+        start = brain.migration_intent.since_turn + mig.MIN_INTENT_TURNS
+        offers = []
+        for elapsed in (0, mig.FARE_ESCALATION_TURNS // 2, mig.FARE_ESCALATION_TURNS):
+            sim.current_turn = start + elapsed
+            decision = brain.decide_migration(actor)
+            assert isinstance(decision, MigrationRequest)
+            offers.append(decision.fare_offer)
+        assert offers == [200, 250, 300]
 
+        # And no further: the ceiling is the ceiling.
+        sim.current_turn = start + 4 * mig.FARE_ESCALATION_TURNS
         decision = brain.decide_migration(actor)
         assert isinstance(decision, MigrationRequest)
-        assert decision.max_fare == 250
+        assert decision.fare_offer == 300
+
+    def test_the_offer_caps_at_the_actors_money(self, leaving):
+        sim, actor, brain = leaving
+        start = brain.migration_intent.since_turn + mig.MIN_INTENT_TURNS
+        sim.current_turn = start
+        brain.decide_migration(actor)
+
+        sim.current_turn = start + mig.FARE_ESCALATION_TURNS
+        actor.money = 250
+        decision = brain.decide_migration(actor)
+        assert isinstance(decision, MigrationRequest)
+        assert decision.fare_offer == 250
 
     def test_an_actor_that_cannot_afford_the_fare_keeps_saving(self, leaving):
         sim, actor, brain = leaving
@@ -323,6 +374,59 @@ class TestDepartureRequest:
 
         assert isinstance(brain.decide_migration(actor), NoMigration)
         assert brain.migration_intent.active
+
+    def test_money_the_open_contract_holds_still_counts_as_the_budget(self, leaving):
+        sim, actor, brain = leaving
+        sim.current_turn = brain.migration_intent.since_turn + mig.MIN_INTENT_TURNS
+        actor.passage_contract = _open_contract(sim, actor, advance=200)
+        actor.money = 0
+
+        decision = brain.decide_migration(actor)
+        assert isinstance(decision, MigrationRequest)
+        assert decision.fare_offer == 200
+
+
+class TestPassageExpiry:
+    @pytest.fixture
+    def leaving(self, monkeypatch):
+        sim = _world(2)
+        monkeypatch.setattr(mig, "get_navigator", lambda _sim: _navigator(default=10.0))
+        brain = ColonistBrain()
+        actor = _actor(sim, sim.planets[0], brain, money=10_000)
+        brain.migration_intent = mig.MigrationIntent(
+            active=True, since_turn=0, destination=sim.planets[1]
+        )
+        # Off the actor's check turn, so the intent state machine stays put
+        # and only the expiry handling is under test.
+        sim.current_turn = _quiet_turn(actor)
+        return sim, actor, brain
+
+    def test_the_first_expiry_leaves_the_intent_standing(self, leaving):
+        sim, actor, brain = leaving
+        actor.passage_contract = _expired_contract(sim, actor)
+
+        decision = brain.decide_migration(actor)
+        assert isinstance(decision, MigrationRequest)
+        assert brain.migration_intent.active
+        assert brain.migration_intent.expiries == 1
+
+    def test_one_expiry_is_counted_once(self, leaving):
+        sim, actor, brain = leaving
+        actor.passage_contract = _expired_contract(sim, actor)
+
+        for _ in range(5):
+            brain.decide_migration(actor)
+        assert brain.migration_intent.expiries == 1
+        assert brain.migration_intent.active
+
+    def test_the_second_expiry_drops_the_intent(self, leaving):
+        sim, actor, brain = leaving
+        actor.passage_contract = _expired_contract(sim, actor)
+        brain.decide_migration(actor)
+        actor.passage_contract = _expired_contract(sim, actor)
+
+        assert isinstance(brain.decide_migration(actor), NoMigration)
+        assert not brain.migration_intent.active
 
 
 class TestLiquidation:

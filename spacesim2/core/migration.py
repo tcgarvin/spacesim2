@@ -4,42 +4,44 @@ The split is deliberate. Brains decide whether, when, and where an actor
 moves (``ActorBrain.decide_migration``); this module and the simulation own
 what a move does. Nothing here reads a drive or a price to decide anything.
 
-Flow, v1 (no ships involved):
+Flow:
 
 1. During its turn an actor's brain returns a ``MigrationRequest`` or
    ``NO_MIGRATION``. ``Actor.take_turn`` stores the result on
    ``actor.migration_request``. The actor phase is threaded by planet, so
    nothing moves here.
 2. After the ship phase and before market matching,
-   ``run_migration_phase`` first lands every migrant whose arrival turn has
-   come, then scans regular actors: it cancels their orders, charges the
-   fare to the origin's spaceport operators, reserves a land at the
-   destination, clears the inventory, removes the actor from its planet and
-   from ``sim.actors``, and parks it in ``sim.migrants_in_transit`` for one
-   turn per lane unit of distance.
-3. On arrival ``relocate_actor`` finishes the move: the actor joins the
-   destination with the reserved land and a fresh brain cache, and its
-   brain's ``on_relocated`` hook runs.
+   ``run_migration_phase`` turns each standing request into an open passage
+   contract on the origin planet's board, re-prices one the actor has
+   raised its offer on, and cancels one the actor no longer wants. Nobody
+   moves here either.
+3. A ship brain accepts the contract, and ``Ship.start_journey`` loads the
+   passenger: the actor leaves its planet and ``sim.actors``, travels with
+   nothing, and the fare is paid to the carrier.
+4. ``Ship.update_journey`` delivers on arrival, which calls
+   ``relocate_actor``: the actor joins the destination with the land the
+   load claimed for it and a fresh brain cache, and its brain's
+   ``on_relocated`` hook runs.
 
-An actor in transit is in neither ``sim.actors`` nor any
+A passenger aboard a ship is in neither ``sim.actors`` nor any
 ``planet.actors``, which keeps the ``core/parallel.py`` invariant that the
 two cover each other. Its ``planet`` still points at the origin;
 ``actor.in_transit`` is the authoritative flag.
-
-v2 will hand step 2 to a ship brain that accepts the request as a passage
-contract at the spaceport; ``relocate_actor`` stays the same.
 
 ``refresh_planet_stats`` builds one ``PlanetStats`` per planet at the start
 of each turn so brains can score destinations without walking every actor.
 The stats are mechanical aggregates only; how to weigh them is brain logic.
 """
 
-import math
 from dataclasses import dataclass
 from statistics import median
-from typing import TYPE_CHECKING, Dict, List, Mapping, Union
+from typing import TYPE_CHECKING, Dict, List, Mapping, Optional, Union
 
-from spacesim2.core.navigation import get_navigator
+from spacesim2.core.contracts import (
+    Contract,
+    ContractStatus,
+    PassengerPayload,
+)
 
 # ``Actor`` imports this module for ``NO_MIGRATION``, so anything reachable
 # from ``core.actor`` is imported inside the function that needs it.
@@ -51,26 +53,38 @@ if TYPE_CHECKING:
     from spacesim2.core.simulation import Simulation
 
 
-# Credits per unit of lane distance for passage in v1. Paid to the origin
-# planet's spaceport operators (split evenly) so the money stays in the
-# economy; if there are none it is destroyed.
+# Credits per unit of lane distance. This is only the estimate a brain opens
+# its offer at; what a passage actually costs is the advance on the contract
+# a ship agrees to fly, and that goes to the carrier.
 PASSAGE_FARE_PER_DISTANCE = 2.0
 PASSAGE_FARE_MINIMUM = 20
 
-# Lane distance covered per transit turn; the same speed ships fly at
-# (``Ship.travel_time``), so v1 transit takes as long as the v2 passage will.
-TRANSIT_DISTANCE_PER_TURN = 20
+# Turns a passage contract stands before the board expires it. Long enough
+# that a ship several lanes away can route to the planet, short enough that
+# an offer nobody takes is re-priced rather than left standing forever.
+PASSAGE_CONTRACT_TTL = 30
 
 # MIGRANT_CARGO_UNITS, the hold space one migrant occupies, lives in
 # core/contracts.py with the passage contract that carries the passenger.
 
+# Statuses in which a posted contract is still the actor's live passage.
+_LIVE_STATUSES = (
+    ContractStatus.OPEN,
+    ContractStatus.ACCEPTED,
+    ContractStatus.LOADED,
+)
+
 
 @dataclass(frozen=True)
 class MigrationRequest:
-    """A brain's decision to move to ``destination`` for at most ``max_fare``."""
+    """A brain's standing offer of ``fare_offer`` for passage to ``destination``.
+
+    Restated every turn while the intent holds. The offer is what the actor
+    is bidding now; the brain raises it while nobody takes the contract.
+    """
 
     destination: "Planet"
-    max_fare: int
+    fare_offer: int
 
 
 class NoMigration:
@@ -106,7 +120,7 @@ class PlanetStats:
 
 @dataclass(frozen=True)
 class MigrationEvent:
-    """One completed departure, for the run log and post-hoc analysis."""
+    """One passenger boarding a ship, for the run log and post-hoc analysis."""
 
     turn: int
     actor_name: str
@@ -115,19 +129,12 @@ class MigrationEvent:
     fare: int
 
 
-@dataclass
-class MigrantInTransit:
-    """An actor between planets, with the land already reserved for it."""
-
-    actor: "Actor"
-    origin: "Planet"
-    destination: "Planet"
-    land: "Land"
-    arrival_turn: int
-
-
 def passage_fare(distance: float) -> int:
-    """v1 fare for a route of ``distance`` lane units."""
+    """Estimated fare for a route of ``distance`` lane units.
+
+    The opening offer a brain posts, not a price core charges: a ship is
+    paid whatever advance it agrees to fly for.
+    """
     return max(PASSAGE_FARE_MINIMUM, int(round(distance * PASSAGE_FARE_PER_DISTANCE)))
 
 
@@ -182,83 +189,98 @@ def refresh_planet_stats(sim: "Simulation") -> Dict["Planet", PlanetStats]:
 
 
 def run_migration_phase(sim: "Simulation") -> None:
-    """Depart every actor holding a request it can afford; land arrivals due.
+    """Bring every actor's passage contract in line with its standing request.
 
-    Arrivals are settled first, so an actor that lands this turn is on its
-    new planet before departures are considered and the freed land it left
-    behind is already available to someone else.
+    Nobody moves here. The phase only keeps the boards honest: a request
+    with no live contract posts one, a raised offer re-prices the open
+    contract, a re-aimed destination replaces it, and a withdrawn request
+    takes it down. A contract a ship has already taken on is left alone;
+    pulling one out from under a carrier is what stranding is for.
     """
-    _land_arrivals(sim)
-    _depart_requesters(sim)
-
-
-def _land_arrivals(sim: "Simulation") -> None:
-    """Place every migrant whose arrival turn has come."""
-    still_flying: List[MigrantInTransit] = []
-    for migrant in sim.migrants_in_transit:
-        if migrant.arrival_turn <= sim.current_turn:
-            relocate_actor(migrant.actor, migrant.destination, migrant.land)
-        else:
-            still_flying.append(migrant)
-    sim.migrants_in_transit = still_flying
-
-
-def _depart_requesters(sim: "Simulation") -> None:
-    """Charge, strip, and launch every actor whose request is affordable."""
-    navigator = get_navigator(sim)
     for actor in list(sim.actors):
-        request = actor.migration_request
-        if not isinstance(request, MigrationRequest):
-            continue
-        actor.migration_request = NO_MIGRATION
+        _sync_passage_contract(sim, actor)
 
-        origin = actor.planet
-        destination = request.destination
-        if origin is None or destination is origin:
-            continue
-        if not destination.free_lands:
-            continue
-        distance = navigator.distance(origin, destination)
-        fare = passage_fare(distance)
-        if fare > request.max_fare or fare > actor.money:
-            continue
 
-        _cancel_all_orders(actor, origin)
-        actor.money -= fare
-        _pay_operators(origin, fare)
+def _sync_passage_contract(sim: "Simulation", actor: "Actor") -> None:
+    """Post, re-price, replace, or withdraw one actor's passage contract."""
+    live = live_passage_contract(actor)
+    request = actor.migration_request
 
-        land = destination.claim_land()
-        origin.remove_actor(actor)
-        sim.actors.remove(actor)
-        actor.in_transit = True
-        # The migrant travels with nothing. A brain that wants value at the
-        # far end liquidates before it asks to move.
-        actor.inventory.clear()
+    if not isinstance(request, MigrationRequest):
+        if live is not None and live.status is ContractStatus.OPEN:
+            live.origin.contracts.cancel(live)
+        return
 
-        # One turn per lane unit, at least one: the trip is the same length
-        # a ship would fly, so a move is a real cost in lost turns.
-        arrival_turn = sim.current_turn + max(
-            1, math.ceil(distance / TRANSIT_DISTANCE_PER_TURN)
+    origin = actor.planet
+    if origin is None or request.destination is origin:
+        return
+
+    # A re-price keeps the turn the actor first asked for passage. The offer
+    # climbs by a credit or two a turn, so the contract is replaced most
+    # turns of the climb, and a reset clock would measure the last re-price
+    # rather than how long the actor has been waiting.
+    posted_turn = sim.current_turn
+    if live is not None:
+        if live.status is not ContractStatus.OPEN:
+            return
+        # Money the cancel would hand back is money the repost can offer.
+        affordable = min(request.fare_offer, actor.money + live.total_payment)
+        if live.destination is request.destination and affordable <= live.advance:
+            return
+        posted_turn = live.posted_turn
+        live.origin.contracts.cancel(live)
+
+    offer = min(request.fare_offer, actor.money)
+    if offer <= 0:
+        return
+
+    contract = Contract(
+        poster=actor,
+        origin=origin,
+        destination=request.destination,
+        payload=PassengerPayload(actor=actor),
+        advance=offer,
+        on_delivery=0,
+        posted_turn=posted_turn,
+        expires_turn=sim.current_turn + PASSAGE_CONTRACT_TTL,
+    )
+    origin.contracts.post(contract)
+    actor.passage_contract = contract
+    sim.contracts_posted += 1
+
+
+def live_passage_contract(actor: "Actor") -> Optional[Contract]:
+    """The actor's passage contract while it is still running, else None.
+
+    ``actor.passage_contract`` is never cleared: the contract's own status
+    says whether it is still live, so expiry, cancellation, and delivery
+    need no bookkeeping anywhere else, and the brain can read the ending
+    off the last contract it posted.
+    """
+    contract = actor.passage_contract
+    if contract is None or contract.status not in _LIVE_STATUSES:
+        return None
+    return contract
+
+
+def record_passenger_departure(actor: "Actor", contract: Contract, fare: int) -> None:
+    """Count a passenger boarding its ship: the departure, event, and wait.
+
+    Called from ``contracts.load_contract``, the one moment a migration is
+    certain: the actor has left its planet and the carrier has been paid.
+    """
+    sim = actor.sim
+    sim.migration_departures += 1
+    sim.passage_wait_turns.append(sim.current_turn - contract.posted_turn)
+    sim.migration_log.append(
+        MigrationEvent(
+            turn=sim.current_turn,
+            actor_name=actor.name,
+            origin_name=contract.origin.name,
+            destination_name=contract.destination.name,
+            fare=fare,
         )
-        sim.migrants_in_transit.append(
-            MigrantInTransit(
-                actor=actor,
-                origin=origin,
-                destination=destination,
-                land=land,
-                arrival_turn=arrival_turn,
-            )
-        )
-        sim.migration_departures += 1
-        sim.migration_log.append(
-            MigrationEvent(
-                turn=sim.current_turn,
-                actor_name=actor.name,
-                origin_name=origin.name,
-                destination_name=destination.name,
-                fare=fare,
-            )
-        )
+    )
 
 
 def _cancel_all_orders(actor: "Actor", planet: "Planet") -> None:
@@ -266,29 +288,6 @@ def _cancel_all_orders(actor: "Actor", planet: "Planet") -> None:
     market = planet.market
     for order_id in list(actor.active_orders):
         market.cancel_order(order_id)
-
-
-def _pay_operators(planet: "Planet", fare: int) -> None:
-    """Split a fare evenly among the planet's spaceport operators.
-
-    Integer division leaves a remainder of at most one credit per operator;
-    it is destroyed, which keeps the split symmetric. With no operator on
-    the planet the whole fare is destroyed.
-    """
-    from spacesim2.core.actor import ActorType
-    from spacesim2.core.brains import SpaceportOperatorBrain
-
-    operators = [
-        actor
-        for actor in planet.actors
-        if actor.actor_type is ActorType.SERVICE
-        and isinstance(actor.brain, SpaceportOperatorBrain)
-    ]
-    if not operators:
-        return
-    share = fare // len(operators)
-    for operator in operators:
-        operator.money += share
 
 
 def relocate_actor(actor: "Actor", destination: "Planet", land: "Land") -> None:

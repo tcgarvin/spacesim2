@@ -11,6 +11,7 @@ from spacesim2.core.brains import (
     SpaceportOperatorBrain,
 )
 from spacesim2.core.commodity import CommodityRegistry
+from spacesim2.core.contracts import PassengerPayload
 from spacesim2.core.data_logger import DataLogger
 from spacesim2.core.drives import (
     ActorDrive,
@@ -33,7 +34,6 @@ from spacesim2.core.galaxy import (
 from spacesim2.core.government import refresh_government_jobs
 from spacesim2.core.market import Market
 from spacesim2.core.migration import (
-    MigrantInTransit,
     MigrationEvent,
     PlanetStats,
     refresh_planet_stats,
@@ -143,13 +143,17 @@ class Simulation:
         self.ships: List[Ship] = []
         self.current_turn = 0
         # Migration state; see core/migration.py. planet_stats is rebuilt at
-        # the top of every turn, migrants_in_transit holds actors that are in
-        # neither sim.actors nor any planet.actors.
+        # the top of every turn. A departure is a passenger boarding a ship
+        # and an arrival is one being put down, so the gap between the two
+        # counts is the passengers in flight.
         self.planet_stats: Dict[Planet, PlanetStats] = {}
-        self.migrants_in_transit: List[MigrantInTransit] = []
         self.migration_log: List[MigrationEvent] = []
         self.migration_departures: int = 0
         self.migration_arrivals: int = 0
+        # Turns from posting a passage contract to boarding, one per
+        # departure, and passage contracts nobody took before expiry.
+        self.passage_wait_turns: List[int] = []
+        self.passage_expired: int = 0
         # Transport contracts; see core/contracts.py. The three endings are
         # counted by core as they happen; ``contracts_posted`` is counted by
         # whoever posts, since a board has no simulation to reach.
@@ -587,9 +591,17 @@ class Simulation:
         # brain decides anything.
         refresh_planet_stats(self)
 
-        # Stale offers come off the boards before any brain reads one.
+        # Stale offers come off the boards before any brain reads one. An
+        # expired passage is counted apart: it is a migrant no ship would
+        # carry, which is the failure migration v2 has to watch for.
         for planet in self.planets:
-            self.contracts_expired += len(planet.contracts.expire(self.current_turn))
+            expired = planet.contracts.expire(self.current_turn)
+            self.contracts_expired += len(expired)
+            self.passage_expired += sum(
+                1
+                for contract in expired
+                if isinstance(contract.payload, PassengerPayload)
+            )
 
         # Every board back to its quota, so an idle ship always has a job.
         refresh_government_jobs(self)
@@ -609,8 +621,9 @@ class Simulation:
         for ship in self.ships:
             ship.take_turn()
 
-        # Before matching: a departing actor's orders are cancelled here, so
-        # nothing it left resting can fill after it has gone.
+        # After the ship phase, so a passenger that boarded this turn is not
+        # still asking for passage, and before matching, so a contract
+        # posted now reserves its money out of the same turn's book.
         run_migration_phase(self)
 
         self._process_markets()

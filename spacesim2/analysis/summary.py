@@ -14,7 +14,7 @@ import statistics
 from typing import Dict, List, Sequence
 
 from spacesim2.core.actor import Actor, ActorType
-from spacesim2.core.contracts import GOVERNMENT
+from spacesim2.core.contracts import GOVERNMENT, ContractStatus, PassengerPayload
 from spacesim2.core.drives.prosperity_drive import (
     PROSPERITY_CATEGORIES,
     ProsperityDriveMetrics,
@@ -122,20 +122,42 @@ def _summarize_migration(sim: Simulation, regular_actors: List) -> Dict[str, flo
     """Actor movement between planets. Not part of the verdict.
 
     ``departures_per_100_turns_per_1000_actors`` normalizes the rate so runs
-    of different length and population compare directly. In-transit actors
-    are excluded from ``regular_actors``, so they are added back for the
-    denominator.
+    of different length and population compare directly. Passengers aboard a
+    ship are excluded from ``regular_actors``, so they are added back for
+    the denominator.
+
+    ``waiting`` and ``expired`` are the two ways passage fails: an actor
+    whose contract nobody accepts, and one whose contract ran out. Both
+    large on poor planets means the fleet is not reaching them, which is
+    what migration exists to fix.
     """
-    population = len(regular_actors) + len(sim.migrants_in_transit)
+    aboard = sum(
+        1
+        for ship in sim.ships
+        for contract in ship.contracts
+        if contract.status is ContractStatus.LOADED
+        and isinstance(contract.payload, PassengerPayload)
+    )
+    waiting = sum(
+        1
+        for planet in sim.planets
+        for contract in planet.contracts.open_contracts()
+        if isinstance(contract.payload, PassengerPayload)
+    )
+    population = len(regular_actors) + aboard
     turns = sim.current_turn
     if population > 0 and turns > 0:
         rate = sim.migration_departures * 100.0 * 1000.0 / (turns * population)
     else:
         rate = 0.0
+    waits = sim.passage_wait_turns
     return {
         "departures": sim.migration_departures,
         "arrivals": sim.migration_arrivals,
-        "in_transit": len(sim.migrants_in_transit),
+        "aboard": aboard,
+        "waiting": waiting,
+        "expired": sim.passage_expired,
+        "median_wait_turns": round(statistics.median(waits), 1) if waits else 0.0,
         "departures_per_100_turns_per_1000_actors": round(rate, 2),
     }
 

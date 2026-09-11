@@ -14,6 +14,7 @@ from spacesim2.core.planet import Planet
 
 if TYPE_CHECKING:
     from spacesim2.core.actor_brain import ActorBrain
+    from spacesim2.core.contracts import Contract
     from spacesim2.core.drives.actor_drive import ActorDrive
     from spacesim2.core.process import ProcessDefinition
     from spacesim2.core.simulation import Simulation
@@ -93,6 +94,11 @@ class Actor:
         # core/migration.run_migration_phase. Only land-claiming actors are
         # ever asked; service actors stay put.
         self.migration_request: MigrationDecision = NO_MIGRATION
+        # The last passage contract posted for this actor, if any. Never
+        # cleared: its status is what says whether the passage is still
+        # live, so the migration phase reads the one live contract off it
+        # and the brain reads an expiry off the same field.
+        self.passage_contract: Optional["Contract"] = None
         # True between departure and arrival. An in-transit actor is in
         # neither ``sim.actors`` nor any ``planet.actors``, so this flag, not
         # ``planet``, is the authoritative answer to "is this actor placed?".
