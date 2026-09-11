@@ -5,24 +5,35 @@ cover what core does: the land pools, the passage contracts the migration
 phase keeps on the boards, and the invariants the rest of the sim relies on.
 """
 
+import math
+from typing import TYPE_CHECKING, Optional, cast
+
 import pytest
 
 from spacesim2.core.actor import Actor, ActorType
 from spacesim2.core.actor_brain import ActorBrain
 from spacesim2.core.brains import SpaceportOperatorBrain
 from spacesim2.core.contracts import ContractStatus, PassengerPayload
+from spacesim2.core.government import GOVERNMENT_JOB_MARGIN
 from spacesim2.core.land import Land, NoFreeLandError
 from spacesim2.core.market import Market
 from spacesim2.core.migration import (
     NO_MIGRATION,
     PASSAGE_CONTRACT_TTL,
+    PASSAGE_FARE_MARGIN,
+    PASSAGE_FARE_MINIMUM,
     MigrationRequest,
+    passage_fare,
     refresh_planet_stats,
     run_migration_phase,
 )
+from spacesim2.core.navigation import FUEL_BID_FALLBACK_FLOOR
 from spacesim2.core.planet import Planet
 from spacesim2.core.ship import Ship
 from spacesim2.core.simulation import Simulation
+
+if TYPE_CHECKING:
+    from spacesim2.core.navigation import Navigator
 
 
 class StayPutBrain(ActorBrain):
@@ -84,6 +95,45 @@ def _two_planet_sim(lands: int = 10, operators: int = 2) -> Simulation:
             sim.actors.append(actor)
             planet.add_actor(actor)
     return sim
+
+
+class _FareNavigator:
+    """One fixed lane distance and fuel reference, for pricing a fare alone."""
+
+    def __init__(self, distance: float, reference: Optional[float] = 40.0) -> None:
+        self._distance = distance
+        self._reference = reference
+
+    def distance(self, a: Planet, b: Planet) -> float:
+        return self._distance
+
+    def fuel_value_reference(self) -> Optional[float]:
+        return self._reference
+
+
+def _fare(distance: float, reference: Optional[float] = 40.0) -> int:
+    sim = _two_planet_sim()
+    navigator = cast("Navigator", _FareNavigator(distance, reference))
+    return passage_fare(navigator, sim.planets[0], sim.planets[1])
+
+
+class TestPassageFare:
+    def test_fare_is_the_legs_fuel_plus_the_margin(self) -> None:
+        # 100 lane units burns 5 fuel at 1 per 20; at a 40-credit reference
+        # that is 200 of fuel, and PASSAGE_FARE_MARGIN adds half.
+        assert _fare(100.0) == 300
+
+    def test_the_margin_is_double_a_government_jobs(self) -> None:
+        assert PASSAGE_FARE_MARGIN == 2 * GOVERNMENT_JOB_MARGIN
+
+    def test_a_cheap_short_leg_pays_the_minimum(self) -> None:
+        # 1 fuel unit at 10 credits, plus half, is 15: under the floor.
+        assert _fare(5.0, reference=10.0) == PASSAGE_FARE_MINIMUM
+
+    def test_no_fuel_reference_falls_back_to_the_bid_floor(self) -> None:
+        # Before anything trades: 5 fuel at FUEL_BID_FALLBACK_FLOOR, plus half.
+        expected = math.ceil(5 * FUEL_BID_FALLBACK_FLOOR * 1.5)
+        assert _fare(100.0, reference=None) == expected
 
 
 class TestPlanetLandPool:

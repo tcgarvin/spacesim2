@@ -33,6 +33,7 @@ of each turn so brains can score destinations without walking every actor.
 The stats are mechanical aggregates only; how to weigh them is brain logic.
 """
 
+import math
 from dataclasses import dataclass
 from statistics import median
 from typing import TYPE_CHECKING, Dict, List, Mapping, Optional, Union
@@ -42,6 +43,7 @@ from spacesim2.core.contracts import (
     ContractStatus,
     PassengerPayload,
 )
+from spacesim2.core.navigation import leg_fuel_cost
 
 # ``Actor`` imports this module for ``NO_MIGRATION``, so anything reachable
 # from ``core.actor`` is imported inside the function that needs it.
@@ -49,14 +51,21 @@ from spacesim2.core.contracts import (
 if TYPE_CHECKING:
     from spacesim2.core.actor import Actor
     from spacesim2.core.land import Land
+    from spacesim2.core.navigation import Navigator
     from spacesim2.core.planet import Planet
     from spacesim2.core.simulation import Simulation
 
 
-# Credits per unit of lane distance. This is only the estimate a brain opens
-# its offer at; what a passage actually costs is the advance on the contract
-# a ship agrees to fly, and that goes to the carrier.
-PASSAGE_FARE_PER_DISTANCE = 2.0
+# Fraction above the leg's fuel cost the fare estimate offers, and the floor
+# under it for a route whose fuel is negligible. This is only the estimate a
+# brain opens its offer at; what a passage actually costs is the advance on
+# the contract a ship agrees to fly, and that goes to the carrier.
+#
+# The margin is double a government job's 0.25. A job is a ship's fallback
+# when it has nothing better, so it only has to beat idling; a passenger is
+# asking a ship to fly a destination the ship did not choose, and the fare
+# has to cover the maintenance the trip risks as well as its fuel.
+PASSAGE_FARE_MARGIN = 0.5
 PASSAGE_FARE_MINIMUM = 20
 
 # Turns a passage contract stands before the board expires it. Long enough
@@ -129,13 +138,26 @@ class MigrationEvent:
     fare: int
 
 
-def passage_fare(distance: float) -> int:
-    """Estimated fare for a route of ``distance`` lane units.
+def passage_fare(
+    navigator: "Navigator", origin: "Planet", destination: "Planet"
+) -> int:
+    """Estimated fare for passage from ``origin`` to ``destination``.
+
+    The leg's fuel cost plus ``PASSAGE_FARE_MARGIN``, floored at
+    ``PASSAGE_FARE_MINIMUM``: the same pricing a government job gets, at a
+    wider margin. Pricing the fare off anything but what the leg costs the
+    carrier leaves the passage break-even or worse, and a ship that values
+    a passenger group at no profit flies something else.
 
     The opening offer a brain posts, not a price core charges: a ship is
     paid whatever advance it agrees to fly for.
     """
-    return max(PASSAGE_FARE_MINIMUM, int(round(distance * PASSAGE_FARE_PER_DISTANCE)))
+    return max(
+        PASSAGE_FARE_MINIMUM,
+        math.ceil(
+            leg_fuel_cost(navigator, origin, destination) * (1 + PASSAGE_FARE_MARGIN)
+        ),
+    )
 
 
 def refresh_planet_stats(sim: "Simulation") -> Dict["Planet", PlanetStats]:

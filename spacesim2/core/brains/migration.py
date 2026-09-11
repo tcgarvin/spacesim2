@@ -96,8 +96,10 @@ PROPENSITY_MAX = 1.0
 # at a price worth taking, and what a poor actor needs to save the fare.
 MIN_INTENT_TURNS = 30
 
-# Ceiling on the fare offer, as a multiple of the distance estimate, and the
-# turns the offer takes to climb there from the estimate. No ship is obliged
+# Ceiling on the fare offer, as a multiple of ``passage_fare``, and the
+# turns the offer takes to climb there from the estimate. The estimate is
+# already the leg's fuel plus half, so the ceiling is fuel times 2.25. No
+# ship is obliged
 # to fly a passage, so an offer that nobody takes has to rise until one
 # does; the ceiling keeps a desperate actor from bidding away the money it
 # needs to restart at the far end. Both bounds also apply against the
@@ -272,7 +274,7 @@ def choose_destination(
     for planet, planet_stats in stats.items():
         if planet is origin or planet_stats.free_land_count <= 0:
             continue
-        fare = passage_fare(navigator.distance(origin, planet))
+        fare = passage_fare(navigator, origin, planet)
         score = _score_planet(
             _expected_land_quality(planet_stats), planet_stats, fare, money, fare_weight
         )
@@ -358,7 +360,7 @@ def decide_migration(brain: MigrationMind, actor: "Actor") -> MigrationDecision:
     if _count_expiry(brain, actor):
         return NO_MIGRATION
 
-    fare = passage_fare(get_navigator(sim).distance(actor.planet, intent.destination))
+    fare = passage_fare(get_navigator(sim), actor.planet, intent.destination)
     # Money the actor's own open contract is holding is money it can offer:
     # cancelling to re-price hands the reserve straight back.
     live = live_passage_contract(actor)
@@ -378,7 +380,7 @@ def decide_migration(brain: MigrationMind, actor: "Actor") -> MigrationDecision:
 def _fare_offer(fare: int, turns_offering: int, budget: int) -> int:
     """The fare to offer now: the estimate, raised toward its ceiling.
 
-    Linear from the distance estimate at the first request to
+    Linear from ``passage_fare`` at the first request to
     ``FARE_HEADROOM`` times it after ``FARE_ESCALATION_TURNS``. The rise is
     the only price discovery a passage gets; a flat offer on a route no
     ship wants would simply expire, over and over.

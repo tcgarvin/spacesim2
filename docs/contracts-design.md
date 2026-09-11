@@ -8,12 +8,9 @@ carry later uses without changing shape.
 ## Why
 
 Migration v1 moves an actor by teleport at ship speed. The fare goes to the
-spaceport operators and no ship is involved. Two things are wrong with that:
-
-- Fleet capacity does not bound migration. A wave of leavers moves at once,
-  which is the herding the decision log records at 100 planets.
-- The fare is a flat distance rate. Everything else a ship carries is priced
-  by what the ship could otherwise do with the trip.
+spaceport operators and no ship is involved. Fleet capacity does not bound
+migration: a wave of leavers moves at once, which is the herding the decision
+log records at 100 planets.
 
 A ship should carry the migrant. Once a ship can be paid to carry something
 that is not its own cargo, the same mechanism covers other jobs: a
@@ -105,10 +102,18 @@ deliver is that a loaded contract pins its destination, below.
 While the contract is open the actor keeps living on the origin planet:
 eats, works, sells. The v1 "leaving" mode of the brain (no tools, no
 facilities, no recipes, sell everything) stays on. The brain escalates
-`fare_offer` from the v1 estimate toward its cap over
-`FARE_ESCALATION_TURNS` (proposed 20) while unaccepted, and drops the
+`fare_offer` from `passage_fare` toward its cap over
+`FARE_ESCALATION_TURNS` (20) while unaccepted, and drops the
 intent if the contract expires twice. That gives fare price discovery
 without a second market.
+
+The fare is priced like a government job, off the same
+`leg_fuel_cost(navigator, origin, destination)` in `core/navigation.py`:
+`max(20, ceil(leg_fuel_cost * (1 + PASSAGE_FARE_MARGIN)))` with
+`PASSAGE_FARE_MARGIN` 0.5 against the job's 0.25, and the escalation carries
+it to fuel x 2.25. A job is a ship's fallback and only has to beat idling; a
+passage asks the ship to fly a destination it did not choose, so the fare
+has to cover the trip's expected maintenance as well as its fuel.
 
 The land is claimed at load, not at post, so an open contract holds nothing
 at the destination and the no-overshoot guarantee from v1 still holds.

@@ -98,7 +98,8 @@ pay; if nothing clears the gain floor any more, or pressure falls under
 brain returns the request every turn until a ship carries the actor away.
 
 **The offer.** No ship is obliged to fly a passage, so the fare is bid, not
-set. The first request offers `passage_fare(distance)`; from that turn the
+set. The first request offers `passage_fare(navigator, origin, destination)`,
+the leg's fuel cost plus half; from that turn the
 offer rises linearly to `FARE_HEADROOM` (1.5) times it over
 `FARE_ESCALATION_TURNS` (20), capped there and capped at the actor's money.
 Money the actor's own open contract is holding counts toward that budget,
@@ -123,8 +124,16 @@ every wave to one planet and fill its pool.
   expiring returns it. The whole fare goes to the carrier at boarding, not
   on delivery, so a passenger can fund a broke ship's fuel. What makes the
   ship deliver is that a loaded contract pins its destination.
-- `passage_fare(distance)`, 2 credits per lane unit, minimum 20, is only
-  the estimate the brain opens its offer at.
+- `passage_fare(navigator, origin, destination)` is only the estimate the
+  brain opens its offer at:
+  `max(PASSAGE_FARE_MINIMUM, ceil(leg_fuel_cost * (1 + PASSAGE_FARE_MARGIN)))`
+  with `PASSAGE_FARE_MARGIN` 0.5 and `PASSAGE_FARE_MINIMUM` 20.
+  `leg_fuel_cost(navigator, origin, destination)` in `core/navigation.py` is
+  the baseline burn at efficiency 1.0 times `Navigator.fuel_value_reference()`,
+  or `FUEL_BID_FALLBACK_FLOOR` before anything has traded. Government freight
+  is priced off the same leg cost at a 0.25 margin, so a passage pays a
+  carrier better than the job it competes with. The escalation then takes the
+  offer from fuel x 1.5 to fuel x 2.25.
 - A passenger occupies `MIGRANT_CARGO_UNITS` (10) of hold, so it rides
   along with a trade rather than taking a whole trip. Which contracts a
   ship accepts is ship-brain logic; see `docs/contracts-design.md`.

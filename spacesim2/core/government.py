@@ -18,11 +18,11 @@ job beats a trade only when there is no trade.
 
 import math
 import random
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Tuple
 from weakref import WeakKeyDictionary
 
 from spacesim2.core.contracts import GOVERNMENT, ConsignmentPayload, Contract
-from spacesim2.core.navigation import FUEL_BID_FALLBACK_FLOOR, get_navigator
+from spacesim2.core.navigation import get_navigator, leg_fuel_cost
 
 if TYPE_CHECKING:
     from spacesim2.core.planet import Planet
@@ -115,20 +115,14 @@ def government_job_advance(
 ) -> int:
     """What the government pays a carrier to fly this leg.
 
-    One leg of fuel at the galaxy's typical fuel valuation, plus
-    ``GOVERNMENT_JOB_MARGIN``. Fuel is the baseline burn at efficiency 1.0,
-    so an efficient ship keeps the difference. Before anything has traded
-    there is no reference, and ``FUEL_BID_FALLBACK_FLOOR`` stands in, the
-    same fabricated-price guard the fuel bids use.
+    ``leg_fuel_cost`` for the leg plus ``GOVERNMENT_JOB_MARGIN``. Passage
+    fares are priced off the same leg cost at their own margin; see
+    ``core/migration.py``.
     """
-    from spacesim2.core.ship import Ship
-
     navigator = get_navigator(sim)
-    reference: Optional[float] = navigator.fuel_value_reference()
-    if reference is None:
-        reference = float(FUEL_BID_FALLBACK_FLOOR)
-    fuel_needed = Ship.calculate_fuel_needed(navigator.distance(origin, destination))
-    return math.ceil(fuel_needed * reference * (1 + GOVERNMENT_JOB_MARGIN))
+    return math.ceil(
+        leg_fuel_cost(navigator, origin, destination) * (1 + GOVERNMENT_JOB_MARGIN)
+    )
 
 
 def _open_government_jobs(planet: "Planet") -> int:

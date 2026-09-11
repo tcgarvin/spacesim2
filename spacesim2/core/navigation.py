@@ -880,6 +880,29 @@ class Navigator:
         return self._fuel_scan
 
 
+def leg_fuel_cost(
+    navigator: Navigator, origin: "Planet", destination: "Planet"
+) -> float:
+    """Credits of fuel one leg from ``origin`` to ``destination`` burns.
+
+    The baseline burn at efficiency 1.0, valued at the galaxy's typical fuel
+    valuation, so an efficient ship keeps the difference. Before anything has
+    traded there is no reference and :data:`FUEL_BID_FALLBACK_FLOOR` stands
+    in, the same fabricated-price guard the fuel bids use.
+
+    This is what a leg costs a carrier, and it is the base of every price
+    paid to one: government freight in ``core/government.py`` and passage in
+    ``core/migration.py`` each add their own margin to it.
+    """
+    from spacesim2.core.ship import Ship
+
+    reference = navigator.fuel_value_reference()
+    if reference is None:
+        reference = float(FUEL_BID_FALLBACK_FLOOR)
+    fuel_needed = Ship.calculate_fuel_needed(navigator.distance(origin, destination))
+    return fuel_needed * reference
+
+
 _navigators: "WeakKeyDictionary[Simulation, Navigator]" = WeakKeyDictionary()
 
 

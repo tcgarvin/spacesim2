@@ -23,23 +23,34 @@ if TYPE_CHECKING:
 
 
 class StubNavigator:
-    """Fixed lane distances, so these tests need no galaxy geometry."""
+    """Fixed lane distances and fuel price, so these tests need no galaxy.
+
+    Both are what ``passage_fare`` reads: a leg's fuel at 1 unit per 20 lane
+    units, valued at the reference.
+    """
 
     def __init__(
         self,
         distances: Optional[Dict[Tuple[str, str], float]] = None,
         default: float = 10.0,
+        fuel_reference: float = 40.0,
     ) -> None:
         self._distances: Dict[Tuple[str, str], float] = distances or {}
         self._default = default
+        self._fuel_reference = fuel_reference
 
     def distance(self, a: Planet, b: Planet) -> float:
         return self._distances.get((a.name, b.name), self._default)
 
+    def fuel_value_reference(self) -> Optional[float]:
+        return self._fuel_reference
 
-def _navigator(default: float = 10.0) -> "Navigator":
+
+def _navigator(default: float = 10.0, fuel_reference: float = 40.0) -> "Navigator":
     """A StubNavigator where the real type is asked for."""
-    return cast("Navigator", StubNavigator(default=default))
+    return cast(
+        "Navigator", StubNavigator(default=default, fuel_reference=fuel_reference)
+    )
 
 
 def _world(num_planets: int = 3, num_lands: int = 5) -> Simulation:
@@ -334,8 +345,9 @@ class TestDepartureRequest:
         decision = brain.decide_migration(actor)
         assert isinstance(decision, MigrationRequest)
         assert decision.destination is brain.migration_intent.destination
-        # Distance 100 at 2 credits per unit: the opening offer is the estimate.
-        assert decision.fare_offer == 200
+        # Distance 100 is 5 fuel units; at a 40-credit reference that is 200
+        # of fuel, and the opening offer is the estimate, fuel plus half.
+        assert decision.fare_offer == 300
         assert brain.migration_intent.first_request_turn == sim.current_turn
 
     def test_the_offer_climbs_to_the_headroom_cap(self, leaving):
@@ -347,13 +359,14 @@ class TestDepartureRequest:
             decision = brain.decide_migration(actor)
             assert isinstance(decision, MigrationRequest)
             offers.append(decision.fare_offer)
-        assert offers == [200, 250, 300]
+        # From the leg's fuel times 1.5 to fuel times 2.25.
+        assert offers == [300, 375, 450]
 
         # And no further: the ceiling is the ceiling.
         sim.current_turn = start + 4 * mig.FARE_ESCALATION_TURNS
         decision = brain.decide_migration(actor)
         assert isinstance(decision, MigrationRequest)
-        assert decision.fare_offer == 300
+        assert decision.fare_offer == 450
 
     def test_the_offer_caps_at_the_actors_money(self, leaving):
         sim, actor, brain = leaving
@@ -362,15 +375,15 @@ class TestDepartureRequest:
         brain.decide_migration(actor)
 
         sim.current_turn = start + mig.FARE_ESCALATION_TURNS
-        actor.money = 250
+        actor.money = 400
         decision = brain.decide_migration(actor)
         assert isinstance(decision, MigrationRequest)
-        assert decision.fare_offer == 250
+        assert decision.fare_offer == 400
 
     def test_an_actor_that_cannot_afford_the_fare_keeps_saving(self, leaving):
         sim, actor, brain = leaving
         sim.current_turn = brain.migration_intent.since_turn + mig.MIN_INTENT_TURNS
-        actor.money = 199  # the fare is 200
+        actor.money = 299  # the fare is 300
 
         assert isinstance(brain.decide_migration(actor), NoMigration)
         assert brain.migration_intent.active
@@ -378,12 +391,12 @@ class TestDepartureRequest:
     def test_money_the_open_contract_holds_still_counts_as_the_budget(self, leaving):
         sim, actor, brain = leaving
         sim.current_turn = brain.migration_intent.since_turn + mig.MIN_INTENT_TURNS
-        actor.passage_contract = _open_contract(sim, actor, advance=200)
+        actor.passage_contract = _open_contract(sim, actor, advance=300)
         actor.money = 0
 
         decision = brain.decide_migration(actor)
         assert isinstance(decision, MigrationRequest)
-        assert decision.fare_offer == 200
+        assert decision.fare_offer == 300
 
 
 class TestPassageExpiry:
