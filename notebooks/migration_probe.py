@@ -116,7 +116,7 @@ def run_probe(turns: int, planets: int, actors: int) -> dict[str, Any]:
         "params": {"turns": turns, "planets": planets, "actors": actors},
         "departures": len(sim.migration_log),
         "arrivals": sim.migration_arrivals,
-        "in_transit_at_end": len(sim.migrants_in_transit),
+        "in_transit_at_end": sim.migration_departures - sim.migration_arrivals,
         "population_min_max": [min(populations), max(populations)],
         "pool_min_max": [min(pools), max(pools)],
         "top_destinations": destinations.most_common(5),

@@ -352,8 +352,13 @@ def load_contract(ship: "Ship", contract: "Contract") -> bool:
         )
 
     if isinstance(payload, PassengerPayload):
+        from spacesim2.core.migration import record_passenger_departure
+
         if not _board_passenger(contract, payload):
             return False
+        # Boarding is the moment a migration is certain, so it is what the
+        # migration counters count.
+        record_passenger_departure(payload.actor, contract, contract.advance)
 
     _pay(contract.poster, contract.advance, ship)
     contract.status = ContractStatus.LOADED

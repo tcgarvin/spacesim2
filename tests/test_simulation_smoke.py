@@ -78,11 +78,11 @@ def test_summary_has_expected_shape(smoke_summary: dict) -> None:
     ):
         assert key in smoke_summary, f"missing summary key: {key}"
     assert smoke_summary["turns"] == 120
-    # 2 planets * 40 actors. Migrants in transit are in neither sim.actors
-    # nor any planet, so they are counted separately.
+    # 2 planets * 40 actors. A passenger aboard a ship is in neither
+    # sim.actors nor any planet, so it is counted separately.
     migration = smoke_summary["migration"]
-    assert smoke_summary["regular_actors"] + migration["in_transit"] == 80
-    assert migration["departures"] - migration["arrivals"] == migration["in_transit"]
+    assert smoke_summary["regular_actors"] + migration["aboard"] == 80
+    assert migration["departures"] - migration["arrivals"] == migration["aboard"]
 
 
 def test_food_economy_is_alive(smoke_summary: dict) -> None:

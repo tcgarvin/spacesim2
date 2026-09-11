@@ -19,7 +19,9 @@ The shape of the decision:
 4. A waiting period. The actor holds the intent for ``MIN_INTENT_TURNS``
    before it asks to depart, which is the window in which it liquidates
    what it cannot carry and saves the fare.
-5. A request, repeated every turn until core executes it.
+5. A request, repeated every turn until a ship carries the actor away. The
+   fare offered rises while no ship takes the contract, and two expiries
+   in a row end the intent.
 """
 
 import math
@@ -27,12 +29,14 @@ import random
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, List, Mapping, Optional, Protocol, Union
 
+from spacesim2.core.contracts import ContractStatus
 from spacesim2.core.drives.prosperity_drive import prosperity_index
 from spacesim2.core.migration import (
     NO_MIGRATION,
     MigrationDecision,
     MigrationRequest,
     PlanetStats,
+    live_passage_contract,
     passage_fare,
 )
 from spacesim2.core.navigation import get_navigator
@@ -92,10 +96,20 @@ PROPENSITY_MAX = 1.0
 # at a price worth taking, and what a poor actor needs to save the fare.
 MIN_INTENT_TURNS = 30
 
-# Headroom over the estimated fare in a request's ``max_fare``. The estimate
-# is exact in v1, but a ship-brokered passage in v2 will not be, and a
-# request refused for a credit of drift wastes the whole intent.
+# Ceiling on the fare offer, as a multiple of the distance estimate, and the
+# turns the offer takes to climb there from the estimate. No ship is obliged
+# to fly a passage, so an offer that nobody takes has to rise until one
+# does; the ceiling keeps a desperate actor from bidding away the money it
+# needs to restart at the far end. Both bounds also apply against the
+# actor's own money.
 FARE_HEADROOM = 1.5
+FARE_ESCALATION_TURNS = 20
+
+# Passage contracts allowed to expire unclaimed before the intent is given
+# up. One expiry is a quiet stretch on a route ships do use; two in a row
+# says no ship is coming, and holding the intent longer only keeps the actor
+# out of the local economy.
+MAX_PASSAGE_EXPIRIES = 2
 
 # Destination score weights. Land quality and the residents' wellbeing carry
 # the choice; prosperity is a tiebreaker between planets that feed people
@@ -143,11 +157,20 @@ class MigrationIntent:
     Modelling the inactive state with a second sentinel type would force
     every read site through an isinstance check for a state the state
     machine already rules out.
+
+    ``first_request_turn`` is -1 until the actor first asks for passage;
+    from then on it anchors the fare escalation. ``expiries`` counts the
+    passage contracts that stood unclaimed to their expiry, and
+    ``last_expired_id`` is what stops one expiry being counted on every
+    later turn.
     """
 
     active: bool = False
     since_turn: int = 0
     destination: Optional["Planet"] = None
+    first_request_turn: int = -1
+    expiries: int = 0
+    last_expired_id: str = ""
 
 
 class MigrationMind(Protocol):
@@ -317,7 +340,7 @@ def decide_migration(brain: MigrationMind, actor: "Actor") -> MigrationDecision:
 
     Cheap on the common path: the state machine only advances on the
     actor's own check turn, and every other turn this either returns
-    ``NO_MIGRATION`` or re-states the request formed earlier.
+    ``NO_MIGRATION`` or re-states the standing offer, raised a little.
     """
     if actor.planet is None:
         return NO_MIGRATION
@@ -332,15 +355,58 @@ def decide_migration(brain: MigrationMind, actor: "Actor") -> MigrationDecision:
         return NO_MIGRATION
     if turn - intent.since_turn < MIN_INTENT_TURNS:
         return NO_MIGRATION
+    if _count_expiry(brain, actor):
+        return NO_MIGRATION
 
     fare = passage_fare(get_navigator(sim).distance(actor.planet, intent.destination))
-    if actor.money < fare:
+    # Money the actor's own open contract is holding is money it can offer:
+    # cancelling to re-price hands the reserve straight back.
+    live = live_passage_contract(actor)
+    budget = actor.money + (live.total_payment if live is not None else 0)
+    if budget < fare:
         # Not yet affordable. The intent stands and the actor keeps saving:
         # its liquidation sweep is still running, so the money is coming.
         return NO_MIGRATION
+
+    if intent.first_request_turn < 0:
+        intent.first_request_turn = turn
     return MigrationRequest(
-        intent.destination, min(actor.money, int(fare * FARE_HEADROOM))
+        intent.destination, _fare_offer(fare, turn - intent.first_request_turn, budget)
     )
+
+
+def _fare_offer(fare: int, turns_offering: int, budget: int) -> int:
+    """The fare to offer now: the estimate, raised toward its ceiling.
+
+    Linear from the distance estimate at the first request to
+    ``FARE_HEADROOM`` times it after ``FARE_ESCALATION_TURNS``. The rise is
+    the only price discovery a passage gets; a flat offer on a route no
+    ship wants would simply expire, over and over.
+    """
+    climb = min(1.0, max(0.0, turns_offering / FARE_ESCALATION_TURNS))
+    offer = fare * (1.0 + (FARE_HEADROOM - 1.0) * climb)
+    return min(budget, int(round(offer)))
+
+
+def _count_expiry(brain: MigrationMind, actor: "Actor") -> bool:
+    """Note a passage that expired unclaimed. True if the intent was dropped.
+
+    The actor reposts after the first expiry, at the offer the escalation
+    has reached by then. After ``MAX_PASSAGE_EXPIRIES`` it stays put.
+    """
+    contract = actor.passage_contract
+    if contract is None or contract.status is not ContractStatus.EXPIRED:
+        return False
+    intent = brain.migration_intent
+    if contract.contract_id == intent.last_expired_id:
+        return intent.expiries >= MAX_PASSAGE_EXPIRIES
+
+    intent.last_expired_id = contract.contract_id
+    intent.expiries += 1
+    if intent.expiries >= MAX_PASSAGE_EXPIRIES:
+        clear_intent(brain)
+        return True
+    return False
 
 
 def _check_offset(actor: "Actor") -> int:
@@ -387,6 +453,13 @@ def _advance_intent(brain: MigrationMind, actor: "Actor") -> None:
     intent.active = True
     intent.since_turn = actor.sim.current_turn
     intent.destination = choice
+    # A fresh start: the escalation clock has not begun, and an expiry from
+    # an intent the actor gave up long ago must not count against this one.
+    intent.first_request_turn = -1
+    intent.expiries = 0
+    intent.last_expired_id = (
+        actor.passage_contract.contract_id if actor.passage_contract else ""
+    )
 
 
 def clear_intent(brain: MigrationMind) -> None:
