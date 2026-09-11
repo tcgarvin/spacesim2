@@ -2,11 +2,12 @@ import enum
 import math
 import random
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple, Union
 
 from spacesim2.core.commodity import CommodityDefinition, Inventory
 from spacesim2.core.contracts import (
     CONTRACT_STRAND_PATIENCE,
+    ConsignmentPayload,
     Contract,
     ContractStatus,
     deliver_contract,
@@ -316,6 +317,68 @@ class TradePlan:
         return self.expected_profit > 0 and self.profit_margin >= self.MIN_MARGIN
 
 
+@dataclass
+class ContractPlan:
+    """A trip flown for the payments of a group of contracts, not for cargo.
+
+    Every contract in ``contracts`` runs from ``origin`` to ``destination``,
+    so one departure delivers the whole group. The fuel is priced exactly as
+    :class:`TradePlan` prices it - the outbound leg only, units already
+    aboard at the galaxy reference and the rest at the local ask - because
+    the return leg is capital the next trip spends.
+
+    There is no cargo and so no margin to take a percentage of. The trip is
+    worth flying when the payments cover the fuel and the expected
+    maintenance, which is the test a distressed ship already applies to a
+    trade plan.
+    """
+
+    origin: Planet
+    destination: Planet
+    contracts: Tuple[Contract, ...]
+
+    distance: float
+    fuel_needed_one_way: int
+    fuel_price_at_origin: int
+    fuel_units_from_tank: int
+    fuel_price_from_tank: int
+    expected_maintenance_cost: int = 0
+
+    @property
+    def hold_units(self) -> int:
+        """Hold space the whole group occupies."""
+        return sum(contract.payload.hold_units for contract in self.contracts)
+
+    @property
+    def advance_total(self) -> int:
+        """Payments made when the payloads load, before the ship departs."""
+        return sum(contract.advance for contract in self.contracts)
+
+    @property
+    def on_delivery_total(self) -> int:
+        """Payments made on arrival at the destination."""
+        return sum(contract.on_delivery for contract in self.contracts)
+
+    @property
+    def total_fuel_cost(self) -> int:
+        """Cost of the outbound leg's fuel, mixed-priced as a trade plan's is."""
+        from_tank = min(self.fuel_units_from_tank, self.fuel_needed_one_way)
+        to_buy = self.fuel_needed_one_way - from_tank
+        return (
+            from_tank * self.fuel_price_from_tank + to_buy * self.fuel_price_at_origin
+        )
+
+    @property
+    def expected_profit(self) -> int:
+        """Payments less the fuel burned and the maintenance expected."""
+        return (
+            self.advance_total
+            + self.on_delivery_total
+            - self.total_fuel_cost
+            - self.expected_maintenance_cost
+        )
+
+
 @dataclass(frozen=True)
 class _RepositionIntent:
     """An empty reposition chosen but not yet flown.
@@ -330,13 +393,13 @@ class _RepositionIntent:
 
 
 @dataclass
-class _PairEconomics:
-    """Commodity-independent economics of one (origin, destination) pair.
+class _TripFuel:
+    """Fuel logistics and safety of flying one (origin, destination) leg.
 
-    Everything a trade plan needs that does not depend on the commodity:
-    geometry, fuel logistics and safety, and the trading budget. Computed
-    once per pair by :meth:`TraderBrain._pair_economics` and reused for every
-    commodity evaluated between the two planets.
+    Everything about the trip that does not depend on what it carries.
+    :meth:`TraderBrain._trip_fuel_economics` computes it, and both a trade
+    plan and a contract trip price their fuel from it, so the safety gates
+    are stated once.
     """
 
     distance: float
@@ -350,6 +413,25 @@ class _PairEconomics:
     fuel_to_buy: int
     # Units of the outbound leg's burn already aboard. The rest come out of
     # ``fuel_to_buy`` and are charged at the local ask.
+    fuel_from_tank_one_way: int
+    expected_maintenance_cost: int
+
+
+@dataclass
+class _PairEconomics:
+    """Commodity-independent economics of one (origin, destination) pair.
+
+    Everything a trade plan needs that does not depend on the commodity:
+    geometry, fuel logistics and safety, and the trading budget. Computed
+    once per pair by :meth:`TraderBrain._pair_economics` and reused for every
+    commodity evaluated between the two planets.
+    """
+
+    distance: float
+    fuel_one_way: int
+    fuel_price: int
+    fuel_reference_price: int
+    fuel_to_buy: int
     fuel_from_tank_one_way: int
     expected_maintenance_cost: int
     money_for_trading: int
@@ -437,7 +519,9 @@ class TraderBrain(ShipBrain):
     def __init__(self, ship: "Ship") -> None:
         """Initialize the trader brain."""
         super().__init__(ship)
-        self._current_plan: Optional[TradePlan] = None
+        # The trip the ship is working on: a haul it is buying cargo for, or a
+        # group of contracts it is flying for the payments.
+        self._current_plan: Optional[Union[TradePlan, ContractPlan]] = None
         # True once the plan's cargo is aboard, fully or as a partial load
         # after patience ran out, and the ship should fly to the plan's
         # destination rather than keep buying or sell locally.
@@ -887,7 +971,7 @@ class TraderBrain(ShipBrain):
         tank by :meth:`Ship.pump_fuel` before the turn's decisions run.
         """
         plan = self._current_plan
-        if plan is None or plan.commodity.id != "nova_fuel":
+        if not isinstance(plan, TradePlan) or plan.commodity.id != "nova_fuel":
             return 0
         planet = self.ship.planet
         if planet is plan.origin or planet is plan.destination:
@@ -1678,23 +1762,19 @@ class TraderBrain(ShipBrain):
         ship.active_orders[order_id] = "buy fuel (standing bid)"
         return order_id
 
-    def _pair_economics(
+    def _trip_fuel_economics(
         self, origin: Planet, destination: Planet
-    ) -> Optional["_PairEconomics"]:
-        """Commodity-independent economics of trading ``origin`` -> ``destination``.
+    ) -> Optional["_TripFuel"]:
+        """Fuel logistics and safety of flying ``origin`` -> ``destination``.
 
-        Computes geometry, fuel logistics, the fuel-safety gates, and the
-        trading budget, so :meth:`_best_plan_from` can evaluate many
-        commodities per pair without redoing this work. Returns None when no
-        plan over this pair can be feasible:
+        Returns None when the leg cannot be flown at all:
         - round-trip fuel would need buying where fuel is not purchasable
+        - the fuel would have to be bought at a spiked ask while a station is
+          in tank range
         - the destination would leave the ship without an escape route
-        - no money remains for cargo after fuel, refuel floor, expected
-          maintenance, and the operating buffer
 
-        The cash gate below is deliberately round-trip: a trade that
-        disappoints must never leave the ship both broke and dry. Only the
-        *margin* is charged one way, in :class:`TradePlan`.
+        Nothing here is about what the trip carries, so a trade plan and a
+        contract trip ask the same question and get the same answer.
         """
         fuel_commodity = self._fuel_commodity()
         if fuel_commodity is None:
@@ -1718,7 +1798,6 @@ class TraderBrain(ShipBrain):
         fuel_reference_price = math.ceil(reference) if reference else fuel_price
 
         current_fuel = self.ship.fuel
-        cargo_space = self.ship.cargo_capacity - self.ship.cargo.get_total_quantity()
 
         round_trip_shortfall = max(0, fuel_round_trip - current_fuel)
         if round_trip_shortfall > 0 and not self._fuel_purchasable_at(origin):
@@ -1757,7 +1836,6 @@ class TraderBrain(ShipBrain):
             and self._can_reach_station()
         ):
             return None
-        fuel_cost = fuel_to_buy * fuel_price
 
         # Never fly somewhere that leaves no escape route: the destination
         # must sell fuel, or the fuel left after arrival must reach a planet
@@ -1771,6 +1849,43 @@ class TraderBrain(ShipBrain):
         maintenance_cost = math.ceil(
             2 * MAINTENANCE_CHANCE * MAINTENANCE_FUEL_UNITS * fuel_price
         )
+
+        return _TripFuel(
+            distance=distance,
+            fuel_one_way=fuel_one_way,
+            fuel_price=fuel_price,
+            fuel_reference_price=fuel_reference_price,
+            fuel_to_buy=fuel_to_buy,
+            fuel_from_tank_one_way=min(current_fuel, fuel_one_way),
+            expected_maintenance_cost=maintenance_cost,
+        )
+
+    def _pair_economics(
+        self, origin: Planet, destination: Planet
+    ) -> Optional["_PairEconomics"]:
+        """Commodity-independent economics of trading ``origin`` -> ``destination``.
+
+        The fuel logistics and safety gates come from
+        :meth:`_trip_fuel_economics`; this adds the trading budget, so
+        :meth:`_best_plan_from` can evaluate many commodities per pair
+        without redoing either. Returns None when the leg itself is
+        infeasible, or when no money remains for cargo after fuel, the refuel
+        floor, expected maintenance, and the operating buffer.
+
+        The cash gate below is deliberately round-trip: a trade that
+        disappoints must never leave the ship both broke and dry. Only the
+        *margin* is charged one way, in :class:`TradePlan`.
+        """
+        trip = self._trip_fuel_economics(origin, destination)
+        if trip is None:
+            return None
+
+        current_fuel = self.ship.fuel
+        cargo_space = self.ship.cargo_capacity - self.ship.cargo.get_total_quantity()
+        fuel_price = trip.fuel_price
+        fuel_round_trip = trip.fuel_one_way * 2
+        fuel_cost = trip.fuel_to_buy * fuel_price
+        maintenance_cost = trip.expected_maintenance_cost
 
         # Money for cargo. Withhold the fuel purchase, a cash floor that can
         # re-buy the travel reserve after the trip, expected maintenance, and
@@ -1790,12 +1905,12 @@ class TraderBrain(ShipBrain):
             return None
 
         return _PairEconomics(
-            distance=distance,
-            fuel_one_way=fuel_one_way,
+            distance=trip.distance,
+            fuel_one_way=trip.fuel_one_way,
             fuel_price=fuel_price,
-            fuel_reference_price=fuel_reference_price,
-            fuel_to_buy=fuel_to_buy,
-            fuel_from_tank_one_way=min(current_fuel, fuel_one_way),
+            fuel_reference_price=trip.fuel_reference_price,
+            fuel_to_buy=trip.fuel_to_buy,
+            fuel_from_tank_one_way=trip.fuel_from_tank_one_way,
             expected_maintenance_cost=maintenance_cost,
             money_for_trading=money_for_trading,
             max_by_cargo=cargo_space,
@@ -2088,6 +2203,219 @@ class TraderBrain(ShipBrain):
                     best_profit = plan.expected_profit
 
         return best_plan
+
+    def _accepted_contracts(self) -> List[Contract]:
+        """Contracts this ship has taken on but not yet loaded."""
+        return [
+            contract
+            for contract in self.ship.contracts
+            if contract.status is ContractStatus.ACCEPTED
+        ]
+
+    def _release_accepted_contracts(self) -> None:
+        """Put every unloaded contract back on its board.
+
+        Acceptance costs nothing and is re-made at the next departure
+        decision, so the ship starts each docked turn holding only what it
+        has actually loaded. Without this, a departure that fails its
+        maintenance roll or its fuel check would leave contracts bound to a
+        ship that is no longer going there, occupying hold space no cargo
+        decision could use.
+        """
+        for contract in self._accepted_contracts():
+            contract.origin.contracts.release(contract)
+
+    def _accept_riders(self, destination: Planet) -> None:
+        """Take on every open contract to ``destination`` that fits the hold.
+
+        Called once the departure is settled, so the fuel is already paid for
+        by whatever the ship is flying for and a rider is pure revenue. No
+        margin test applies; the only limit is space, and the best-paying
+        contracts per hold unit are taken first.
+        """
+        planet = self.ship.planet
+        if planet is None:
+            return
+        riders = sorted(
+            (
+                contract
+                for contract in planet.contracts.open_to(destination)
+                if contract.payload.hold_units > 0
+            ),
+            key=lambda contract: contract.total_payment / contract.payload.hold_units,
+            reverse=True,
+        )
+        for contract in riders:
+            if contract.payload.hold_units <= self.ship.free_hold():
+                planet.contracts.accept(contract, self.ship)
+
+    def _pinned_contract_destination(self) -> Optional[Planet]:
+        """Where a loaded contract obliges the ship to fly, if anywhere.
+
+        A payload is aboard and is owed a delivery, so that destination
+        outranks cargo hops and repositions. Core strands the payload after
+        CONTRACT_STRAND_PATIENCE docked turns short of it, which is what
+        bounds the pin.
+        """
+        planet = self.ship.planet
+        for contract in self.ship.contracts:
+            if (
+                contract.status is ContractStatus.LOADED
+                and contract.destination is not planet
+            ):
+                return contract.destination
+        return None
+
+    def _value_contract_group(
+        self,
+        origin: Planet,
+        destination: Planet,
+        contracts: Sequence[Contract],
+        hold: int,
+    ) -> Optional[ContractPlan]:
+        """Value the best-paying subset of ``contracts`` that fits ``hold``.
+
+        Filled by payment per hold unit, so a full hold carries the most
+        valuable jobs. Returns None when the leg is infeasible, when nothing
+        fits, or when the fuel the trip needs is beyond the ship's money plus
+        the advances the group pays at load.
+        """
+        trip = self._trip_fuel_economics(origin, destination)
+        if trip is None or hold <= 0:
+            return None
+
+        remaining = hold
+        chosen: List[Contract] = []
+        for contract in sorted(
+            (c for c in contracts if c.payload.hold_units > 0),
+            key=lambda c: c.total_payment / c.payload.hold_units,
+            reverse=True,
+        ):
+            if contract.payload.hold_units <= remaining:
+                chosen.append(contract)
+                remaining -= contract.payload.hold_units
+        if not chosen:
+            return None
+
+        plan = ContractPlan(
+            origin=origin,
+            destination=destination,
+            contracts=tuple(chosen),
+            distance=trip.distance,
+            fuel_needed_one_way=trip.fuel_one_way,
+            fuel_price_at_origin=trip.fuel_price,
+            fuel_units_from_tank=trip.fuel_from_tank_one_way,
+            fuel_price_from_tank=trip.fuel_reference_price,
+            expected_maintenance_cost=trip.expected_maintenance_cost,
+        )
+        # The cash gate a trade plan applies, with the advances counted as
+        # cash: they are paid at load, and a consignment can be loaded on the
+        # docked turn so the money is in hand before the fuel bid goes in.
+        if self.ship.money + plan.advance_total < trip.fuel_to_buy * trip.fuel_price:
+            return None
+        return plan
+
+    def _best_contract_trip(
+        self, origin: Optional[Planet] = None
+    ) -> Optional[ContractPlan]:
+        """The most profitable contract-only trip out of ``origin``.
+
+        Open contracts on the board are grouped by destination, since one
+        departure delivers a whole group, and each group is filled into the
+        hold and priced. A trip is worth flying when its payments beat its
+        fuel and expected maintenance; there is no cargo to take a margin on.
+
+        ``origin`` defaults to where the ship is docked, and the hold is then
+        what contracts and cargo have left free. Passing another planet
+        values what the ship could pick up there, with the whole hold, which
+        is what :meth:`_find_reposition_target` scores an origin on.
+        """
+        here = self.ship.planet
+        if here is None:
+            return None
+        source = origin if origin is not None else here
+        hold = self.ship.cargo_capacity if source is not here else self.ship.free_hold()
+        if hold <= 0:
+            return None
+
+        groups: Dict[Planet, List[Contract]] = {}
+        for contract in source.contracts.open_contracts():
+            if contract.destination is source:
+                continue
+            groups.setdefault(contract.destination, []).append(contract)
+
+        best: Optional[ContractPlan] = None
+        for destination, contracts in groups.items():
+            plan = self._value_contract_group(source, destination, contracts, hold)
+            if plan is None or plan.expected_profit <= 0:
+                continue
+            if best is None or plan.expected_profit > best.expected_profit:
+                best = plan
+        return best
+
+    def _pending_fuel_units(self) -> int:
+        """Fuel units this ship already has resting on the local book."""
+        planet = self.ship.planet
+        fuel_commodity = self._fuel_commodity()
+        if planet is None or fuel_commodity is None:
+            return 0
+        return sum(
+            order.quantity
+            for order in planet.market.get_actor_orders(self.ship)["buy"]
+            if order.commodity_type is fuel_commodity
+        )
+
+    def _execute_contract_plan(
+        self, plan: ContractPlan, fuel_blocked: bool
+    ) -> List[str]:
+        """Accept a contract trip's jobs and fund the fuel it needs.
+
+        The only purchase a contract trip makes is fuel, so this is the whole
+        of its execution. The commitment goes through ``_committed_fuel_need``,
+        the same channel a held cargo's trip uses, so the top-up buys what the
+        departure gate will ask for even at a scarcity price.
+
+        A ship too poor to buy that fuel outright loads its consignments here,
+        on the docked turn, rather than at departure: the advance is paid at
+        load, and a consignment load has no other effect, so the money is in
+        hand for the bid. This is what lets a broke ship with a dry tank take
+        a government job. Passengers are not boarded early; taking an actor
+        off its planet before the ship can leave is a real cost to the actor.
+
+        The fuel step runs even when upkeep already bid for fuel this turn:
+        that bid was placed before the commitment existed, and before the
+        advance was in hand, so it can be short of the leg. Units already
+        resting on the book are passed as ``pending_fuel``, so the top-up
+        tops up rather than buying the leg twice. ``fuel_blocked`` is the one
+        case it must not run at all: a fuel ask of this ship's own is resting
+        here, and bidding would meet it.
+        """
+        actions: List[str] = []
+        board_planet = plan.origin
+        for contract in plan.contracts:
+            board_planet.contracts.accept(contract, self.ship)
+
+        fuel_cash_needed = 0
+        trip = self._trip_fuel_economics(plan.origin, plan.destination)
+        if trip is not None:
+            fuel_cash_needed = trip.fuel_to_buy * trip.fuel_price
+        if self.ship.money < fuel_cash_needed:
+            for contract in plan.contracts:
+                if isinstance(contract.payload, ConsignmentPayload):
+                    load_contract(self.ship, contract)
+
+        self._committed_fuel_need = self._departure_fuel_requirement(plan.destination)
+        actions.append(
+            f"Contract trip to {plan.destination.name}: {len(plan.contracts)} job(s) "
+            f"paying {plan.advance_total + plan.on_delivery_total}"
+        )
+        if not fuel_blocked:
+            topup = self._opportunistic_fuel_topup(
+                pending_fuel=self._pending_fuel_units()
+            )
+            if topup is not None:
+                actions.append("Topping up fuel tank")
+        return actions
 
     def _maintain_fuel(self) -> List[str]:
         """Keep the tank viable at the docked planet, returning action strings.
@@ -2623,6 +2951,14 @@ class TraderBrain(ShipBrain):
         for order in existing_orders["buy"] + existing_orders["sell"]:
             market.cancel_order(order.order_id)
 
+        # Contracts are taken on for a departure, at the departure decision.
+        # Anything still unloaded goes back on its board here, and with it any
+        # contract trip built around it; both are re-made below if they are
+        # still the best thing to do.
+        self._release_accepted_contracts()
+        if isinstance(self._current_plan, ContractPlan):
+            self._current_plan = None
+
         actions = []
         self._selling_locally = False
         # Now that the hold is whole again, judge last turn's local asks.
@@ -2689,7 +3025,7 @@ class TraderBrain(ShipBrain):
         # Plan lifecycle. Flow-based plans fill a resting bid over several
         # docked turns, then fly the load to the plan's destination.
         accumulating = False
-        plan = self._current_plan
+        plan = self._current_plan if isinstance(self._current_plan, TradePlan) else None
         if plan is None:
             self._addon_commodities = set()
         if plan is not None:
@@ -2774,6 +3110,12 @@ class TraderBrain(ShipBrain):
             self._committed_fuel_need = self._departure_fuel_requirement(
                 self._reposition_intent.target
             )
+
+        # A payload aboard outranks every other use of the tank: the ship owes
+        # a delivery and core strands the payload if it sits here too long.
+        pinned = self._pinned_contract_destination()
+        if pinned is not None:
+            self._committed_fuel_need = self._departure_fuel_requirement(pinned)
 
         # Fly to a fuel station rather than pay a spiked local ask. Decided
         # once here, after the fuel commitment it reads, and cached for
@@ -2895,6 +3237,25 @@ class TraderBrain(ShipBrain):
                 return  # _execute_trade_plan sets last_action
             self._current_plan = None
 
+            # Nothing here is worth hauling. A trip flown for contract
+            # payments alone is the next best thing: it only has to cover its
+            # fuel and maintenance, and on a planet with nothing to export it
+            # is the only paid move available.
+            if pinned is None:
+                contract_plan = self._best_contract_trip()
+                if contract_plan is not None:
+                    self._current_plan = contract_plan
+                    self._plan_loaded = False
+                    self._addon_commodities = set()
+                    self._clear_reposition_intent()
+                    actions.extend(
+                        self._execute_contract_plan(
+                            contract_plan, fuel_blocked=placed_fuel_sell
+                        )
+                    )
+                    self.ship.last_action = "; ".join(actions)
+                    return
+
         # Fuel upkeep for the ships that did not need it before the plan
         # branches: above the stranding reserve this is opportunistic
         # bunkering, and it must not run in the same turn as a fuel sell,
@@ -2908,6 +3269,18 @@ class TraderBrain(ShipBrain):
             self.ship.last_action = "No trade actions (waiting for opportunities)"
 
     def decide_travel(self) -> Optional[Planet]:
+        """Choose this turn's destination and take on any riders bound there.
+
+        Every real departure - a loaded plan, a cargo hop, a reposition, a
+        contract trip - goes past this one place, so contracts to where the
+        ship is already going are picked up whatever the reason for the trip.
+        """
+        destination = self._choose_destination()
+        if destination is not None:
+            self._accept_riders(destination)
+        return destination
+
+    def _choose_destination(self) -> Optional[Planet]:
         """Decide whether to travel, and where.
 
         1. Stay docked while a plan is accumulating; buying happens locally
@@ -2970,11 +3343,44 @@ class TraderBrain(ShipBrain):
         current_planet = self.ship.planet
         fuel_available = self.ship.fuel
 
+        # A loaded contract pins the ship to its destination: the payload is
+        # aboard and is owed a delivery, so no cargo hop or reposition runs
+        # while it is. The wait is bounded by the stranding patience in
+        # Ship._age_undelivered_contracts.
+        pinned = self._pinned_contract_destination()
+        if pinned is not None:
+            fuel_needed = self.ship.fuel_required(
+                self._nav.distance(current_planet, pinned)
+            )
+            if fuel_available >= fuel_needed and self._fuel_safe_destination(
+                pinned, current_planet, fuel_available - fuel_needed
+            ):
+                self._departed_trip_turn_value = 0.0
+                return pinned
+            return None
+
+        # A contract trip is flown for the payments, so it departs as soon as
+        # the fuel gate allows; there is no cargo to accumulate.
+        plan = self._current_plan
+        if isinstance(plan, ContractPlan) and current_planet is plan.origin:
+            fuel_needed = self.ship.fuel_required(
+                self._nav.distance(current_planet, plan.destination)
+            )
+            if fuel_available >= fuel_needed and self._fuel_safe_destination(
+                plan.destination, current_planet, fuel_available - fuel_needed
+            ):
+                self._departed_trip_turn_value = self._trip_turn_value(
+                    plan.expected_profit, plan.destination
+                )
+                return plan.destination
+            return None
+
         # Plan-driven travel: stay docked while accumulating; once loaded,
         # fly to the destination if fuel and safety allow. Otherwise stay and
         # let fuel upkeep work; the loaded-phase patience in
         # decide_trade_actions bounds the wait.
-        plan = self._current_plan
+        if isinstance(plan, ContractPlan):
+            plan = None
         if plan is not None and current_planet is plan.origin:
             if not self._plan_loaded:
                 return None
@@ -3208,9 +3614,17 @@ class TraderBrain(ShipBrain):
 
             surveyed += 1
             plan = self._best_plan_from(origin)
-            if plan is None:
+            contract_trip = self._best_contract_trip(origin)
+            # A planet with a queue of jobs and nothing worth exporting is
+            # still worth flying to, which is the case v1 migration could not
+            # reach: the poor planets ships do not call at.
+            best_there = max(
+                plan.expected_profit if plan is not None else 0,
+                contract_trip.expected_profit if contract_trip is not None else 0,
+            )
+            if best_there <= 0:
                 continue
-            net_profit = plan.expected_profit - fuel_to_buy * fuel_price
+            net_profit = best_there - fuel_to_buy * fuel_price
             if net_profit > best_profit:
                 best_profit = net_profit
                 best_origin = origin

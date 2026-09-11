@@ -615,6 +615,73 @@ unlisted for `ACCUMULATION_PATIENCE` turns waiting on a departure that will
 not happen this turn. Listing costs nothing when the plan does leave later,
 since `start_journey` cancels resting orders before departure.
 
+### Contracts
+
+A contract is a paid job to carry someone else's payload from one planet to
+another (`core/contracts.py`, `docs/contracts-design.md`). The brain reads
+the local `planet.contracts` board and decides what to take; core does the
+loading, delivering and stranding.
+
+| Constant | Value | Meaning |
+|----------|-------|---------|
+| `MIGRANT_CARGO_UNITS` | 10 | hold units one passenger occupies |
+| `CONTRACT_STRAND_PATIENCE` | 10 | docked turns short of a loaded contract's destination before core puts the payload down |
+
+**Riders.** `decide_travel` settles on a destination in `_choose_destination`
+and then calls `_accept_riders(destination)`, so every real departure — a
+loaded plan, a cargo hop, an empty or refuelling reposition, a contract trip
+— picks up the open contracts bound where the ship is already going. They are
+taken best-paying-per-hold-unit first while `Ship.free_hold()` has room. There
+is no margin test: the trip is paid for by whatever else is driving it.
+
+Acceptance is free and is re-made every turn. `decide_trade_actions` calls
+`_release_accepted_contracts` at the top of each docked turn, putting every
+ACCEPTED (never a LOADED) contract back on its board, so a departure that
+fails its maintenance roll or fuel check leaves no job bound to a ship that
+is not going there.
+
+**Contract-only trips.** When `_find_best_trade_plan` returns nothing
+acceptable, `_best_contract_trip()` groups the local board's open contracts by
+destination, fills each group into the free hold by payment per unit, and
+prices the trip with `_trip_fuel_economics` — the same fuel logistics and
+safety gates `_pair_economics` applies to a haul. The result is a
+`ContractPlan`, whose `expected_profit` is payments less the outbound leg's
+fuel and the expected maintenance. It is adopted when that is positive, the
+test a distressed ship already applies to a trade plan, since there is no
+cargo cost to take a margin on.
+
+`_execute_contract_plan` is the whole of its execution: accept the jobs, set
+`_committed_fuel_need` to `_departure_fuel_requirement(destination)`, and top
+up the tank. `decide_travel` departs as soon as the fuel gate allows.
+
+The advance is paid at load and load happens at departure, after the fuel is
+deducted, so a ship with no money could never buy the fuel its own job pays
+for. The cash gate counts the group's `advance_total` as cash, and
+`_execute_contract_plan` makes that true: when money alone does not cover the
+fuel, it calls `load_contract` for the group's **consignments** on the docked
+turn, before the fuel bid. A consignment has no effect beyond the payment and
+the status, so an early load costs nothing if the departure slips. Passengers
+are never boarded early — taking an actor off its planet before the ship can
+leave is a real cost to the actor.
+
+**Pinning.** While a LOADED contract for somewhere else is aboard,
+`_pinned_contract_destination` returns that destination and it outranks
+everything: `decide_travel` returns it if the fuel gate and
+`_fuel_safe_destination` allow and otherwise stays, and
+`decide_trade_actions` commits `_committed_fuel_need` to that leg. No cargo
+hop, reposition or trade-plan departure runs. Cargo aboard is still listed and
+sold where the ship sits. A spiked-fuel reposition to a station still
+outranks the pin, since a ship that cannot move delivers nothing;
+`Ship._age_undelivered_contracts` bounds the whole wait at
+`CONTRACT_STRAND_PATIENCE` docked turns, after which core strands the payload.
+
+**Remote pickup.** `_find_reposition_target` scores each candidate origin on
+`max(best plan profit, best contract trip profit)`, valuing the contract trip
+with `_best_contract_trip(origin)` against the whole hold. A planet with
+nothing worth exporting and a queue of jobs can therefore pull an empty ship
+in. `REPOSITION_ORIGIN_CANDIDATES` still bounds the survey, and a cold galaxy
+(no trade signal anywhere) still skips it.
+
 ## Common pitfalls
 
 | Pitfall | Solution |
