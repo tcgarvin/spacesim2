@@ -1,6 +1,7 @@
 # Contracts: Transport Jobs, Passage, and Government Freight
 
-Status: approved 2026-09-11, implementation in progress. The first use is
+Status: landed 2026-09-11 (89e05eb..ac52dc7); measurements are in the
+decision log entry of that date. The first use is
 migration v2 (`docs/migration-design.md`, "Open"); the primitive is meant to
 carry later uses without changing shape.
 

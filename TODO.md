@@ -5,11 +5,21 @@ perf levers live in `docs/performance.md`.
 
 ## Land (2026-09-10)
 
-- Migration v2: a ship brain accepts the `MigrationRequest` as a passage
-  contract at the spaceport and the move happens in the ship phase on
-  arrival; `MIGRANT_CARGO_UNITS` (10 or 100) is undecided. v1 (separate
-  phase, flat fare, ship-speed transit) landed 2026-09-11; see
-  `docs/migration-design.md`.
+- Passage queue at 100 planets: with one ship per planet, migration v2
+  (landed 2026-09-11, `docs/contracts-design.md`) leaves most passengers
+  waiting on the board; the first 400-turn 100-planet run had 1900
+  waiting against 256 delivered, and every waiting actor is in leaving
+  mode (no investment, selling down). Levers: cap the time an actor stays
+  in leaving mode, more ships, a crowding term so fewer actors want the
+  same destination.
+- Government freight is a subsidy: about 3.5k credits created per 100
+  turns at 12 planets against a fleet cash stock of ~20k. Whether the
+  fleet's solvency comes from carrying contracts or from the created
+  money is being A/B'd (jobs on versus off); resize `GOVERNMENT_JOB_MARGIN`
+  or `GOVERNMENT_JOBS_PER_PLANET` on the result.
+- `CargoPayload` (freight and procurement contracts for real goods) is
+  typed but no brain posts or carries one. First candidates: spaceport
+  operators ordering fuel, industrialists ordering inputs.
 - Migration herding: at 100 planets the top destinations fill to the land
   cap and the worst origin loses 76% of its residents (decision log,
   2026-09-11). The destination score has no crowding term and the softmax

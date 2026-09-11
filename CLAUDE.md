@@ -152,7 +152,8 @@ committing on the default branch" behavior.
 | Turn flow & testing | `docs/dev-guide-simulation.md` | Debugging AI, market mechanics, testing |
 | Ship trading AI | `docs/dev-guide-ships.md` | Ship brains, fuel and trade logic |
 | Spaceport operators | `docs/spaceport-design.md` | Service actors; phase 1 landed, phases 2+ open |
-| Migration | `docs/migration-design.md` | Actors moving between planets; v1 landed, ship passage (v2) open |
+| Migration | `docs/migration-design.md` | Actors moving between planets by ship under passage contracts (v2 landed) |
+| Contracts | `docs/contracts-design.md` | Transport jobs: passage, government freight, ship-brain riders and contract trips |
 | Prosperity drives | `docs/prosperity-design.md` | Tier 2/3 consumption, tastes, prosperity index; drives landed, UI tiers open |
 | Notebook analysis | `notebooks/README.md` | Marimo notebooks |
 | Needs/drives system | `docs/needs.md` | Actor consumption |

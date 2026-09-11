@@ -4,6 +4,63 @@ Append-only record of closed decisions, postmortems, and landed campaigns.
 Newest first. Open work lives in `TODO.md`; current reference docs live
 alongside this file.
 
+## 2026-09-11 - Transport contracts: migration v2 and government freight
+
+Landed in five commits, 89e05eb..ac52dc7. Design in
+`docs/contracts-design.md`. One primitive, `Contract` with a payload and a
+per-planet board, carries a migrant as a passenger and an abstract
+government consignment; `CargoPayload` for real goods is typed and unused.
+The migration phase no longer moves anyone: it posts, re-prices, and
+withdraws passage contracts. Ships accept riders for any planet on their
+route and drop them as they pass, fly contract-only trips that compete with
+trade plans on per-turn value, take a government job's advance early to
+fund fuel when broke, and reposition toward a contract queue after three
+turns with no plan. A port fee to spaceport operators was rejected.
+
+A/B against v1 (619c4a8), 12 planets, 300 turns, 8 replicates, before the
+round-2 brain changes:
+
+| KPI | v1 | v2 | verdict |
+|---|---|---|---|
+| migration departures per 100 turns per 1000 actors | 64.4 | 29.4 | significant |
+| idle ship share | 0.49 | 0.10 | significant |
+| ship departures, window | 17.5 | 40.6 | significant |
+| ship money median | 28 | 858 | significant |
+| ships solvent share | 0.07 | 0.45 | significant |
+| ship delivered units, window | 80 | 271 | significant |
+| market volume per planet-turn | 211 | 191 | noise |
+| drives, prosperity, actor money | | | all noise |
+
+Government jobs on versus off, 12 planets, 300 turns, 6 replicates: net of
+the created money the fleet ends no richer (16.7k versus 20.1k), so the
+jobs are not a freight market. They are a solvency floor: solvent share
+0.76 versus 0.33, median ship money 2506 versus 661, and idle share never
+above 0.17 with jobs against 0.75 in the worst run without. Payouts were
+19.8k per run against 36.5k fleet end cash, and vary 8.5k to 36.3k run to
+run. Kept at one job per planet, two hops, fuel times 1.25; resizing is in
+`TODO.md`.
+
+Round 2 (ac52dc7) came from a probe of why passengers waited the full TTL:
+57% of waiting turns had no ship at the origin, 33% had a ship that stayed,
+and only 34 of 302 departures matched a waiting passenger's exact
+destination. The ship that stayed was usually listing cargo locally, and
+the plan search is skipped while a listing is fresh, so the contract search
+now also runs there. At 100 planets, 400 turns, one run each:
+
+| KPI | round 1 | round 2 |
+|---|---|---|
+| migration departures | 256 | 617 |
+| waiting at turn 400 | 1900 | 1322 |
+| passage expired | 344 | 278 |
+| median wait, turns | 33.5 | 34 |
+| idle ship share | 0.09 | 0.03 |
+| ships solvent share | 0.54 | 0.64 |
+| government payouts | 35.9k | 73.3k |
+
+v1 moved 2444 actors in the same configuration. The fleet now bounds
+migration, which is intended, but 1322 actors waiting in leaving mode is a
+cost the economy pays; that is the open item.
+
 ## 2026-09-11 - Migration v1: actors move between planets
 
 Poor planets do not import, so trade never equalized them. Migration is the
