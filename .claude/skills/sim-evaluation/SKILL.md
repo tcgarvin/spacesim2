@@ -46,6 +46,10 @@ The JSON has these sections; the keys inside each are self-describing, and
 `spacesim2/analysis/summary.py` is the authority on what each one measures:
 
 - `turns`, `planets`, `regular_actors`, `service_actors`, `ships`: run size.
+- `actors_aboard`: regular actors currently riding a ship as a loaded
+  passenger (in transit between planets). `population` is
+  `regular_actors + actors_aboard`, the conserved total `sim.population()`
+  checks every turn.
 - `money`: the regular-actor money distribution.
 - `drives`: per-drive mean health, debt, and deprivation share.
 - `inventory_totals`, `prices`: population stock totals and mean prices.

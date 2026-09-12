@@ -14,7 +14,7 @@ import statistics
 from typing import Dict, List, Sequence
 
 from spacesim2.core.actor import Actor, ActorType
-from spacesim2.core.contracts import GOVERNMENT, ContractStatus, PassengerPayload
+from spacesim2.core.contracts import GOVERNMENT, PassengerPayload
 from spacesim2.core.drives.prosperity_drive import (
     PROSPERITY_CATEGORIES,
     ProsperityDriveMetrics,
@@ -98,10 +98,13 @@ def compute_summary(sim: Simulation) -> Dict[str, object]:
     prosperity = _summarize_prosperity(regular_actors, markets)
     trade = _summarize_trade(sim)
     trade.update(_summarize_fleet_fuel(sim))
+    actors_aboard = sim.actors_aboard()
     summary: Dict[str, object] = {
         "turns": sim.current_turn,
         "planets": len(sim.planets),
         "regular_actors": len(regular_actors),
+        "actors_aboard": actors_aboard,
+        "population": len(regular_actors) + actors_aboard,
         "service_actors": _summarize_service_actors(service_actors),
         "ships": len(sim.ships),
         "money": _summarize_money(regular_actors),
@@ -123,21 +126,16 @@ def _summarize_migration(sim: Simulation, regular_actors: List) -> Dict[str, flo
 
     ``departures_per_100_turns_per_1000_actors`` normalizes the rate so runs
     of different length and population compare directly. Passengers aboard a
-    ship are excluded from ``regular_actors``, so they are added back for
-    the denominator.
+    ship are excluded from ``regular_actors``, so ``sim.actors_aboard()`` is
+    added back for the denominator; this is the same count reported at top
+    level as ``actors_aboard``.
 
     ``waiting`` and ``expired`` are the two ways passage fails: an actor
     whose contract nobody accepts, and one whose contract ran out. Both
     large on poor planets means the fleet is not reaching them, which is
     what migration exists to fix.
     """
-    aboard = sum(
-        1
-        for ship in sim.ships
-        for contract in ship.contracts
-        if contract.status is ContractStatus.LOADED
-        and isinstance(contract.payload, PassengerPayload)
-    )
+    aboard = sim.actors_aboard()
     waiting = sum(
         1
         for planet in sim.planets

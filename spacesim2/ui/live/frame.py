@@ -58,11 +58,20 @@ class TurnFrame:
 
 
 def galaxy_vitals(
-    planets: Tuple[PlanetSnapshot, ...], ships: Tuple[ShipSnapshot, ...]
+    planets: Tuple[PlanetSnapshot, ...],
+    ships: Tuple[ShipSnapshot, ...],
+    aboard: int = 0,
 ) -> GalaxyVitals:
-    population = sum(p.population for p in planets)
-    if population > 0:
-        wellbeing = sum(p.wellbeing * p.population for p in planets) / population
+    """The HUD total. ``aboard`` (passengers in flight) is added so the
+    galaxy-wide population does not dip while a migrant is between planets;
+    per-planet snapshots are unaffected and stay resident-only.
+    """
+    resident_population = sum(p.population for p in planets)
+    population = resident_population + aboard
+    if resident_population > 0:
+        wellbeing = (
+            sum(p.wellbeing * p.population for p in planets) / resident_population
+        )
     else:
         wellbeing = 0.0
     traveling = sum(1 for s in ships if s.traveling)
@@ -112,7 +121,7 @@ def build_frame(
         turn=sim.current_turn,
         planets=planets,
         ships=ships,
-        vitals=galaxy_vitals(planets, ships),
+        vitals=galaxy_vitals(planets, ships, aboard=sim.actors_aboard()),
         planet_details=planet_details,
         ship_details=ship_details,
     )

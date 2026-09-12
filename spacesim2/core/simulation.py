@@ -11,7 +11,7 @@ from spacesim2.core.brains import (
     SpaceportOperatorBrain,
 )
 from spacesim2.core.commodity import CommodityRegistry
-from spacesim2.core.contracts import PassengerPayload
+from spacesim2.core.contracts import ContractStatus, PassengerPayload
 from spacesim2.core.data_logger import DataLogger
 from spacesim2.core.drives import (
     ActorDrive,
@@ -142,6 +142,13 @@ class Simulation:
         self.actors: List[Actor] = []
         self.ships: List[Ship] = []
         self.current_turn = 0
+        # Conservation check: no actor is ever created or destroyed after
+        # setup, only moved between ``self.actors`` and a ship's hold (see
+        # ``population()``). Recorded lazily on the first ``run_turn`` call
+        # rather than at the end of setup, since some tests build a
+        # ``Simulation`` by hand and append actors after construction but
+        # before the first turn; ``None`` means "not yet recorded".
+        self.expected_population: Optional[int] = None
         # Migration state; see core/migration.py. planet_stats is rebuilt at
         # the top of every turn. A departure is a passenger boarding a ship
         # and an arrival is one being put down, so the gap between the two
@@ -580,8 +587,37 @@ class Simulation:
             self.ships.append(ship)
             planet.add_ship(ship)
 
+    def actors_aboard(self) -> int:
+        """Regular actors currently riding a ship as a loaded passenger.
+
+        O(ships + contracts aboard), not a scan of every actor: a boarded
+        passenger is removed from ``self.actors`` (see
+        ``contracts._board_passenger``) and put back by ``relocate_actor``
+        on delivery or stranding, so it exists only as a LOADED contract's
+        ``PassengerPayload`` in the meantime.
+        """
+        return sum(
+            1
+            for ship in self.ships
+            for contract in ship.contracts
+            if contract.status is ContractStatus.LOADED
+            and isinstance(contract.payload, PassengerPayload)
+        )
+
+    def population(self) -> int:
+        """Every actor that exists: on a planet's roster or aboard a ship.
+
+        The invariant ``run_turn`` enforces: this never changes across a
+        turn, since actors are neither created nor destroyed, only moved
+        between ``self.actors`` and a ship's hold.
+        """
+        return len(self.actors) + self.actors_aboard()
+
     def run_turn(self) -> None:
         """Run one turn: actors, then ships, then market matching."""
+        if self.expected_population is None:
+            self.expected_population = self.population()
+
         self.current_turn += 1
         self.data_logger.set_turn(self.current_turn)
         for planet in self.planets:
@@ -627,6 +663,14 @@ class Simulation:
         run_migration_phase(self)
 
         self._process_markets()
+
+        current_population = self.population()
+        if current_population != self.expected_population:
+            raise RuntimeError(
+                f"actor conservation violated at turn {self.current_turn}: "
+                f"expected {self.expected_population}, got {current_population} "
+                f"({len(self.actors)} on a roster, {self.actors_aboard()} aboard)"
+            )
 
         if self.exporter:
             self.exporter.export_turn(self, self.current_turn)
