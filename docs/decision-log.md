@@ -63,9 +63,21 @@ against more that stalled in leaving mode and expired.
 
 The queue is a quarter of what it was and passages complete. The cost is
 in the last two rows: ships now take government jobs as riders and on
-pickup stops, payouts tripled, and cargo hauled fell in this one run. The
-fleet's wealth at 100 planets is now mostly created money; resizing the
-subsidy is the next item.
+pickup stops, payouts tripled, and cargo hauled fell in this one run.
+
+d486996 answers that without new machinery: a government lot is 85 to 100
+hold units, drawn per job, and a passenger is 20, so a job is a whole trip
+that cannot ride along with cargo, be picked up en route, or share a hold
+with a passenger. A/B against 7984b27, 12 planets, 300 turns, 6 replicates:
+payouts 26.6k to 9.1k (significant), contracts delivered 213 to 157
+(significant), ship money median 4345 to 4411, solvent share 0.83 to 0.82,
+hauled cargo 298 to 301, market volume +7%, all noise. The passenger queue
+gave some back: waiting 23 to 59, median wait 13 to 21, expired 4 to 20,
+each past the Welch test but not the 2-sd rule. At 100 planets, 400 turns,
+one run each: payouts 256k to 42k, hauled cargo 1160 to 1501, ship money
+median 5887 to 5323, solvent 0.85 to 0.84, migration departures 906 to
+802, waiting 354 to 553, median wait 17 to 21. The fleet is now solvent on
+trade and passengers with the subsidy at a sixth of what it was.
 
 ## 2026-09-11 - Transport contracts: migration v2 and government freight
 

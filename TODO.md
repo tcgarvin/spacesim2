@@ -5,18 +5,19 @@ perf levers live in `docs/performance.md`.
 
 ## Land (2026-09-10)
 
-- Government freight is now the fleet's main income at 100 planets:
-  payouts 256k over 400 turns after pickups and rider ranking (decision
-  log, 2026-09-11, "Passage queue"), tripled from 73k, while hauled cargo
-  fell in the one run measured. Jobs-off A/B at 12 planets showed the
-  jobs are a solvency floor, not a freight market. Resize: an A/B at
-  `GOVERNMENT_JOB_MARGIN` 0 or 0.1, fewer hops, or exclude government
-  jobs from rider ranking so they never steer a trade trip.
-- Passage queue residual at 100 planets: 354 waiting at turn 400 after the
-  fare and pickup changes (was 1900), median wait 17 turns. The fare now
-  gates the poorest actors out entirely (departures -36% at 12 planets).
-  Levers: a cap on leaving mode, a crowding term in the destination score,
-  a fare summary key so the fare level can be tuned from data.
+- Passage queue residual at 100 planets: 553 waiting at turn 400 with
+  whole-ship government lots and 20-unit passengers (decision log,
+  2026-09-11, "Passage queue"), median wait 21 turns, down from 1900 and
+  34 before the fare and pickup changes. The fare gates the poorest actors
+  out entirely (departures -36% at 12 planets). Levers: a cap on leaving
+  mode, a crowding term in the destination score, a fare summary key so
+  the fare level can be tuned from data, and a check of whether 20-unit
+  passengers are what pushed waiting back up (15 units would still keep a
+  passenger out of an 85-unit lot's hold).
+- Government freight subsidy is at 42k per 400 turns at 100 planets
+  (was 256k when jobs could be riders). Jobs-off A/B at 12 planets showed
+  the jobs are a solvency floor, not a freight market; a margin 0 or 0.1
+  A/B would find where the floor breaks.
 - `CargoPayload` (freight and procurement contracts for real goods) is
   typed but no brain posts or carries one. First candidates: spaceport
   operators ordering fuel, industrialists ordering inputs.
