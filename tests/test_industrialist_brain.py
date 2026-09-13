@@ -1133,6 +1133,79 @@ class TestNetbackOutputValuation:
         assert first == pytest.approx(2.5 * NETBACK_VALUE_CAP)
         assert second == pytest.approx(999.0)
 
+    def _facility_cycle_chain(self):
+        """A consumer behind a facility whose build runs back through itself.
+
+        Mirrors the real electronics chain: ``make_computers`` needs an
+        advanced_factory, and ``build_advanced_factory`` consumes electronics
+        and precision parts. Here ``build_advanced_factory`` draws the widget
+        under valuation plus a part whose only recipe needs the very facility
+        being built, so costing the build is circular and returns inf.
+
+        Returns the actor, market, the widget, and the consumer process.
+        """
+        widget = self._commodity("electronics")
+        part = self._commodity("precision_parts")
+        factory = CommodityDefinition(
+            id="advanced_factory",
+            name="advanced_factory",
+            transportable=False,
+            description="",
+        )
+        product = self._commodity("computers")
+
+        make_widget = self._process("make_widget", {}, {widget: 1})
+        make_part = self._process("make_part", {}, {part: 1})
+        make_part.facilities_required = [factory]
+        build_factory = self._process(
+            "build_advanced_factory", {widget: 2, part: 1}, {factory: 1}
+        )
+        consumer = self._process("make_computers", {widget: 1}, {product: 1})
+        consumer.facilities_required = [factory]
+
+        actor = self._actor([make_widget, make_part, build_factory, consumer])
+        by_id = {p.id: p for p in (make_widget, make_part, build_factory, consumer)}
+        actor.sim.process_registry.get_process.side_effect = by_id.get
+        # The actor owns its tools but not the factory, so the build cost is
+        # the branch under test.
+        actor.inventory.has_quantity.side_effect = (
+            lambda commodity, quantity=1: commodity.id != factory.id
+        )
+
+        market = Market()
+        market.place_buy_order(self._bidder(), product, 1, 400)
+        market.price_history[product] = [400] * 30
+        market.volume_history[product] = [50] * 30
+        return actor, market, widget, consumer
+
+    def test_netback_survives_a_facility_build_that_consumes_the_good(self, brain):
+        """A circular facility build must not zero the good's demand signal.
+
+        The consumer is reachable once its other costs are imputed without
+        the amortized build, which is what a consumer already set up faces.
+        """
+        actor, market, widget, _consumer = self._facility_cycle_chain()
+
+        value = brain._netback_unit_value(
+            actor, market, widget, {}, None, frozenset(), 0
+        )
+
+        assert value > 0
+
+    def test_default_impute_still_returns_inf_for_the_facility_cycle(self, brain):
+        """Only the netback walk drops facilities; recipe costing does not."""
+        actor, market, _widget, consumer = self._facility_cycle_chain()
+
+        with_facilities = brain._impute_recipe_cost(
+            actor, market, consumer, 0, frozenset(), {}
+        )
+        without_facilities = brain._impute_recipe_cost(
+            actor, market, consumer, 0, frozenset(), {}, include_facilities=False
+        )
+
+        assert math.isinf(with_facilities)
+        assert math.isfinite(without_facilities)
+
 
 class TestStockAwareOutputValue:
     """Output value is discounted by the producer's own unsold stock."""

@@ -1214,12 +1214,23 @@ class ActorBrain:
         depth: int,
         visiting: frozenset[str],
         memo: Dict[str, float],
+        include_facilities: bool = True,
     ) -> float:
         """Total imputed cost to execute ``process`` once.
 
         A turn of labor at the government wage, recursively valued inputs,
         the expected upkeep draw, and amortized tool and facility costs.
         ``math.inf`` if any component cannot be valued.
+
+        ``include_facilities=False`` drops the amortized build of facilities
+        the actor lacks. The netback walk uses it: that walk asks what a
+        consumer already set up could pay for a unit, and a facility build
+        can itself consume the good being valued (``build_advanced_factory``
+        draws 2 electronics), so a good whose own make cost cannot be
+        imputed at the build's recursion depth would zero out its own
+        downstream demand signal. The amortized term is under 1% of a run's
+        cost at the default 300-turn horizon, so dropping it does not
+        distort the ceiling.
         """
         total = float(GOVERNMENT_WAGE)
 
@@ -1255,6 +1266,9 @@ class ActorBrain:
 
         # Facilities the actor lacks are a lump-sum build cost amortized over
         # this actor's horizon, which encodes its risk appetite.
+        if not include_facilities:
+            return total
+
         for facility in process.facilities_required:
             if actor.inventory.has_quantity(facility, 1):
                 continue

@@ -872,7 +872,10 @@ class IndustrialistBrain(ActorBrain):
         the best. The consumer's own output is valued by the same
         netback-aware path one level down, so demand two tiers away still
         reaches a miner. Other costs come from this actor's own make-or-buy
-        imputation, so the answer stays per-actor.
+        imputation, so the answer stays per-actor, and exclude the amortized
+        build of facilities the consumer lacks: the ceiling is what a
+        consumer already set up could pay, and the build can itself consume
+        this good.
 
         Bounded three ways: ``visiting`` skips a consumer whose output is
         already being valued, ``MAX_NETBACK_DEPTH`` bounds the walk, and the
@@ -925,8 +928,14 @@ class IndustrialistBrain(ActorBrain):
             quantity_per_run = process.inputs.get(commodity, 0)
             if quantity_per_run <= 0:
                 continue
+            # A consumer's other costs are imputed without the amortized
+            # build of facilities it lacks: the question is what a consumer
+            # already set up could pay, and the build may itself consume the
+            # good being valued, which would let this good's own imputation
+            # failure zero its downstream demand signal. See
+            # _impute_recipe_cost.
             recipe_cost = self._impute_recipe_cost(
-                actor, market, process, 0, frozenset(), memo
+                actor, market, process, 0, frozenset(), memo, include_facilities=False
             )
             if math.isinf(recipe_cost):
                 continue
