@@ -9,7 +9,7 @@ turn: it consumes satisfying goods from the actor's inventory and updates a
 |-------|-------------|------------|--------------|--------------|
 | Food (`food_drive.py`) | deterministic, 1/turn | `processed_food` | `food` | 0.2 |
 | Clothing (`clothing_drive.py`) | stochastic, p = 1/60 per turn | `clothing` | `quality_clothing` | 0.5 |
-| Shelter (`shelter_drive.py`) | stochastic, p = 1/120 per turn | `simple_building_materials` | `prefab_housing` | 0.5 |
+| Shelter (`shelter_drive.py`) | stochastic, p = 1/120 per turn | `simple_building_materials` | `prefab_housing` (durable) | 0.5 |
 | Health (`health_drive.py`) | stochastic, p = 1/90 per turn | `medicine` | `advanced_medicine` | 0.4 |
 
 ## Metrics
@@ -33,11 +33,30 @@ Each `tick()` updates four values, all in [0, 1]:
 
 Every need drive consumes its basic good first and the fallback good only
 when the basic good is out of stock. Fallback consumption decays debt faster
-(0.5 vs 0.8). Both goods count toward buffer coverage. For clothing,
-shelter and health `materials()` returns the basic good only, so those needs
-never bid for or stockpile the upgraded good; the upgraded goods are owned
-by the prosperity drives below. Food is the exception: `FoodDrive` bids for
-both the staple `processed_food` and the premium `food`.
+(0.5 vs 0.8). Both goods count toward buffer coverage. For clothing and
+health `materials()` returns the basic good only, so those needs never bid
+for or stockpile the upgraded good; the upgraded goods are owned by the
+prosperity drives below. Food and shelter are the exceptions: `FoodDrive`
+bids for both the staple `processed_food` and the premium `food`, and
+`ShelterDrive` bids for both `simple_building_materials` and the durable
+`prefab_housing`.
+
+## Durable materials (servings)
+
+A durable covers many consumption events instead of one.
+`ActorDrive.material_servings(commodity_id)` returns how many, 1.0 by
+default. `ShelterDrive` returns `1 / PREFAB_WEAR_PROBABILITY` (10) for
+`prefab_housing`: a held prefab serves every shelter event and is consumed
+only on a 0.1 wear roll, about once in 1200 turns at the 1/120 event rate.
+A shelter event consumes a building material only when no prefab is held.
+
+`ActorBrain._drive_buy_commands` works in servings, not units: stock on hand
+and the drive buffer count `quantity * servings`, `_cheapest_material_ask`
+compares `ask / servings` (a 75-credit prefab that serves ten events beats a
+15-credit brick), willingness to pay is the per-event value times servings,
+the self-supply cap is compared per serving, and the quantity bought is
+`ceil(need / servings)`, so an actor buys one prefab rather than ten. Every
+other drive is at servings 1.0 and behaves exactly as before.
 
 ## Prosperity drives
 
@@ -48,10 +67,14 @@ per category on every regular actor. Design in `docs/prosperity-design.md`.
 |----------|------|-----------------|-------------------|
 | food | `food` | 1/60 | 2 |
 | clothing | `quality_clothing` | 1/60 | 2 |
-| shelter | `prefab_housing` | 1/120 | 2 |
 | health | `advanced_medicine` | 1/90 | 1 |
 | luxury | `luxury_goods` | 1/45 | 2 |
-| computing | `computers` | 1/180 | 1 |
+
+`prefab_housing` and `computers` are not prosperity categories. They are
+durables: the prefab is a dwelling `ShelterDrive` holds, and computers are
+productive capital an industrialist holds for an output bonus (see
+`docs/commodities.md`, "Capital"). Both are reported in the summary
+`durables` block instead of the prosperity index.
 
 `processed_food` comes from `process_food`: 40 biomass + 1 chemicals -> 60
 processed_food at a chemical plant. Hand-cooked `food` comes from
@@ -84,7 +107,7 @@ returns both goods and bids for whichever is cheaper.
 - `materials()`: satisfying commodities; need drives return only the basic
   good, prosperity drives return their own upgraded good.
 - `target_units()`: inventory level the actor keeps on hand
-  (food 6, clothing 3, shelter 3, health 2).
+  (food 6, clothing 3, shelter 3, health 2), counted in servings.
 - `can_purchase(actor)`: whether the brain may bid for this drive this
   turn. Always true for needs; prosperity drives gate on met needs.
 

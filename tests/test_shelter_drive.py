@@ -15,6 +15,8 @@ from spacesim2.core.drives.shelter_drive import (
     DEBT_DECAY_FACTOR,
     DEBT_MISS_PENALTY,
     PREFAB_HOUSING_NAME,
+    PREFAB_SERVINGS,
+    PREFAB_WEAR_PROBABILITY,
     QUALITY_DEBT_DECAY_FACTOR,
     URGENCY,
     ShelterDrive,
@@ -35,6 +37,8 @@ class TestShelterDriveConstants:
         assert URGENCY > 0
         assert BUILDING_MATERIALS_NAME == "simple_building_materials"
         assert PREFAB_HOUSING_NAME == "prefab_housing"
+        assert 0 < PREFAB_WEAR_PROBABILITY < 1
+        assert PREFAB_SERVINGS == 1.0 / PREFAB_WEAR_PROBABILITY
 
 
 class TestShelterDrive:
@@ -122,11 +126,13 @@ class TestShelterDrive:
         assert abs(result.debt - initial_debt * DEBT_DECAY_FACTOR) < 1e-6
 
     @patch("spacesim2.core.drives.shelter_drive.random.random")
-    def test_tick_event_prefers_basic_material(
+    def test_tick_event_prefers_the_dwelling(
         self, mock_random, shelter_drive, mock_actor
     ):
-        """An event with both tiers consumes the basic material first."""
-        mock_random.return_value = 0.001
+        """An event with both tiers is served by the prefab, not the brick."""
+        # Event roll, then wear roll: the wear roll misses, so nothing is
+        # consumed at all.
+        mock_random.side_effect = [0.001, 0.9]
         mock_actor.inventory.get_available_quantity.return_value = 5
         mock_actor.inventory.remove_commodity.side_effect = lambda c, q: True
         initial_debt = 0.4
@@ -135,21 +141,34 @@ class TestShelterDrive:
         result = shelter_drive.tick(mock_actor)
 
         assert result.health == 1.0
-        assert abs(result.debt - initial_debt * DEBT_DECAY_FACTOR) < 1e-6
-        first_call = mock_actor.inventory.remove_commodity.call_args_list[0]
-        assert first_call[0][0].id == BUILDING_MATERIALS_NAME
+        assert abs(result.debt - initial_debt * QUALITY_DEBT_DECAY_FACTOR) < 1e-6
+        mock_actor.inventory.remove_commodity.assert_not_called()
 
     @patch("spacesim2.core.drives.shelter_drive.random.random")
-    def test_tick_event_falls_back_to_quality_material(
+    def test_tick_event_wears_out_the_dwelling(
         self, mock_random, shelter_drive, mock_actor
     ):
-        """With no basic material, the quality good is used and decays debt faster."""
+        """A wear roll below PREFAB_WEAR_PROBABILITY consumes the prefab."""
+        mock_random.side_effect = [0.001, PREFAB_WEAR_PROBABILITY / 2]
+        mock_actor.inventory.get_available_quantity.return_value = 5
+        mock_actor.inventory.remove_commodity.side_effect = lambda c, q: True
+
+        shelter_drive.tick(mock_actor)
+
+        first_call = mock_actor.inventory.remove_commodity.call_args_list[0]
+        assert first_call[0][0].id == PREFAB_HOUSING_NAME
+
+    @patch("spacesim2.core.drives.shelter_drive.random.random")
+    def test_tick_event_falls_back_to_basic_material(
+        self, mock_random, shelter_drive, mock_actor
+    ):
+        """With no prefab, the event consumes a building material."""
         mock_random.return_value = 0.001
         mock_actor.inventory.get_available_quantity.side_effect = (
-            lambda c: 0 if c.id == BUILDING_MATERIALS_NAME else 5
+            lambda c: 5 if c.id == BUILDING_MATERIALS_NAME else 0
         )
         mock_actor.inventory.remove_commodity.side_effect = (
-            lambda c, q: c.id == PREFAB_HOUSING_NAME
+            lambda c, q: c.id == BUILDING_MATERIALS_NAME
         )
         initial_debt = 0.4
         shelter_drive.metrics.debt = initial_debt
@@ -157,7 +176,7 @@ class TestShelterDrive:
         result = shelter_drive.tick(mock_actor)
 
         assert result.health == 1.0
-        assert abs(result.debt - initial_debt * QUALITY_DEBT_DECAY_FACTOR) < 1e-6
+        assert abs(result.debt - initial_debt * DEBT_DECAY_FACTOR) < 1e-6
 
     @patch("spacesim2.core.drives.shelter_drive.random.random")
     def test_tick_event_failed_maintenance(
@@ -176,7 +195,7 @@ class TestShelterDrive:
         assert abs(result.debt - expected_debt) < 1e-6
 
     def test_buffer_calculation(self, shelter_drive, mock_actor):
-        """Buffer comes from combined basic and quality inventory."""
+        """Buffer counts a prefab as the events it serves, not as one unit."""
 
         def get_qty(commodity):
             return 50  # both tiers
@@ -190,7 +209,7 @@ class TestShelterDrive:
 
         from spacesim2.core.drives.actor_drive import log_norm_ratio
 
-        total_units = 100
+        total_units = 50 + 50 * PREFAB_SERVINGS
         expected_coverage_days = total_units / BASE_EVENT_PROB
         expected_buffer = log_norm_ratio(
             expected_coverage_days, BUFFER_TARGET_DAYS, BUFFER_MAX_DAYS
@@ -270,7 +289,7 @@ class TestShelterDriveIntegration:
         assert all(0 <= d <= 1 for d in debt_progression)
 
     def test_mixed_inventory_consumption(self, real_registry):
-        """An event consumes one unit from the available stock."""
+        """An event served by the prefab consumes it only on a wear hit."""
         drive = ShelterDrive(real_registry)
         actor = get_actor("TestActor")
         basic = real_registry.get_commodity(BUILDING_MATERIALS_NAME)
@@ -284,13 +303,12 @@ class TestShelterDriveIntegration:
             result = drive.tick(actor)
 
         assert result.health == 1.0
-        total_remaining = actor.inventory.get_available_quantity(
-            basic
-        ) + actor.inventory.get_available_quantity(quality)
-        assert total_remaining == 19
+        # The wear roll hits at 0.001, so one prefab and no brick is spent.
+        assert actor.inventory.get_available_quantity(basic) == 10
+        assert actor.inventory.get_available_quantity(quality) == 9
 
-    def test_basic_preferred_over_quality(self, real_registry):
-        """Basic material is consumed first when both tiers are available."""
+    def test_dwelling_preferred_over_basic(self, real_registry):
+        """The prefab serves the event while a brick is also on hand."""
         drive = ShelterDrive(real_registry)
         actor = get_actor("TestActor")
         basic = real_registry.get_commodity(BUILDING_MATERIALS_NAME)
@@ -303,8 +321,8 @@ class TestShelterDriveIntegration:
         ):
             drive.tick(actor)
 
-        assert actor.inventory.get_available_quantity(quality) == 5
-        assert actor.inventory.get_available_quantity(basic) == 4
+        assert actor.inventory.get_available_quantity(quality) == 4
+        assert actor.inventory.get_available_quantity(basic) == 5
 
 
 class TestShelterDriveStochastic:
@@ -336,7 +354,11 @@ class TestShelterDriveStochastic:
     def test_event_probability_distribution(self, setup_drive_and_actor):
         """Event frequency matches BASE_EVENT_PROB within 3 standard deviations."""
         drive, actor = setup_drive_and_actor
-        actor.inventory.get_available_quantity = Mock(return_value=100)
+        # Bricks only: a prefab would serve events without consuming a unit,
+        # so the consumption count would no longer measure the event rate.
+        actor.inventory.get_available_quantity = Mock(
+            side_effect=lambda c: 100 if c.id == BUILDING_MATERIALS_NAME else 0
+        )
         actor.inventory.remove_commodity = Mock(return_value=True)
 
         num_trials = 1000

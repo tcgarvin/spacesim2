@@ -32,6 +32,8 @@
     effect: output
   upkeep:
     heavy_machinery: 0.01
+  capital:
+    computers: 0.25
 
 - id: make_building_materials_wood
   name: Make Building Materials (Wood)
@@ -120,6 +122,8 @@
   relevant_skills:
     - refining
   description: Smelts common metal ore into usable metal.
+  capital:
+    computers: 0.25
 
 - id: refine_nova_fuel
   name: Refine NovaFuel
@@ -149,6 +153,8 @@
   relevant_skills:
     - simple_manufacturing
   description: Forges simple tools from refined metal using metalworking equipment.
+  capital:
+    computers: 0.25
 
 - id: make_heavy_machinery
   name: Make Heavy Machinery
@@ -165,6 +171,8 @@
     - advanced_manufacturing
     - simple_manufacturing
   description: Machines heavy industrial equipment from refined metal.
+  capital:
+    computers: 0.25
 
 - id: make_simple_tools_wood
   name: Make Simple Tools (Wood)
@@ -311,6 +319,8 @@
   relevant_skills:
     - refining
   description: Smelts silica into glass using high-temperature furnaces.
+  capital:
+    computers: 0.25
 
 - id: make_ship_supplies
   name: Make Ship Supplies
@@ -442,6 +452,8 @@
   relevant_skills:
     - simple_manufacturing
   description: Processes raw fibers into finished textiles using industrial looms.
+  capital:
+    computers: 0.25
 
 - id: refine_chemicals
   name: Refine Chemicals
@@ -456,6 +468,8 @@
   relevant_skills:
     - chemistry
   description: Purifies crude chemicals into refined compounds for advanced manufacturing.
+  capital:
+    computers: 0.25
 
 - id: make_precision_parts
   name: Make Precision Parts
@@ -470,6 +484,8 @@
   relevant_skills:
     - advanced_manufacturing
   description: Machines common metal into finely toleranced precision components.
+  capital:
+    computers: 0.25
 
 - id: refine_rare_earth
   name: Refine Rare Earth
@@ -485,6 +501,8 @@
     - chemistry
     - refining
   description: Extracts and purifies rare earth elements from raw ore using chemical processes.
+  capital:
+    computers: 0.25
 
 - id: make_polymers
   name: Make Polymers
@@ -500,6 +518,8 @@
   relevant_skills:
     - chemistry
   description: Synthesizes durable polymer materials from chemicals and hydrocarbon feedstock.
+  capital:
+    computers: 0.25
 
 - id: make_electronics
   name: Make Electronics
@@ -516,6 +536,8 @@
   relevant_skills:
     - advanced_manufacturing
   description: Assembles electronic circuits from rare earth elements, glass, and precision parts.
+  capital:
+    computers: 0.25
 
 - id: make_precision_tools
   name: Make Precision Tools
@@ -532,6 +554,8 @@
     - advanced_manufacturing
     - simple_manufacturing
   description: Crafts high-quality precision tools for advanced manufacturing processes.
+  capital:
+    computers: 0.25
 
 # === Tier 2 Consumer Goods ===
 
@@ -552,6 +576,8 @@
   description: Bulk conversion of biomass into preserved processed food.
   upkeep:
     heavy_machinery: 0.01
+  capital:
+    computers: 0.25
 
 - id: make_quality_clothing
   name: Make Quality Clothing
@@ -567,6 +593,8 @@
   relevant_skills:
     - simple_manufacturing
   description: Crafts durable, treated garments from industrial textiles.
+  capital:
+    computers: 0.25
 
 - id: make_medicine
   name: Make Medicine
@@ -582,6 +610,8 @@
   relevant_skills:
     - chemistry
   description: Synthesizes pharmaceutical compounds from refined chemicals and organic matter.
+  capital:
+    computers: 0.25
 
 - id: make_prefab_housing
   name: Make Prefab Housing
@@ -617,6 +647,8 @@
     - advanced_manufacturing
     - aerospace
   description: Manufactures precision replacement parts for starship maintenance.
+  capital:
+    computers: 0.25
 
 # === Tier 3 Facility Construction ===
 
@@ -653,6 +685,8 @@
   relevant_skills:
     - advanced_manufacturing
   description: Fabricates composite construction materials from metal, polymers, and glass.
+  capital:
+    computers: 0.25
 
 - id: make_computers
   name: Make Computers
@@ -669,6 +703,8 @@
   relevant_skills:
     - advanced_manufacturing
   description: Assembles programmable computing devices from electronic and mechanical components.
+  capital:
+    computers: 0.25
 
 - id: make_luxury_goods
   name: Make Luxury Goods
@@ -685,6 +721,8 @@
   relevant_skills:
     - advanced_manufacturing
   description: Crafts high-value luxury items from rare and refined materials.
+  capital:
+    computers: 0.25
 
 - id: make_advanced_medicine
   name: Make Advanced Medicine
@@ -702,6 +740,8 @@
     - chemistry
     - advanced_manufacturing
   description: Produces electronically-enhanced medical treatments for superior outcomes.
+  capital:
+    computers: 0.25
 
 - id: make_ship_components
   name: Make Ship Components
@@ -719,3 +759,5 @@
     - advanced_manufacturing
     - aerospace
   description: Manufactures advanced integrated ship modules with electronic control systems.
+  capital:
+    computers: 0.25

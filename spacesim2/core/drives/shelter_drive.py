@@ -20,6 +20,10 @@ BUFFER_TARGET_DAYS = 120.0  # 4 months
 BUFFER_MAX_DAYS = 360.0  # saturates at 1 year
 URGENCY = 1.0
 DRIVE_NAME = "shelter"
+# A prefab dwelling serves every maintenance event and is consumed only this
+# often: mean 10 events, about 1200 turns at the 1/120 event rate.
+PREFAB_WEAR_PROBABILITY = 0.1
+PREFAB_SERVINGS = 1.0 / PREFAB_WEAR_PROBABILITY
 
 BUILDING_MATERIALS_NAME = "simple_building_materials"
 PREFAB_HOUSING_NAME = "prefab_housing"
@@ -35,13 +39,13 @@ class ShelterDriveMetrics(DriveMetrics):
 
 
 class ShelterDrive(ActorDrive):
-    """Shelter maintenance with quality tiers.
+    """Shelter maintenance with two tiers, one of them durable.
 
     - Stochastic maintenance events, about 1 per 120 days.
-    - Uses simple_building_materials first, prefab_housing as a fallback.
-      The prosperity shelter drive owns prefab_housing; it is not bid for
-      here.
-    - Quality materials recover debt faster.
+    - A prefab dwelling serves every event and wears out only once in ten,
+      so it is the durable tier. Without one the event consumes 1 unit of
+      simple_building_materials.
+    - The prefab recovers debt faster, as any quality serving does.
     """
 
     MISS_PENALTY = DEBT_MISS_PENALTY
@@ -61,7 +65,14 @@ class ShelterDrive(ActorDrive):
         )
 
     def materials(self) -> list[CommodityDefinition]:
-        return [self.building_materials]
+        """Both tiers: the consumable first, then the durable dwelling."""
+        if self.quality_materials is None:
+            return [self.building_materials]
+        return [self.building_materials, self.quality_materials]
+
+    def material_servings(self, commodity_id: str) -> float:
+        """A prefab covers PREFAB_SERVINGS events; a brick covers one."""
+        return PREFAB_SERVINGS if commodity_id == PREFAB_HOUSING_NAME else 1.0
 
     def target_units(self) -> int:
         return self.TARGET_UNITS
@@ -70,15 +81,15 @@ class ShelterDrive(ActorDrive):
         """Process shelter maintenance for this turn."""
         p_event = BASE_EVENT_PROB
 
-        # Both material types count.
         materials_qty = actor.inventory.get_available_quantity(self.building_materials)
-        quality_qty = (
+        prefab_qty = (
             actor.inventory.get_available_quantity(self.quality_materials)
             if self.quality_materials
             else 0
         )
-        total_qty = materials_qty + quality_qty
-        has_shelter_materials = total_qty > 0
+        # Servings, not units: one prefab covers PREFAB_SERVINGS events.
+        total_servings = materials_qty + prefab_qty * PREFAB_SERVINGS
+        has_shelter_materials = total_servings > 0
 
         health = 1.0 if has_shelter_materials else 0.0
 
@@ -87,27 +98,19 @@ class ShelterDrive(ActorDrive):
         used_quality = False
 
         if event_today and has_shelter_materials:
-            # Basic first; quality is the fallback.
-            if actor.inventory.remove_commodity(self.building_materials, 1):
-                did_maintain = True
-            elif self.quality_materials and actor.inventory.remove_commodity(
-                self.quality_materials, 1
-            ):
+            if prefab_qty > 0 and self.quality_materials:
+                # The dwelling serves the event and only sometimes wears out.
                 did_maintain = True
                 used_quality = True
+                if random.random() < PREFAB_WEAR_PROBABILITY:
+                    if actor.inventory.remove_commodity(self.quality_materials, 1):
+                        prefab_qty -= 1
+            elif actor.inventory.remove_commodity(self.building_materials, 1):
+                did_maintain = True
+                materials_qty -= 1
 
-            # Post-consumption inventory.
-            materials_qty = actor.inventory.get_available_quantity(
-                self.building_materials
-            )
-            quality_qty = (
-                actor.inventory.get_available_quantity(self.quality_materials)
-                if self.quality_materials
-                else 0
-            )
-            total_qty = materials_qty + quality_qty
+            total_servings = materials_qty + prefab_qty * PREFAB_SERVINGS
 
-        # Update debt
         if event_today:
             decay = QUALITY_DEBT_DECAY_FACTOR if used_quality else DEBT_DECAY_FACTOR
             debt = decay * self.metrics.debt
@@ -118,9 +121,8 @@ class ShelterDrive(ActorDrive):
             decay_rate = DEBT_DECAY_FACTOR if has_shelter_materials else 1.0
             debt = self.metrics.debt * decay_rate
 
-        # Buffer counts both types.
         exp_events_per_day = max(p_event, 1e-9)
-        expected_coverage_days = total_qty / exp_events_per_day
+        expected_coverage_days = total_servings / exp_events_per_day
         buffer = log_norm_ratio(
             expected_coverage_days, BUFFER_TARGET_DAYS, BUFFER_MAX_DAYS
         )

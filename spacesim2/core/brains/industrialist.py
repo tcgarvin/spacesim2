@@ -17,6 +17,7 @@ from spacesim2.core.brains.migration import (
 )
 from spacesim2.core.brains.migration import decide_migration as decide_migration_for
 from spacesim2.core.commands import (
+    CAPITAL_BREAK_PROBABILITY,
     CancelOrderCommand,
     EconomicCommand,
     GovernmentWorkCommand,
@@ -158,6 +159,10 @@ TOOL_BUFFER = 2
 # Units of each upkeep good kept on hand. One is enough: at most one unit per
 # upkeep entry is drawn per run, and the stock is replaced the same turn.
 UPKEEP_BUFFER = 1
+# Units of each capital good the chosen recipe lists that the industrialist
+# keeps on hand. One is enough: the output bonus is granted for holding any
+# unit, not per unit.
+CAPITAL_BUFFER = 1
 
 
 class IndustrialistBrain(ActorBrain):
@@ -417,6 +422,7 @@ class IndustrialistBrain(ActorBrain):
 
         reserved = {commodity.id for commodity, _ in process.requirements}
         reserved.update(commodity.id for commodity in process.outputs)
+        reserved.update(commodity.id for commodity in process.capital)
         for facility in process.facilities_required:
             if actor.inventory.has_quantity(facility, 1):
                 continue
@@ -648,6 +654,9 @@ class IndustrialistBrain(ActorBrain):
             attribute_modifier = actor.land.get_availability(
                 process.resource_attribute.commodity
             )
+        # Capital the actor already holds raises every output of the run, so
+        # the exit check sees the output the recipe actually yields.
+        attribute_modifier *= self._capital_output_modifier(actor, process)
 
         total = 0.0
         for commodity, quantity in process.outputs.items():
@@ -947,6 +956,49 @@ class IndustrialistBrain(ActorBrain):
         )
         anchor = unit_cost if math.isinf(make_cost) else make_cost
         return min(best, anchor * NETBACK_VALUE_CAP)
+
+    @staticmethod
+    def _capital_output_modifier(actor: "Actor", process: "ProcessDefinition") -> float:
+        """Output multiplier from the capital goods the actor holds now.
+
+        1.0 when it holds none. Matches ``ProcessCommand.execute``: bonuses
+        from several capital goods sum, and holding one unit is enough.
+        """
+        return 1.0 + sum(
+            bonus
+            for commodity, bonus in process.capital.items()
+            if actor.inventory.has_quantity(commodity, 1)
+        )
+
+    def _capital_willingness_to_pay(
+        self,
+        actor: "Actor",
+        market: "Market",
+        process: "ProcessDefinition",
+        commodity: "CommodityDefinition",
+        cache: Optional[BrainCache] = None,
+    ) -> float:
+        """Maximum price for one unit of a capital good the recipe lists.
+
+        A held unit raises every run's output by its bonus until it breaks,
+        so it is worth the extra output over its expected life: output value
+        per run times the bonus times the expected number of runs, divided by
+        ENTRY_MARGIN so buying it still leaves the line entry-profitable. The
+        life is capped at the actor's facility amortization horizon, which is
+        how long it plans on this recipe at all. Returns 0.0 when the
+        recipe's output cannot be valued.
+        """
+        bonus = process.capital.get(commodity, 0.0)
+        if bonus <= 0.0:
+            return 0.0
+        memo: Dict[str, float] = cache.imputed_cost if cache is not None else {}
+        output_value = self._recipe_output_value(actor, market, process, memo)
+        if math.isnan(output_value) or output_value <= 0.0:
+            return 0.0
+        expected_uses = min(
+            1.0 / CAPITAL_BREAK_PROBABILITY, float(self.facility_amortization_horizon)
+        )
+        return output_value * bonus * expected_uses / ENTRY_MARGIN
 
     def _calculate_tool_willingness_to_pay(
         self, actor: "Actor", market: "Market", cache: Optional[BrainCache] = None
@@ -1265,6 +1317,22 @@ class IndustrialistBrain(ActorBrain):
                 )
             )
 
+        # Keep one unit of each capital good the recipe lists. Holding one
+        # raises every run's output; more than one adds nothing.
+        for capital_commodity in process.capital:
+            commands.extend(
+                self._buy_command(
+                    actor,
+                    market,
+                    capital_commodity,
+                    CAPITAL_BUFFER - actor.inventory.get_quantity(capital_commodity),
+                    cache,
+                    self._capital_willingness_to_pay(
+                        actor, market, process, capital_commodity, cache
+                    ),
+                )
+            )
+
         # Netback inputs to the recipe's own economics, recomputed every turn
         # from live market state. Both terms are one run of the recipe.
         memo: Dict[str, float] = cache.imputed_cost if cache is not None else {}
@@ -1349,7 +1417,10 @@ class IndustrialistBrain(ActorBrain):
                 )
 
         for commodity, _ in process.outputs.items():
-            keep = UPKEEP_BUFFER if commodity in process.upkeep else 0
+            keep = max(
+                UPKEEP_BUFFER if commodity in process.upkeep else 0,
+                CAPITAL_BUFFER if commodity in process.capital else 0,
+            )
             commands.extend(self._sell_command(actor, market, commodity, cache, keep))
 
         return commands

@@ -14,6 +14,7 @@ import statistics
 from typing import Dict, List, Sequence
 
 from spacesim2.core.actor import Actor, ActorType
+from spacesim2.core.brains.industrialist import IndustrialistBrain
 from spacesim2.core.contracts import GOVERNMENT, PassengerPayload
 from spacesim2.core.drives.prosperity_drive import (
     PROSPERITY_CATEGORIES,
@@ -21,6 +22,7 @@ from spacesim2.core.drives.prosperity_drive import (
     needs_are_met,
     prosperity_index,
 )
+from spacesim2.core.drives.shelter_drive import PREFAB_HOUSING_NAME
 from spacesim2.core.navigation import get_navigator
 from spacesim2.core.ship import Ship, ShipStatus
 from spacesim2.core.simulation import Simulation
@@ -110,6 +112,7 @@ def compute_summary(sim: Simulation) -> Dict[str, object]:
         "money": _summarize_money(regular_actors),
         "drives": drives,
         "prosperity": prosperity,
+        "durables": _summarize_durables(sim, regular_actors, markets),
         "inventory_totals": _summarize_inventory(sim),
         "prices": prices,
         "markets": markets,
@@ -296,6 +299,62 @@ def _summarize_prosperity(
         "volume_per_planet_turn": {
             c.commodity_id: volume.get(c.commodity_id, 0.0)
             for c in PROSPERITY_CATEGORIES
+        },
+    }
+
+
+# Goods that are held and used over many turns rather than consumed on the
+# turn they are bought. They left the prosperity index when they became
+# durables; this block is how they are watched instead.
+DURABLE_GOODS = ("computers", PREFAB_HOUSING_NAME)
+
+
+def _summarize_durables(
+    sim: Simulation, regular_actors: List, markets: Dict[str, object]
+) -> Dict[str, object]:
+    """Ownership and trade of the durable goods.
+
+    ``computer_holder_share`` is the share of industrialists whose chosen
+    recipe lists a capital good that hold one; industrialists whose recipe
+    lists none, or who have no recipe, are out of the denominator.
+    ``prefab_holder_share`` is the share of regular actors with a dwelling.
+    ``volume_per_planet_turn`` repeats the markets block for the durables.
+    Not part of the verdict.
+    """
+    capital_users = 0
+    capital_holders = 0
+    prefab_holders = 0
+    prefab = sim.commodity_registry.get_commodity(PREFAB_HOUSING_NAME)
+
+    for actor in regular_actors:
+        if prefab is not None and actor.inventory.get_quantity(prefab) > 0:
+            prefab_holders += 1
+        brain = actor.brain
+        if not isinstance(brain, IndustrialistBrain) or brain.chosen_recipe_id is None:
+            continue
+        process = sim.process_registry.get_process(brain.chosen_recipe_id)
+        if process is None or not process.capital:
+            continue
+        capital_users += 1
+        if all(
+            actor.inventory.get_quantity(commodity) > 0 for commodity in process.capital
+        ):
+            capital_holders += 1
+
+    volume = markets["volume_per_planet_turn"]
+    if not isinstance(volume, dict):
+        raise ValueError(
+            f"markets['volume_per_planet_turn'] must be a dict, got {type(volume).__name__}"
+        )
+    n = len(regular_actors)
+    return {
+        "capital_recipe_actors": capital_users,
+        "computer_holder_share": (
+            round(capital_holders / capital_users, 3) if capital_users else 0.0
+        ),
+        "prefab_holder_share": round(prefab_holders / n, 3) if n else 0.0,
+        "volume_per_planet_turn": {
+            good: volume.get(good, 0.0) for good in DURABLE_GOODS
         },
     }
 

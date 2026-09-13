@@ -80,6 +80,9 @@ class _StubDrive:
     def target_units(self):
         return self._target
 
+    def material_servings(self, commodity_id):
+        return 1.0
+
     def deprivation_stake(self):
         return self._stake
 
@@ -189,9 +192,11 @@ class TestIndustrialistBrain:
 
         mock_process = Mock(spec=ProcessDefinition)
         mock_process.upkeep = {}
+        mock_process.capital = {}
         mock_process.tools_required = []
         mock_process.facilities_required = []
         mock_process.upkeep = {}
+        mock_process.capital = {}
         mock_actor.sim.process_registry.get_process.return_value = mock_process
 
         brain.chosen_recipe_id = "test_recipe"
@@ -217,9 +222,11 @@ class TestIndustrialistBrain:
 
         mock_process = Mock(spec=ProcessDefinition)
         mock_process.upkeep = {}
+        mock_process.capital = {}
         mock_process.tools_required = []
         mock_process.facilities_required = []
         mock_process.upkeep = {}
+        mock_process.capital = {}
         mock_actor.sim.process_registry.get_process.return_value = mock_process
 
         brain.chosen_recipe_id = "test_recipe"
@@ -237,11 +244,13 @@ class TestIndustrialistBrain:
 
         process = Mock(spec=ProcessDefinition)
         process.upkeep = {}
+        process.capital = {}
         process.inputs = {input_commodity: 2}
         process.outputs = {output_commodity: 1}
         process.tools_required = []
         process.facilities_required = []
         process.upkeep = {}
+        process.capital = {}
         process.resource_attribute = None
 
         market = mock_actor.planet.market
@@ -357,11 +366,13 @@ class TestIndustrialistBrain:
 
         process = Mock(spec=ProcessDefinition)
         process.upkeep = {}
+        process.capital = {}
         process.inputs = {}
         process.outputs = {output_commodity: 4}
         process.tools_required = []
         process.facilities_required = []
         process.upkeep = {}
+        process.capital = {}
         process.resource_attribute = ResourceAttribute(
             commodity="biomass", effect="output"
         )
@@ -400,24 +411,28 @@ class TestIndustrialistBrain:
 
         biomass_process = Mock(spec=ProcessDefinition)
         biomass_process.upkeep = {}
+        biomass_process.capital = {}
         biomass_process.id = "gather_biomass"
         biomass_process.inputs = {}
         biomass_process.outputs = {biomass_commodity: 4}
         biomass_process.tools_required = []
         biomass_process.facilities_required = []
         biomass_process.upkeep = {}
+        biomass_process.capital = {}
         biomass_process.resource_attribute = ResourceAttribute(
             commodity="biomass", effect="output"
         )
 
         fiber_process = Mock(spec=ProcessDefinition)
         fiber_process.upkeep = {}
+        fiber_process.capital = {}
         fiber_process.id = "gather_fiber"
         fiber_process.inputs = {}
         fiber_process.outputs = {fiber_commodity: 3}
         fiber_process.tools_required = []
         fiber_process.facilities_required = []
         fiber_process.upkeep = {}
+        fiber_process.capital = {}
         fiber_process.resource_attribute = ResourceAttribute(
             commodity="fiber", effect="output"
         )
@@ -495,12 +510,14 @@ class TestImputedProcurementBids:
 
         process = Mock(spec=ProcessDefinition)
         process.upkeep = {}
+        process.capital = {}
         process.id = "refine_chemicals"
         process.inputs = {chem: 3}
         process.outputs = {refined: 1}
         process.tools_required = []
         process.facilities_required = []
         process.upkeep = {}
+        process.capital = {}
         process.resource_attribute = None
         actor.sim.process_registry.all_processes.return_value = [process]
         return refined, chem
@@ -709,12 +726,14 @@ class TestDriveBidReference:
 
         process = Mock(spec=ProcessDefinition)
         process.upkeep = {}
+        process.capital = {}
         process.id = "refine_chemicals"
         process.inputs = {chem: 3}
         process.outputs = {refined: 1}
         process.tools_required = []
         process.facilities_required = []
         process.upkeep = {}
+        process.capital = {}
         process.resource_attribute = None
         actor.sim.process_registry.all_processes.return_value = [process]
         return refined, chem
@@ -830,6 +849,7 @@ class TestDepthAwareOutputValuation:
         """A recipe with no inputs, so its cost is exactly a turn of labor."""
         process = Mock(spec=ProcessDefinition)
         process.upkeep = {}
+        process.capital = {}
         process.id = "make_output"
         process.inputs = {}
         process.outputs = {output_commodity: quantity}
@@ -1000,6 +1020,7 @@ class TestNetbackOutputValuation:
         process.inputs = inputs
         process.outputs = outputs
         process.upkeep = {}
+        process.capital = {}
         process.tools_required = []
         process.facilities_required = []
         process.resource_attribute = None
@@ -1131,6 +1152,7 @@ class TestStockAwareOutputValue:
         process.inputs = {}
         process.outputs = {output_commodity: 1}
         process.upkeep = {}
+        process.capital = {}
         process.tools_required = []
         process.facilities_required = []
         process.resource_attribute = None
@@ -1333,6 +1355,8 @@ class TestStuckRecipeAbandonment:
     def _process(self, pid, inputs, facilities=()):
         process = Mock(spec=ProcessDefinition)
         process.upkeep = {}
+        process.capital = {}
+        process.capital = {}
         process.id = pid
         process.inputs = dict(inputs)
         process.outputs = {}
@@ -1459,6 +1483,8 @@ class TestIndustrialistLiquidation:
     def _process(pid, inputs, outputs, tools=(), facilities=()):
         process = Mock(spec=ProcessDefinition)
         process.upkeep = {}
+        process.capital = {}
+        process.capital = {}
         process.id = pid
         process.inputs = dict(inputs)
         process.outputs = dict(outputs)
@@ -1670,6 +1696,8 @@ class TestNetbackInputBids:
     def _process(pid, inputs, outputs, facilities=()):
         process = Mock(spec=ProcessDefinition)
         process.upkeep = {}
+        process.capital = {}
+        process.capital = {}
         process.id = pid
         process.inputs = dict(inputs)
         process.outputs = dict(outputs)

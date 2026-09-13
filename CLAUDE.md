@@ -281,6 +281,25 @@ builds the facilities and acquires the tools its chosen recipe needs.
 When changing requirements, use the `commodity-process-design` skill and keep
 the bootstrap path viable.
 
+#### Capital
+
+A process may carry a `capital` mapping of commodity id to an output bonus
+fraction:
+
+```yaml
+capital:
+  computers: 0.25
+```
+
+Holding at least 1 unit multiplies the run's output by `1 + bonus`; bonuses
+from several capital goods sum and holding more than one unit adds nothing.
+Capital is not a precondition and is not consumed by a run; it breaks at
+`CAPITAL_BREAK_PROBABILITY` (0.005) after a successful run, a mean life of
+200 runs. Every process with a non-empty `facilities_required` lists
+`computers: 0.25`. `IndustrialistBrain` keeps 1 unit of each capital good its
+recipe lists, values it at the extra output over its expected life, and never
+sells it. See `docs/commodities.md`.
+
 #### Upkeep
 
 A process may also carry an `upkeep` mapping of commodity id to a per-run
@@ -315,11 +334,17 @@ Every drive tracks four 0-1 metrics: `health` (immediate status), `debt`
 (priority multiplier).
 
 Materials: food uses `food`; clothing uses `clothing`; shelter uses
-`simple_building_materials`; health uses `medicine`. The upgraded goods
-(`processed_food`, `quality_clothing`, `prefab_housing`, `advanced_medicine`,
-`luxury_goods`, `computers`) belong to `ProsperityDrive` instances, one per
-category, which bid only while every need is met and consume at a rate set
-by the actor's fixed taste vector. See `docs/prosperity-design.md`.
+`simple_building_materials` and the durable `prefab_housing`; health uses
+`medicine`. The upgraded goods (`processed_food`, `quality_clothing`,
+`advanced_medicine`, `luxury_goods`) belong to `ProsperityDrive` instances,
+one per category, which bid only while every need is met and consume at a
+rate set by the actor's fixed taste vector. See `docs/prosperity-design.md`.
+
+Durables are held and used, not consumed per event. A drive declares how
+many events one unit covers with `material_servings()`, and the brain counts
+stock, compares asks, prices bids and sizes orders per serving. A prefab
+serves every shelter event and wears out on a 0.1 roll;
+`computers` are productive capital, not a drive good. See `docs/needs.md`.
 
 Adding a drive needs the whole supply chain:
 1. Raw material and finished good in `data/commodities.yaml`.

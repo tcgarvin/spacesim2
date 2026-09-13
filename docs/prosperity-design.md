@@ -19,19 +19,29 @@ and a prosperity index that makes rich and poor planets visible.
 
 ## Prosperity drives
 
-One class, `ProsperityDrive`, parameterized by a small config table. Six
+One class, `ProsperityDrive`, parameterized by a small config table. Four
 instances per regular actor:
 
 | Category | Good | Base event rate | Base target units |
 |----------|------|-----------------|-------------------|
 | food | `food` | 1/60 | 2 |
 | clothing | `quality_clothing` | 1/60 | 2 |
-| shelter | `prefab_housing` | 1/120 | 2 |
 | health | `advanced_medicine` | 1/90 | 1 |
 | luxury | `luxury_goods` | 1/45 | 2 |
-| computing | `computers` | 1/180 | 1 |
 
-Rates and targets are starting values for the first probe.
+The index is the unweighted mean over these four.
+
+Shelter and computing left the table because their goods became durables.
+A prosperity drive eats one unit per event at a hand-set rate, which is the
+wrong model for a good you own: `prefab_housing` is now a dwelling
+`ShelterDrive` holds, serving every shelter event and wearing out on a 0.1
+roll (10 events, about 1200 turns), and `computers` are productive capital
+an industrialist holds for a 25% output bonus on any facility-gated recipe,
+breaking at 0.005 per run (200 runs). Demand for both now comes from the
+return on holding the good rather than from an event rate. Coverage for
+these two sat at 0.02 and 0.00 at 12 planets / 300 turns. They are measured
+in the summary `durables` block instead of the prosperity index; see
+`docs/commodities.md` ("Capital") and `docs/needs.md` ("Durable materials").
 
 The food category is the exception to the pattern below. `processed_food`
 is the staple `FoodDrive` eats, made by `process_food`: 40 biomass + 1
@@ -39,12 +49,12 @@ chemicals -> 60 processed_food at a chemical plant. Hand-cooked `food` (4
 biomass -> 4 food) is the premium good, so the food category's prosperity
 good is `food` itself and `FoodDrive.materials()` returns both.
 
-Each other prosperity drive owns its good outright. Those need drives
-return the basic good only from `materials()`:
-`ShelterDrive.materials()` and its siblings do not bid for the quality
-good, though they still consume it as a last resort when the basic good is
-out of stock. That fallback is the only remaining coupling between the two
-families.
+Each other prosperity drive owns its good outright. The need drives return
+the basic good only from `materials()`: `ClothingDrive` and `HealthDrive` do
+not bid for the quality good, though they still consume it as a last resort
+when the basic good is out of stock. That fallback is the only remaining
+coupling between the two families. `ShelterDrive` is no longer one of them:
+it owns `prefab_housing` outright as a durable.
 
 Mechanics follow `ClothingDrive`: a Bernoulli consumption event per turn,
 debt that grows on a missed event and decays on a served one, a
@@ -163,9 +173,16 @@ The render thread reads nothing else new.
 
 ## Summary
 
-New `prosperity` block in `compute_summary`: mean index, per-category
-coverage, share of actors passing the gate, and volume for each prosperity
-good over the shared activity window (`_ACTIVITY_WINDOW_TURNS`, 50 turns).
+New `prosperity` block in `compute_summary`: mean index over the four
+categories, per-category coverage, share of actors passing the gate, and
+volume for each prosperity good over the shared activity window
+(`_ACTIVITY_WINDOW_TURNS`, 50 turns).
+
+A `durables` block covers the two goods that left the index:
+`computer_holder_share` (industrialists whose chosen recipe lists a capital
+good that hold one), `prefab_holder_share` (regular actors with a dwelling),
+and volume per planet-turn for `computers` and `prefab_housing`. Not part of
+the verdict.
 Open: a smoke assertion that at least one prosperity good
 trades at nonzero volume by turn 200, once the first probe shows the level
 to assert against.
@@ -175,7 +192,7 @@ to assert against.
 | Phase | Work | Question it answers |
 |-------|------|---------------------|
 | 1 | `ProsperityDrive`, gate, taste vector, need drives drop quality preference, summary block. Done. | Do tier 2 goods trade once someone bids for them? |
-| 2 | Luxury and computing categories. Done, shipped with phase 1. | Does demand alone pull tier 3 through the chain? |
+| 2 | Luxury and computing categories. Done, shipped with phase 1; computing later became capital. | Does demand alone pull tier 3 through the chain? |
 | 3 | Snapshot fields, tier overlays, panel rows, charts | Can you see rich and poor planets at fit zoom? |
 | 4 | Surplus money discount on prosperity lambda. Done. | Is the demand curve steep enough? |
 

@@ -65,11 +65,13 @@ PROSPERITY_CATEGORIES: tuple[ProsperityCategory, ...] = (
     # 2026-09-07).
     ProsperityCategory("food", "food", 1.0 / 60.0, 2),
     ProsperityCategory("clothing", "quality_clothing", 1.0 / 60.0, 2),
-    ProsperityCategory("shelter", "prefab_housing", 1.0 / 120.0, 2),
     ProsperityCategory("health", "advanced_medicine", 1.0 / 90.0, 1),
     ProsperityCategory("luxury", "luxury_goods", 1.0 / 45.0, 2),
-    ProsperityCategory("computing", "computers", 1.0 / 180.0, 1),
 )
+# prefab_housing and computers are durables, not prosperity consumables:
+# ShelterDrive holds the dwelling and IndustrialistBrain holds the computer
+# as productive capital, so neither has a category here. See
+# docs/prosperity-design.md.
 
 CATEGORY_NAMES: tuple[str, ...] = tuple(c.name for c in PROSPERITY_CATEGORIES)
 

@@ -348,7 +348,14 @@ class ActorBrain:
         commands: List[MarketCommand] = []
         bid_quantities: Dict[str, int] = {}
         substitutes: List[
-            Tuple[List["CommodityDefinition"], "CommodityDefinition", int, int, int]
+            Tuple[
+                "ActorDrive",
+                List["CommodityDefinition"],
+                "CommodityDefinition",
+                float,
+                float,
+                float,
+            ]
         ] = []
         available = actor.money
 
@@ -363,17 +370,24 @@ class ActorBrain:
                 continue
             drive_lam = lam if drive.WELLBEING else surplus_lam
 
-            have = sum(actor.inventory.get_quantity(m) for m in mats)
+            # Stock and the target are counted in consumption events, not
+            # units: one durable covers many events.
+            have = sum(
+                actor.inventory.get_quantity(m) * drive.material_servings(m.id)
+                for m in mats
+            )
             need = drive.target_units() - have
             if need <= 0:
                 continue
 
             target_commodity, ask = self._cheapest_material_ask(
-                actor, market, mats, cache
+                actor, market, mats, cache, drive
             )
-            wtp = self._drive_willingness_to_pay(
+            wtp_per_serving = self._drive_wtp_per_serving(
                 actor, market, drive, target_commodity, drive_lam, cache
             )
+            target_servings = drive.material_servings(target_commodity.id)
+            wtp = max(0, math.ceil(wtp_per_serving * target_servings))
             if wtp <= 0:
                 continue
 
@@ -390,7 +404,9 @@ class ActorBrain:
             if bid <= 0:
                 continue
 
-            qty = min(need, available // bid)
+            # One durable covers several events, so buy the units that cover
+            # the shortfall, not one unit per event.
+            qty = min(math.ceil(need / target_servings), available // bid)
             if qty > 0:
                 commands.append(PlaceBuyOrderCommand(target_commodity, qty, bid))
                 available -= qty * bid
@@ -399,17 +415,34 @@ class ActorBrain:
                 )
 
             if ask is not None:
-                substitutes.append((mats, target_commodity, need, wtp, ask))
+                substitutes.append(
+                    (
+                        drive,
+                        mats,
+                        target_commodity,
+                        need,
+                        wtp_per_serving,
+                        ask / target_servings,
+                    )
+                )
 
-        for mats, target_commodity, need, wtp, ask in substitutes:
+        for (
+            drive,
+            mats,
+            target_commodity,
+            need,
+            wtp_per_serving,
+            ask_per_serving,
+        ) in substitutes:
             available = self._add_substitute_material_bids(
                 actor,
                 market,
+                drive,
                 mats,
                 target_commodity,
                 need,
-                wtp,
-                ask,
+                wtp_per_serving,
+                ask_per_serving,
                 available,
                 commands,
                 cache,
@@ -544,11 +577,12 @@ class ActorBrain:
         self,
         actor: "Actor",
         market: "Market",
+        drive: "ActorDrive",
         materials: List["CommodityDefinition"],
         target_commodity: "CommodityDefinition",
-        need: int,
-        wtp: int,
-        ask: int,
+        need: float,
+        wtp_per_serving: float,
+        ask_per_serving: float,
         available: int,
         commands: List[MarketCommand],
         cache: Optional[BrainCache],
@@ -582,16 +616,20 @@ class ActorBrain:
         holding up to twice its target. Consumption then keeps it out of the
         market until stock falls back below target.
         """
-        shelf_bound = int(ask * SUBSTITUTE_BID_DISCOUNT)
         for material in materials:
             if material is target_commodity:
                 continue
+            # Prices and quantities are per serving, so a durable that covers
+            # ten events is compared against ten units of the consumable.
+            servings = drive.material_servings(material.id)
+            shelf_bound = int(ask_per_serving * SUBSTITUTE_BID_DISCOUNT * servings)
+            wtp = max(0, math.ceil(wtp_per_serving * servings))
             ref = self._drive_bid_reference(actor, market, material, cache)
             pressure = market.scarcity_pressure_for(material)
             price = min(wtp, shelf_bound, int(round(ref * (1.0 + pressure))))
             if price <= 0:
                 continue
-            qty = min(need, available // price)
+            qty = min(math.ceil(need / servings), available // price)
             if qty > 0:
                 commands.append(PlaceBuyOrderCommand(material, qty, price))
                 available -= qty * price
@@ -807,28 +845,75 @@ class ActorBrain:
         actor with profitable work available values the good it hand-makes
         at what that turn really costs it.
         """
+        # Ceil so the ceiling meets sellers' ceiled cost floor. Truncating
+        # would leave a permanent 1-credit gap that blocks trade between
+        # actors with identical costs.
+        per_serving = self._drive_wtp_per_serving(
+            actor, market, drive, commodity, lam, cache, labor_value=labor_value
+        )
+        return max(0, math.ceil(per_serving * drive.material_servings(commodity.id)))
+
+    def _drive_wtp_per_serving(
+        self,
+        actor: "Actor",
+        market: "Market",
+        drive: "ActorDrive",
+        commodity: "CommodityDefinition",
+        lam: float,
+        cache: Optional[BrainCache] = None,
+        labor_value: int = GOVERNMENT_WAGE,
+    ) -> float:
+        """Willingness to pay for one consumption event, before servings.
+
+        The welfare and self-supply terms are both per event: a durable that
+        covers ten events is worth ten of these, and its make cost is
+        likewise divided by the events it covers before the two are compared.
+
+        The cross-material cap only draws on consumables and on the good
+        being priced. A durable's amortized cost is a cap on the durable
+        itself, not a substitute the actor can make in time for the next
+        event: a prefab that works out to 10 credits an event over ten
+        events must not cap the bid for a single building material at 10
+        when the material costs 19 to make today.
+        """
         if lam <= 0:
-            return 0
+            return 0.0
         welfare_wtp = drive.marginal_welfare() / lam
 
         self_supply = [
             cost
             for cost in (
-                self._replacement_cost(
-                    actor, market, material, cache, labor_value=labor_value
+                self._replacement_cost_per_serving(
+                    actor, market, drive, material, cache, labor_value=labor_value
                 )
                 for material in (drive.materials() or [commodity])
+                if material.id == commodity.id
+                or drive.material_servings(material.id) == 1.0
             )
             if cost is not None
         ]
         replacement = min(self_supply) if self_supply else None
         if replacement is not None:
             replacement *= 1.0 + drive.metrics.debt
-        wtp = welfare_wtp if replacement is None else min(welfare_wtp, replacement)
-        # Ceil so the ceiling meets sellers' ceiled cost floor. Truncating
-        # would leave a permanent 1-credit gap that blocks trade between
-        # actors with identical costs.
-        return max(0, math.ceil(wtp))
+        return welfare_wtp if replacement is None else min(welfare_wtp, replacement)
+
+    def _replacement_cost_per_serving(
+        self,
+        actor: "Actor",
+        market: "Market",
+        drive: "ActorDrive",
+        commodity: "CommodityDefinition",
+        cache: Optional[BrainCache] = None,
+        *,
+        labor_value: int = GOVERNMENT_WAGE,
+    ) -> Optional[float]:
+        """Self-supply cost of one consumption event of a drive material."""
+        cost = self._replacement_cost(
+            actor, market, commodity, cache, labor_value=labor_value
+        )
+        if cost is None:
+            return None
+        return cost / drive.material_servings(commodity.id)
 
     def _replacement_cost(
         self,
@@ -1229,11 +1314,15 @@ class ActorBrain:
         market: "Market",
         materials: List["CommodityDefinition"],
         cache: Optional[BrainCache] = None,
+        drive: Optional["ActorDrive"] = None,
     ) -> Tuple["CommodityDefinition", Optional[int]]:
         """Find the cheapest non-own ask among a drive's materials.
 
         Returns the chosen commodity and its ask price, or the basic
-        material with ``None`` if nothing is for sale locally.
+        material with ``None`` if nothing is for sale locally. With a
+        ``drive``, materials are compared per consumption event rather than
+        per unit, so a 75-credit prefab that serves ten events beats a
+        15-credit building material. The price returned is still the ask.
 
         Fast path: when the actor owns no live sell order in a commodity,
         the minimum over others' asks equals the market's global best ask,
@@ -1247,6 +1336,7 @@ class ActorBrain:
         """
         chosen = materials[0]
         best_ask: Optional[int] = None
+        best_unit_cost: Optional[float] = None
         for commodity in materials:
             _, quote_ask = _get_bid_ask(market, commodity, cache)
             if quote_ask is None:
@@ -1260,7 +1350,12 @@ class ActorBrain:
                             low = o.price
             else:
                 low = quote_ask
-            if low is not None and (best_ask is None or low < best_ask):
+            if low is None:
+                continue
+            servings = 1.0 if drive is None else drive.material_servings(commodity.id)
+            unit_cost = low / servings
+            if best_unit_cost is None or unit_cost < best_unit_cost:
+                best_unit_cost = unit_cost
                 best_ask = low
                 chosen = commodity
         return chosen, best_ask

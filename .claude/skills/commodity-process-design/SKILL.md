@@ -46,6 +46,8 @@ How to edit the simulation's commodities and production processes.
     effect: output|success   # output=reduced yield, success=may fail
   upkeep:                    # Optional: per-run chance of consuming 1 unit
     commodity_id: 0.01       # Probability in (0, 1]
+  capital:                   # Optional: output bonus for holding 1 unit
+    computers: 0.25          # Fraction in (0, 1]
 ```
 
 ## Constraints
@@ -61,6 +63,11 @@ How to edit the simulation's commodities and production processes.
   on hand or the run fails with no side effects, so upkeep goods must be
   buyable on the planets that run the process. Keep the probability low
   enough that the expected cost per run stays below the recipe's margin.
+- **Capital.** A `capital` entry raises the run's output by its fraction
+  while the actor holds 1 unit of the good. It is never consumed by the run
+  and breaks at `CAPITAL_BREAK_PROBABILITY` (0.005) per successful run.
+  Every facility-gated process lists `computers: 0.25`; gathering and hand
+  recipes list none.
 - **Drives.** Changing the commodity a drive consumes means updating that
   drive class in `core/drives/`.
 

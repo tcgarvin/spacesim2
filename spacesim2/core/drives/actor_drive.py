@@ -92,6 +92,15 @@ class ActorDrive:
         """
         return []
 
+    def material_servings(self, commodity_id: str) -> float:
+        """Consumption events one unit of a material covers.
+
+        1.0 for a consumable: one unit, one event. A durable covers many, so
+        the brain counts stock, compares asks, prices and sizes orders per
+        serving rather than per unit. Subclasses override.
+        """
+        return 1.0
+
     def target_units(self) -> int:
         """Inventory level the actor aims to keep on hand for this drive."""
         return 0

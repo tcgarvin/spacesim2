@@ -30,6 +30,11 @@ class MarketCommand(Command):
     pass
 
 
+# Chance per successful run that one held capital good breaks and is removed.
+# Mean life 200 runs, five times a tool's.
+CAPITAL_BREAK_PROBABILITY = 0.005
+
+
 class ProcessCommand(EconomicCommand):
     """Command to execute a production process."""
 
@@ -124,8 +129,21 @@ class ProcessCommand(EconomicCommand):
         ):
             multiplier = 1
 
+        # Productive capital: each capital good the actor holds adds its
+        # output bonus. Bonuses sum, and the goods are not consumed by the
+        # run, only occasionally broken below.
+        capital_applied = [
+            commodity
+            for commodity in process.capital
+            if actor.inventory.has_quantity(commodity, 1)
+        ]
+        capital_multiplier = 1.0 + sum(
+            process.capital[commodity] for commodity in capital_applied
+        )
+
         # Inputs scale with the skill multiplier; outputs with the skill
-        # multiplier (1 or 2) and the planet multiplier (0-1), min 1 unit.
+        # multiplier (1 or 2), the planet multiplier (0-1) and the capital
+        # bonus, min 1 unit.
         for commodity, quantity in process.inputs.items():
             if not actor.inventory.remove_commodity(commodity, quantity * multiplier):
                 raise RuntimeError(
@@ -142,7 +160,10 @@ class ProcessCommand(EconomicCommand):
                 )
 
         for commodity, quantity in process.outputs.items():
-            output_quantity = max(1, round(quantity * multiplier * planet_multiplier))
+            output_quantity = max(
+                1,
+                round(quantity * multiplier * planet_multiplier * capital_multiplier),
+            )
             actor.inventory.add_commodity(commodity, output_quantity)
 
         if process.relevant_skills:
@@ -165,11 +186,22 @@ class ProcessCommand(EconomicCommand):
                         actor, f"Tool broke: {tool_name}"
                     )
 
+        # Capital wears out far more slowly than a tool: mean life 200 runs.
+        for commodity in capital_applied:
+            if random.random() < CAPITAL_BREAK_PROBABILITY:
+                actor.inventory.remove_commodity(commodity, 1)
+                if actor.sim.data_logger:
+                    actor.sim.data_logger.log_actor_note(
+                        actor, f"Capital broke: {commodity.name}"
+                    )
+
         modifiers = []
         if multiplier > 1:
             modifiers.append(f"skill ×{multiplier}")
         if planet_multiplier < 1.0:
             modifiers.append(f"planet {planet_multiplier:.0%}")
+        if capital_multiplier > 1.0:
+            modifiers.append(f"capital +{capital_multiplier - 1.0:.0%}")
         if upkeep_hits:
             modifiers.append(
                 f"upkeep {', '.join(str(commodity) for commodity in upkeep_hits)}"

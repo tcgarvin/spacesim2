@@ -48,6 +48,11 @@ class ProcessDefinition:
     # consumed by a single run. Unlike tools, upkeep goods are not required
     # to start a run, so they are absent from ``requirements``.
     upkeep: Dict[CommodityDefinition, float] = field(default_factory=dict)
+    # Productive capital: commodity to the fractional output bonus one held
+    # unit adds. Like upkeep, capital is not required to start a run; unlike
+    # upkeep it is not consumed per run, only broken occasionally. Bonuses
+    # from several capital goods sum.
+    capital: Dict[CommodityDefinition, float] = field(default_factory=dict)
     # Read-only flattenings of the fields above, built once for hot scan
     # loops. Definitions are immutable after registry load, so they never go
     # stale. inputs/outputs as (commodity, quantity) tuples save a fresh
@@ -70,6 +75,12 @@ class ProcessDefinition:
                 raise ValueError(
                     f"upkeep probability for {commodity} in process "
                     f"{self.id!r} must be in (0, 1], got {probability!r}"
+                )
+        for commodity, bonus in self.capital.items():
+            if not 0.0 < bonus <= 1.0:
+                raise ValueError(
+                    f"capital bonus for {commodity} in process "
+                    f"{self.id!r} must be in (0, 1], got {bonus!r}"
                 )
         self.inputs_items = tuple(self.inputs.items())
         self.outputs_items = tuple(self.outputs.items())
@@ -154,6 +165,16 @@ class ProcessRegistry:
                             f"Warning: Skipping unknown commodity ID '{commodity_id}' in process upkeep"
                         )
 
+                capital = {}
+                for commodity_id, bonus in process_data.get("capital", {}).items():
+                    commodity = self._commodity_registry.get_commodity(commodity_id)
+                    if commodity:
+                        capital[commodity] = float(bonus)
+                    else:
+                        print(
+                            f"Warning: Skipping unknown commodity ID '{commodity_id}' in process capital"
+                        )
+
                 relevant_skills = process_data.get("relevant_skills", [])
 
                 resource_attribute = None
@@ -176,6 +197,7 @@ class ProcessRegistry:
                     relevant_skills=relevant_skills,
                     resource_attribute=resource_attribute,
                     upkeep=upkeep,
+                    capital=capital,
                 )
                 self._processes[process_def.id] = process_def
             self._all_cache = None

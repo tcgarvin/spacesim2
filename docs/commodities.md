@@ -62,6 +62,30 @@ take it as a build input, and `process_food` and `farm_biomass` both draw on
 it as upkeep (a 0.01 per-run chance of consuming 1 unit; see "Upkeep" in
 CLAUDE.md).
 
+## Capital
+
+A process may carry a `capital` mapping of commodity id to an output bonus
+fraction, the same shape as `upkeep`:
+
+```yaml
+capital:
+  computers: 0.25
+```
+
+Holding at least 1 unit of the good multiplies the run's output by
+`1 + bonus`; holding more adds nothing, and bonuses from several capital
+goods sum. Capital is not a precondition and is never consumed by a run: it
+breaks with probability `CAPITAL_BREAK_PROBABILITY` (0.005) after a
+successful run, a mean life of 200 runs, five times a tool's. Upkeep draws
+are never scaled by the bonus.
+
+Every process with a non-empty `facilities_required` lists
+`computers: 0.25`, 21 processes in all. Gathering and hand recipes list none:
+a computer does not help pick berries. `IndustrialistBrain` keeps 1 unit of
+each capital good its chosen recipe lists, bids for it at the extra output
+over its expected life (`_capital_willingness_to_pay`), and never lists that
+unit for sale. Colonists do not buy computers.
+
 ## Adding commodities or processes
 
 Use the `commodity-process-design` skill. It covers the schemas, validation,

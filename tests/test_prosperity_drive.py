@@ -182,7 +182,7 @@ class TestTick:
     @patch("spacesim2.core.drives.prosperity_drive.random.random", return_value=0.0)
     def test_missed_event_adds_debt_and_lowers_coverage(self, _rand, registry):
         """An event with no stock adds the miss penalty and decays coverage."""
-        drive = ProsperityDrive(registry, _category("computing"))
+        drive = ProsperityDrive(registry, _category("health"))
         drive.metrics.coverage = 1.0
         drive.metrics.debt = 0.5
         actor = get_actor("Poor")
@@ -196,7 +196,7 @@ class TestTick:
     @patch("spacesim2.core.drives.prosperity_drive.random.random", return_value=1.0)
     def test_quiet_turn_holds_debt_and_coverage(self, _rand, registry):
         """Between events nothing is consumed and the EMA does not move."""
-        drive = ProsperityDrive(registry, _category("shelter"))
+        drive = ProsperityDrive(registry, _category("health"))
         drive.metrics.coverage = 0.4
         drive.metrics.debt = 0.2
         actor = get_actor("Waiting")
@@ -225,9 +225,10 @@ class TestIndex:
         """The index averages coverage over prosperity drives only."""
         actor = _actor_with_needs(registry)
         prosperous = [d for d in actor.drives if not d.WELLBEING]
+        half = len(prosperous) // 2
         for i, drive in enumerate(prosperous):
             assert isinstance(drive.metrics, ProsperityDriveMetrics)
-            drive.metrics.coverage = 1.0 if i < 3 else 0.0
+            drive.metrics.coverage = 1.0 if i < half else 0.0
         assert prosperity_index(actor) == pytest.approx(0.5)
 
     def test_index_zero_without_prosperity_drives(self, registry):
@@ -304,7 +305,6 @@ class TestNeedDriveMaterialsBasicGoodOnly:
 
     NEED_DRIVES = [
         (ClothingDrive, "clothing"),
-        (ShelterDrive, "simple_building_materials"),
         (HealthDrive, "medicine"),
     ]
 
@@ -312,6 +312,12 @@ class TestNeedDriveMaterialsBasicGoodOnly:
         for Drive, basic_id in self.NEED_DRIVES:
             mats = Drive(registry).materials()
             assert [m.id for m in mats] == [basic_id]
+
+    def test_shelter_materials_list_the_consumable_then_the_dwelling(self, registry):
+        """Prefab housing is a durable the shelter need owns, not a
+        prosperity good."""
+        mats = ShelterDrive(registry).materials()
+        assert [m.id for m in mats] == ["simple_building_materials", "prefab_housing"]
 
     def test_food_materials_list_staple_then_premium(self, registry):
         mats = FoodDrive(registry).materials()
