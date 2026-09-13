@@ -105,32 +105,37 @@ units a turn against 100 eaten. Left open:
 The WTP ceiling and phantom-bid entry are fixed (`FoodDrive.security`,
 `_output_unit_value`). Left open:
 
-- Producers outrunning consumption: entry scoring and the exit check now
-  discount output value by the producer's own unsold stock
-  (`_stock_discount`, `STOCK_REFERENCE_RUNS`). At 12 planets over 300 turns
-  it cut held rare_earth from 207 to 80-92 units and luxury_goods from 199
-  to 0-74 while luxury volume per planet-turn rose 0.14 to 0.22. Open:
-  whether the discount is too strong in the upper tiers, where the count of
-  luxury makers fell from 45 to 5-15 across two replicates.
+- Stock discount strength (`_stock_discount`, `STOCK_REFERENCE_RUNS`,
+  landed 2026-09-12): entry and the exit check discount output value by
+  the producer's own unsold stock. Single 12-planet replicates put luxury
+  makers at 5-15 against 45 before while luxury volume doubled; the A/B
+  read luxury coverage IMPROVE. Unchecked: whether the discount thins the
+  upper tiers too far at 100 planets.
 - `ship_supplies` demand now comes from the proactive repair kit
   (`_buy_repair_kit`, 2026-09-08); check that producers enter the recipe.
 - nova_fuel clears at 58-287 for ships while they resell at ~50. Probe the
   refiner side: is the t50-150 spike a supply gap?
-- Prosperity (post 2026-09-06 surplus money discount; see the decision
-  log): processed food, quality clothing, prefab housing, and luxury goods
-  trade; advanced medicine (coverage ~0.03) and computers (~0.01) do not.
-  Electronics is 55-85% of their cost and is imputed at 1.6-2.5x its own
-  thin ask. A thin or never-traded output is now valued at the best
-  downstream consumer's netback, capped at `NETBACK_VALUE_CAP` times its
-  make cost (`_netback_unit_value`), so a miner no longer scores ore at the
-  ore's own thin price. That did not by itself start the electronics chain:
-  `make_electronics` is still held by nobody at 300 turns on 12 planets,
-  and its barrier is the `electronics_workshop` build plus `precision_parts`,
-  not the ore price. Shelter need lost ~0.04 health to
-  prefab makers absorbing building materials on wood-poor planets
-  (`notebooks/substitute_bound_probe.py`); a 9x substitute bound did not
-  fix it, supply on wood-poor planets is the question. Prosperity food
-  coverage is now coverage of hand-cooked `food`, the premium good.
+- Advanced medicine is the one dead tier 3 good (decision log,
+  2026-09-12). Electronics trades at about 200 and computers at about 500
+  now that computers are capital, but `make_advanced_medicine` has no
+  holders and health coverage is 0: the netback advanced medicine offers
+  electronics (52-113) is below electronics' make cost (155-436), so
+  electronics makers enter only while a resting computers bid lifts
+  `make_computers` and leave on the exit check when it fills. Levers, in
+  order: the advanced medicine bid (its prosperity event rate 1/90 and
+  target 1 give it the smallest welfare stake of the four), the
+  electronics recipe cost (rare earth plus two precision parts per unit),
+  and the exit check's 10-turn cadence against a bid that comes and goes.
+- Prosperity residuals: shelter need lost ~0.04 health to prefab makers
+  absorbing building materials on wood-poor planets
+  (`notebooks/substitute_bound_probe.py`) before prefab became a durable;
+  re-measure. Prosperity food coverage is coverage of hand-cooked `food`,
+  the premium good. The index is now four categories, so the map tier
+  thresholds in `docs/prosperity-design.md` (0.15 / 0.4 / 0.7) were set
+  against a six-category index and need re-tuning before the UI phase.
+- Durables at 100 planets: `durables.computer_holder_share` and
+  `prefab_holder_share` are 0.19 and 0.22 at 12 planets; unchecked at
+  100, as is whether computers ever ship between planets.
 - Food refresh (2026-09-07, see the decision log): the industrial track
   exists but barely runs at 300 turns on 12 planets. `process_food` is
   0.1-0.3% of process runs and chemical plants stand on 2-5 of 12 planets;

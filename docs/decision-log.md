@@ -4,6 +4,96 @@ Append-only record of closed decisions, postmortems, and landed campaigns.
 Newest first. Open work lives in `TODO.md`; current reference docs live
 alongside this file.
 
+## 2026-09-12 - Upper-tier demand: netback valuation, stock discount, durables as capital
+
+Three landings, 46056a3, 9541d3c (with f9c3a03) and d557047, from the
+growth survey of the same day. Tier 3 demand existed on paper but nothing
+above tier 2 traded: computers and advanced medicine cost 2 to 4 times
+any bid, and the chain behind them never started.
+
+46056a3, `IndustrialistBrain` scoring. A thin or never-traded output is
+valued at the larger of its own thin-book tier and its netback: the most
+any recipe that consumes it could pay per unit and still enter, computed
+recursively down the consuming side of the recipe graph
+(`_netback_unit_value`, depth `MAX_NETBACK_DEPTH` 4, capped at
+`NETBACK_VALUE_CAP` 3 times the good's own make cost). The same commit
+discounts a recipe's output value by the producer's own unsold stock,
+`1 / (1 + stock / max(3 runs, 30-turn turnover))` (`_stock_discount`),
+so entry and the exit-on-loss check both see a pile the market has not
+taken; an actor holding nothing is unaffected, which keeps the first
+entrant into a good nobody makes.
+
+9541d3c, durables. `computers` are productive capital: a process may
+carry a `capital` mapping (commodity id to output bonus) and every
+facility-gated recipe lists `computers: 0.25`; holding one unit raises
+output by the bonus and it breaks at `CAPITAL_BREAK_PROBABILITY` 0.005
+per run. The industrialist keeps one unit for its chosen recipe, valued
+at the extra output over the unit's expected life divided by
+`ENTRY_MARGIN`, and never sells it. `prefab_housing` is a durable
+dwelling of `ShelterDrive`: it serves every shelter event and wears out
+on a `PREFAB_WEAR_PROBABILITY` 0.1 roll, so one unit covers ten events.
+`ActorDrive.material_servings` carries that into the buy loop, which
+counts stock, compares asks, prices bids and sizes orders per serving.
+The shelter and computing prosperity categories are gone; the index is
+the mean over food, clothing, health and luxury, and the summary
+`durables` block reports holder shares. f9c3a03 pins the one correction
+found in the first replicates: a durable's amortized make cost caps only
+the durable's own bid, not the consumable's, because a prefab is not a
+way to serve the next event (shelter health had dropped 0.93 to 0.83).
+
+d557047: the netback walk imputes a consumer's costs without its facility
+build. The build may consume the good being valued (an advanced factory
+needs electronics) and the amortized term is under 1.5% of a run's cost.
+A per-planet probe found that the facility cycle was not what zeroed
+electronics' netback on 11 of 12 planets; the zeros came from a missing
+local source for rare earth or precision parts, which is a real sourcing
+failure and is left alone.
+
+A/B against 08143b6, 12 planets, 450 turns, 4 replicates per arm (after
+arm at f9c3a03):
+
+| KPI | before | after | verdict |
+|---|---|---|---|
+| verdict | 4 PASS | 4 PASS | |
+| prosperity index (6 categories before, 4 after) | 0.280 ± 0.026 | 0.395 ± 0.005 | see note |
+| coverage food / clothing / luxury | 0.911 / 0.553 / 0.049 | 0.935 / 0.567 / 0.078 | food and luxury IMPROVE |
+| coverage health | 0 | 0 | |
+| health drive mean health | 0.503 ± 0.086 | 0.622 ± 0.042 | neutral by the 2-sd rule |
+| shelter drive mean health | 0.942 ± 0.021 | 0.951 ± 0.008 | neutral |
+| food, clothing mean health | 0.990, 0.961 | 0.991, 0.969 | neutral |
+| money mean | 1310 | 1270 | |
+| computer holder share (capital-recipe industrialists) | | 0.194 ± 0.066 | |
+| prefab holder share | | 0.218 ± 0.047 | |
+| ship delivered units, window | 353 ± 84 | 261 ± 95 | neutral, noisy |
+
+Note: on the four categories both arms share, the before index is 0.378,
+so the comparable change is 0.378 to 0.395. The 12-category shift is a
+definition change, not a gain.
+
+What the chain does now, 12 planets, 400 turns, one run: electronics
+prices at about 200 and computers at about 500, computer volume 0.08 per
+planet-turn, 21 `make_electronics` holders and 30 `make_computers`
+holders at turn 400, 172 electronics workshops. `make_advanced_medicine`
+still has no holders and health coverage stays 0: the netback from
+advanced medicine (52 to 113) is below electronics' make cost (155 to
+436), so electronics makers enter only while a resting computers bid
+lifts `make_computers` output value, and leave on the exit check when it
+clears. That is the next lever and is in `TODO.md`.
+
+100 planets, 450 turns, one run at d557047: verdict PASS; prosperity
+index 0.384 (four categories), coverage food 0.914, clothing 0.549,
+luxury 0.071, health 0; computer holder share 0.126 over 4185
+capital-recipe industrialists, prefab holder share 0.213; electronics
+204, computers 708, prefab 92; drives food 0.984, clothing 0.958,
+shelter 0.945, health 0.568; money mean 1231. Ships carried 6 computers
+and 5 electronics in the 50-turn window, so the goods do move between
+planets, at a trickle.
+
+Rejected on the way: capping netback at the tier value (defeats the
+purpose for a raw good whose make cost is tiny); keeping computing and
+shelter in the prosperity index with a held-good coverage definition
+(two purchase paths for one good).
+
 ## 2026-09-11 - Passage queue: pickups en route and a fare priced off fuel
 
 Two landings after the contracts entry below, 8a64170 and 492e610, from a
