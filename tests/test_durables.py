@@ -465,3 +465,48 @@ class TestSummaryDurablesBlock:
         }
         assert 0.0 <= durables["prefab_holder_share"] <= 1.0
         assert 0.0 <= durables["computer_holder_share"] <= 1.0
+
+
+class _TwoMaterialDrive(_DurableStubDrive):
+    """Consumable plus durable, like the shelter drive."""
+
+    def __init__(self, consumable, durable):
+        super().__init__("shelter", consumable, target=3, servings=1.0)
+        self._durable = durable
+
+    def materials(self):
+        return [self._material, self._durable]
+
+    def material_servings(self, commodity_id):
+        return 10.0 if commodity_id == self._durable.id else 1.0
+
+
+class TestDurableReplacementCap:
+    """A durable's amortized cost caps the durable, not the consumable.
+
+    Making a prefab is not a way to serve the next shelter event, so its
+    per-event make cost must not cap the bid for a building material below
+    what the material itself costs to make.
+    """
+
+    def _setup(self):
+        consumable = Mock(spec=CommodityDefinition)
+        consumable.id = "simple_building_materials"
+        durable = Mock(spec=CommodityDefinition)
+        durable.id = "prefab_housing"
+        drive = _TwoMaterialDrive(consumable, durable)
+        brain = IndustrialistBrain()
+        costs = {consumable.id: 19.0, durable.id: 100.0}
+        brain._replacement_cost = lambda actor, market, c, cache=None, **kw: costs[c.id]
+        return brain, drive, consumable, durable
+
+    def test_consumable_is_capped_by_its_own_make_cost(self):
+        brain, drive, consumable, _durable = self._setup()
+        # Welfare term far above every cap: lam tiny.
+        wtp = brain._drive_wtp_per_serving(Mock(), Mock(), drive, consumable, 1e-6)
+        assert wtp == 19.0
+
+    def test_durable_is_capped_by_the_cheaper_of_both_per_event(self):
+        brain, drive, _consumable, durable = self._setup()
+        wtp = brain._drive_wtp_per_serving(Mock(), Mock(), drive, durable, 1e-6)
+        assert wtp == 10.0
