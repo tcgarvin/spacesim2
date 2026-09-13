@@ -90,8 +90,9 @@ class BrainCache:
       command causes mid-turn. That is what spares
       ``decide_market_actions`` a second full registry scan.
     * Actor-state-derived, also invalidated when inventory or skills
-      change: ``replacement_cost``, ``imputed_cost``, and ``best_result``.
-      They read tool/facility ownership or ``can_execute_process``.
+      change: ``replacement_cost``, ``imputed_cost``, ``netback_value``, and
+      ``best_result``. They read tool/facility ownership or
+      ``can_execute_process``.
 
     ``yield_modifier`` is outside all groups and is never reset. It depends
     only on the planet's attributes, fixed for the run, and the process,
@@ -111,6 +112,7 @@ class BrainCache:
         "ranked_profits",
         "replacement_cost",
         "imputed_cost",
+        "netback_value",
         "best_result",
         "_turn",
         "_actor_key",
@@ -167,6 +169,12 @@ class BrainCache:
         self.replacement_cost: Dict[Tuple[str, int], Optional[float]] = {}
         # Shared memo for make-or-buy imputation (see _imputed_unit_cost).
         self.imputed_cost: Dict[str, float] = {}
+        # Industrialist-specific: commodity id -> the most a downstream
+        # consumer of that good could pay per unit for it (see
+        # IndustrialistBrain._netback_unit_value). Built on top of
+        # imputed_cost and the actor's own facility ownership, so it belongs
+        # to the same group.
+        self.netback_value: Dict[str, float] = {}
         # Colonist-specific: memoized (best_process, raw_profit) for the
         # whole-registry profitability scan (see colonist.py).
         self.best_result: Optional[Tuple[Optional["ProcessDefinition"], float]] = None

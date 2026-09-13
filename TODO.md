@@ -105,10 +105,13 @@ units a turn against 100 eaten. Left open:
 The WTP ceiling and phantom-bid entry are fixed (`FoodDrive.security`,
 `_output_unit_value`). Left open:
 
-- Producers still outrun consumption: fewer, more capable medicine makers
-  keep stock growing. Entry scoring is inventory-blind; a producer sitting on
-  unsold output still scores positive when the depth price covers cost. A
-  stock-aware discount on output value is the next lever.
+- Producers outrunning consumption: entry scoring and the exit check now
+  discount output value by the producer's own unsold stock
+  (`_stock_discount`, `STOCK_REFERENCE_RUNS`). At 12 planets over 300 turns
+  it cut held rare_earth from 207 to 80-92 units and luxury_goods from 199
+  to 0-74 while luxury volume per planet-turn rose 0.14 to 0.22. Open:
+  whether the discount is too strong in the upper tiers, where the count of
+  luxury makers fell from 45 to 5-15 across two replicates.
 - `ship_supplies` demand now comes from the proactive repair kit
   (`_buy_repair_kit`, 2026-09-08); check that producers enter the recipe.
 - nova_fuel clears at 58-287 for ships while they resell at ~50. Probe the
@@ -117,10 +120,13 @@ The WTP ceiling and phantom-bid entry are fixed (`FoodDrive.security`,
   log): processed food, quality clothing, prefab housing, and luxury goods
   trade; advanced medicine (coverage ~0.03) and computers (~0.01) do not.
   Electronics is 55-85% of their cost and is imputed at 1.6-2.5x its own
-  thin ask. Rare-earth miners never enter because a miner scores ore at
-  the ore's own thin price, never the refiner's netback
-  (`notebooks/rare_earth_chain_probe.py`); a netback output valuation for
-  raw materials is the next lever. Shelter need lost ~0.04 health to
+  thin ask. A thin or never-traded output is now valued at the best
+  downstream consumer's netback, capped at `NETBACK_VALUE_CAP` times its
+  make cost (`_netback_unit_value`), so a miner no longer scores ore at the
+  ore's own thin price. That did not by itself start the electronics chain:
+  `make_electronics` is still held by nobody at 300 turns on 12 planets,
+  and its barrier is the `electronics_workshop` build plus `precision_parts`,
+  not the ore price. Shelter need lost ~0.04 health to
   prefab makers absorbing building materials on wood-poor planets
   (`notebooks/substitute_bound_probe.py`); a 9x substitute bound did not
   fix it, supply on wood-poor planets is the question. Prosperity food

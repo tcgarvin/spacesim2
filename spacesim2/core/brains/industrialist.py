@@ -109,6 +109,27 @@ MIN_OUTPUT_DEPTH_UNITS = 3
 # rests to bootstrap a cold-start intermediate would be capped below itself
 # and no supplier would ever enter.
 NEVER_TRADED_VALUE_CAP = 1.5
+# Cap on the netback value of an output, as a multiple of what this actor
+# would pay to make one unit of it. Netback values a thinly traded good at
+# what the best downstream consumer of it could pay, which is what pulls a
+# miner into ore nobody has bought yet. Uncapped it would also let a long
+# speculative chain price ore at a hundred times its extraction cost on the
+# strength of one recipe's imagined output value. Three leaves room above
+# ENTRY_MARGIN for several tiers of margin to stack while keeping the figure
+# within sight of the cost of production. The multiple applies to the make
+# cost, not the market average, so the cap does not rise with the trades the
+# valuation causes.
+NETBACK_VALUE_CAP = 3.0
+# Depth bound on the netback walk down the consuming side of the recipe
+# graph. Four covers the longest real chain (ore -> refined -> component ->
+# finished good) and bounds the branching cost.
+MAX_NETBACK_DEPTH = 4
+# Runs of output the stock discount treats as a normal working stock. A
+# producer holding more than this, and more than the market's 30-turn
+# turnover, is outrunning consumption and discounts what the next run is
+# worth. Matches OUTPUT_SALES_HORIZON_RUNS: the same number of runs the
+# output valuation expects the book to absorb.
+STOCK_REFERENCE_RUNS = 3
 # Cap on the netback ceiling for a facility build material, as a multiple of
 # its imputed unit cost. A build's ceiling divides the recipe's whole margin
 # by the material's draw per run, which is the build quantity over a horizon
@@ -216,6 +237,7 @@ class IndustrialistBrain(ActorBrain):
                     process,
                     memo=cache.imputed_cost,
                     require_entry_margin=False,
+                    cache=cache,
                 )
                 if score <= 0:
                     self._adopt_recipe(None)
@@ -525,7 +547,9 @@ class IndustrialistBrain(ActorBrain):
         for process in actor.sim.process_registry.all_processes():
             if process.id in on_cooldown:
                 continue
-            score = self._calculate_recipe_score(actor, market, process, memo)
+            score = self._calculate_recipe_score(
+                actor, market, process, memo, cache=cache
+            )
             if score > 0:
                 recipe_scores.append((process.id, score))
 
@@ -554,6 +578,7 @@ class IndustrialistBrain(ActorBrain):
         process: "ProcessDefinition",
         memo: Optional[Dict[str, float]] = None,
         require_entry_margin: bool = True,
+        cache: Optional[BrainCache] = None,
     ) -> float:
         """Profitability score for a recipe.
 
@@ -576,7 +601,9 @@ class IndustrialistBrain(ActorBrain):
         if math.isinf(total_input_cost):
             return 0.0
 
-        total_output_value = self._recipe_output_value(actor, market, process, memo)
+        total_output_value = self._recipe_output_value(
+            actor, market, process, memo, cache=cache
+        )
         if math.isnan(total_output_value):
             return 0.0
 
@@ -596,6 +623,9 @@ class IndustrialistBrain(ActorBrain):
         market: "Market",
         process: "ProcessDefinition",
         memo: Dict[str, float],
+        cache: Optional[BrainCache] = None,
+        visiting: frozenset[str] = frozenset(),
+        depth: int = 0,
     ) -> float:
         """Value of one run's outputs, scaled by the actor's land.
 
@@ -605,9 +635,13 @@ class IndustrialistBrain(ActorBrain):
         when any transportable output prices at or below zero, which callers
         read as "this recipe produces nothing worth having here".
 
+        Each transportable output is discounted by this actor's own unsold
+        stock of it; see ``_stock_discount``.
+
         Shared by ``_calculate_recipe_score`` and the netback ceiling on
         procurement bids, so an actor pays for inputs on the same valuation
-        that made it pick the recipe.
+        that made it pick the recipe. ``visiting`` and ``depth`` are the
+        netback recursion guards, passed through to ``_output_unit_value``.
         """
         attribute_modifier = 1.0
         if process.resource_attribute:
@@ -618,19 +652,73 @@ class IndustrialistBrain(ActorBrain):
         total = 0.0
         for commodity, quantity in process.outputs.items():
             # Non-transportable outputs are facilities for personal use; give
-            # them a notional value for enabling other recipes.
+            # them a notional value for enabling other recipes. A facility is
+            # built for its own use and never listed, so no stock discount.
             if not commodity.transportable:
                 total += FACILITY_NOTIONAL_VALUE * quantity
                 continue
 
             expected_quantity = quantity * attribute_modifier
             price = self._output_unit_value(
-                actor, market, commodity, expected_quantity, memo
+                actor,
+                market,
+                commodity,
+                expected_quantity,
+                memo,
+                cache=cache,
+                visiting=visiting,
+                depth=depth,
             )
             if price <= 0:
                 return math.nan
+            price *= self._stock_discount(actor, market, commodity, expected_quantity)
             total += price * expected_quantity
         return total
+
+    def _stock_discount(
+        self,
+        actor: "Actor",
+        market: "Market",
+        commodity: "CommodityDefinition",
+        expected_quantity: float,
+    ) -> float:
+        """Factor in (0, 1] discounting output value by this actor's own stock.
+
+        A producer that has outrun consumption is holding units the market
+        has not taken, and the depth price it scores against is the price of
+        selling the *next* few units, not of clearing the pile. Entry scoring
+        was inventory-blind, so a maker sitting on hundreds of unsold units
+        still scored the line positive and stayed in it.
+
+        The reference stock is the larger of a few runs' output and the
+        market's own 30-turn turnover, so the discount only bites once the
+        holding is large against both what this actor makes and what this
+        market absorbs. It is ``1 / (1 + stock / reference)``: an actor
+        holding nothing is unaffected, which keeps the first entrant into a
+        good nobody makes yet. Entry and the every-10-turn exit check share
+        it, so a pile that grows also brings the exit forward.
+
+        Stock counts everything held and not yet sold, reserved units in
+        resting asks included: a listed unit is unsold until it fills. The
+        one unit of an upkeep good the chosen recipe keeps back is never
+        offered, so it is not stock.
+        """
+        keep = 0
+        if self.chosen_recipe_id is not None:
+            process = actor.sim.process_registry.get_process(self.chosen_recipe_id)
+            if process is not None and any(
+                upkeep.id == commodity.id for upkeep in process.upkeep
+            ):
+                keep = UPKEEP_BUFFER
+        own_unsold = actor.inventory.get_quantity(commodity) - keep
+        if own_unsold <= 0:
+            return 1.0
+
+        turnover = market.get_30_day_average_volume(commodity) * 30.0
+        reference = max(expected_quantity * STOCK_REFERENCE_RUNS, turnover)
+        if reference <= 0:
+            return 1.0
+        return 1.0 / (1.0 + own_unsold / reference)
 
     def _output_unit_value(
         self,
@@ -639,6 +727,9 @@ class IndustrialistBrain(ActorBrain):
         commodity: "CommodityDefinition",
         expected_quantity: float,
         memo: Dict[str, float],
+        cache: Optional[BrainCache] = None,
+        visiting: frozenset[str] = frozenset(),
+        depth: int = 0,
     ) -> float:
         """Price per unit this actor can realistically get for a recipe output.
 
@@ -671,6 +762,14 @@ class IndustrialistBrain(ActorBrain):
            any production cost is not mistaken for demand. Refusing to value
            this case at all would re-open the producer/consumer standoff (see
            the decision log).
+
+        Tiers 2-4 all price the good off its own thin book, which is circular
+        for a raw material nobody has bought yet: the ore is cheap because no
+        refiner exists, and no miner enters because the ore is cheap. So
+        outside the liquid case the value is the larger of the tier price and
+        the netback value, what the best downstream consumer of the good
+        could pay for a unit and still enter its own recipe. See
+        ``_netback_unit_value``.
         """
         horizon = max(
             MIN_OUTPUT_DEPTH_UNITS,
@@ -680,6 +779,23 @@ class IndustrialistBrain(ActorBrain):
 
         if bid is not None and market.get_30_day_average_volume(commodity) >= horizon:
             return float(bid)
+
+        tier_value = self._thin_book_unit_value(actor, market, commodity, horizon, memo)
+        netback = self._netback_unit_value(
+            actor, market, commodity, memo, cache, visiting, depth
+        )
+        return max(tier_value, netback)
+
+    def _thin_book_unit_value(
+        self,
+        actor: "Actor",
+        market: "Market",
+        commodity: "CommodityDefinition",
+        horizon: int,
+        memo: Dict[str, float],
+    ) -> float:
+        """Tiers 2-4 of ``_output_unit_value``: the good's own thin book."""
+        bid, _ = market.get_bid_ask_spread(commodity)
 
         depth_price = market.get_bid_price_at_depth(commodity, horizon)
         if depth_price is not None:
@@ -724,8 +840,113 @@ class IndustrialistBrain(ActorBrain):
             actor.planet.market,
             process,
             memo=cache.imputed_cost if cache is not None else None,
+            cache=cache,
         )
         return max(GOVERNMENT_WAGE, int(score))
+
+    def _netback_unit_value(
+        self,
+        actor: "Actor",
+        market: "Market",
+        commodity: "CommodityDefinition",
+        memo: Dict[str, float],
+        cache: Optional[BrainCache],
+        visiting: frozenset[str],
+        depth: int,
+    ) -> float:
+        """Most any downstream consumer of ``commodity`` could pay per unit.
+
+        The same netback arithmetic ``_input_price_ceiling`` rests bids at,
+        applied to valuation: for every recipe that consumes this good, take
+        the value of one run's output less every other cost of that run,
+        divide by the units drawn per run and by ``ENTRY_MARGIN``, and keep
+        the best. The consumer's own output is valued by the same
+        netback-aware path one level down, so demand two tiers away still
+        reaches a miner. Other costs come from this actor's own make-or-buy
+        imputation, so the answer stays per-actor.
+
+        Bounded three ways: ``visiting`` skips a consumer whose output is
+        already being valued, ``MAX_NETBACK_DEPTH`` bounds the walk, and the
+        result is capped at ``NETBACK_VALUE_CAP`` times what a unit costs to
+        make here. Returns 0.0 when there is no netback, which the caller
+        reads as "no signal" rather than "worthless".
+
+        Memoized per actor-turn, but only for a top-level call: a value
+        computed part-way down the walk is conditioned on the ``visiting``
+        set that produced it.
+        """
+        if depth >= MAX_NETBACK_DEPTH or commodity.id in visiting:
+            return 0.0
+
+        cacheable = cache is not None and not visiting
+        if cacheable:
+            assert cache is not None  # narrowed by cacheable
+            cached = cache.netback_value.get(commodity.id)
+            if cached is not None:
+                return cached
+
+        value = self._compute_netback_unit_value(
+            actor, market, commodity, memo, cache, visiting, depth
+        )
+        if cacheable:
+            assert cache is not None
+            cache.netback_value[commodity.id] = value
+        return value
+
+    def _compute_netback_unit_value(
+        self,
+        actor: "Actor",
+        market: "Market",
+        commodity: "CommodityDefinition",
+        memo: Dict[str, float],
+        cache: Optional[BrainCache],
+        visiting: frozenset[str],
+        depth: int,
+    ) -> float:
+        """The uncached body of ``_netback_unit_value``."""
+        unit_cost = self._imputed_unit_cost(
+            actor, market, commodity, 0, frozenset(), memo
+        )
+        if math.isinf(unit_cost):
+            return 0.0
+
+        inner_visiting = visiting | {commodity.id}
+        best = 0.0
+        for process in actor.sim.process_registry.get_processes_consuming(commodity):
+            quantity_per_run = process.inputs.get(commodity, 0)
+            if quantity_per_run <= 0:
+                continue
+            recipe_cost = self._impute_recipe_cost(
+                actor, market, process, 0, frozenset(), memo
+            )
+            if math.isinf(recipe_cost):
+                continue
+            output_value = self._recipe_output_value(
+                actor,
+                market,
+                process,
+                memo,
+                cache=cache,
+                visiting=inner_visiting,
+                depth=depth + 1,
+            )
+            if math.isnan(output_value):
+                continue
+            other_costs = recipe_cost - quantity_per_run * unit_cost
+            ceiling = (output_value - other_costs) / (quantity_per_run * ENTRY_MARGIN)
+            best = max(best, ceiling)
+
+        if best <= 0:
+            return 0.0
+
+        # Anchor the cap on the make cost, which does not move with this
+        # good's own quotes. Fall back to the market-aware cost when there is
+        # no recipe for it here.
+        make_cost = self._imputed_unit_cost(
+            actor, market, commodity, 0, frozenset(), memo, make_only=True
+        )
+        anchor = unit_cost if math.isinf(make_cost) else make_cost
+        return min(best, anchor * NETBACK_VALUE_CAP)
 
     def _calculate_tool_willingness_to_pay(
         self, actor: "Actor", market: "Market", cache: Optional[BrainCache] = None
@@ -1047,7 +1268,9 @@ class IndustrialistBrain(ActorBrain):
         # Netback inputs to the recipe's own economics, recomputed every turn
         # from live market state. Both terms are one run of the recipe.
         memo: Dict[str, float] = cache.imputed_cost if cache is not None else {}
-        output_value = self._recipe_output_value(actor, market, process, memo)
+        output_value = self._recipe_output_value(
+            actor, market, process, memo, cache=cache
+        )
         recipe_cost = self._impute_recipe_cost(
             actor, market, process, 0, frozenset(), memo
         )

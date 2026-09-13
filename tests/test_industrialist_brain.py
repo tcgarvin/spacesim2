@@ -4,10 +4,11 @@ from unittest.mock import Mock
 import pytest
 
 from spacesim2.core.actor import Actor, ActorType
-from spacesim2.core.actor_brain import GOVERNMENT_WAGE, ActorBrain
+from spacesim2.core.actor_brain import GOVERNMENT_WAGE, ActorBrain, BrainCache
 from spacesim2.core.brains.industrialist import (
     BUILD_INPUT_CEILING_CAP,
     ENTRY_MARGIN,
+    NETBACK_VALUE_CAP,
     RECIPE_COOLDOWN_TURNS,
     RECIPE_STUCK_TURNS,
     IndustrialistBrain,
@@ -36,10 +37,10 @@ def _real_registry() -> CommodityRegistry:
 
 
 def _wire_producer_index(sim_mock):
-    """Derive the mock's get_processes_producing from all_processes.return_value.
+    """Derive the mock's process indexes from all_processes.return_value.
 
     Evaluated lazily, so tests may set the list after the fixture runs.
-    Mirrors the id-keyed producer index in ProcessRegistry.
+    Mirrors the id-keyed producer and consumer indexes in ProcessRegistry.
     """
     registry = sim_mock.process_registry
 
@@ -49,7 +50,14 @@ def _wire_producer_index(sim_mock):
             return []  # a test that never set the list has no recipes
         return [p for p in processes if any(o.id == commodity.id for o in p.outputs)]
 
+    def consuming(commodity):
+        processes = registry.all_processes.return_value
+        if not isinstance(processes, list):
+            return []
+        return [p for p in processes if any(i.id == commodity.id for i in p.inputs)]
+
     registry.get_processes_producing.side_effect = producing
+    registry.get_processes_consuming.side_effect = consuming
 
 
 class _StubDrive:
@@ -108,6 +116,9 @@ class TestIndustrialistBrain:
         # other behavior, so give it an empty universe by default.
         actor.sim.commodity_registry.all_commodities.return_value = []
         actor.inventory = Mock(spec=Inventory)
+        # Holding nothing, so the stock discount on output value is 1.0
+        # unless a test sets a stock explicitly.
+        actor.inventory.get_quantity.return_value = 0
         actor.drives = []
         return actor
 
@@ -469,6 +480,9 @@ class TestImputedProcurementBids:
         actor.sim = Mock()
         _wire_producer_index(actor.sim)
         actor.inventory = Mock(spec=Inventory)
+        # Holding nothing, so the stock discount on output value is 1.0
+        # unless a test sets a stock explicitly.
+        actor.inventory.get_quantity.return_value = 0
         return actor
 
     def _refined_chain(self, actor):
@@ -679,6 +693,9 @@ class TestDriveBidReference:
         actor.sim = Mock()
         _wire_producer_index(actor.sim)
         actor.inventory = Mock(spec=Inventory)
+        # Holding nothing, so the stock discount on output value is 1.0
+        # unless a test sets a stock explicitly.
+        actor.inventory.get_quantity.return_value = 0
         actor.inventory.has_quantity.return_value = False
         return actor
 
@@ -794,6 +811,9 @@ class TestDepthAwareOutputValuation:
         _wire_producer_index(actor.sim)
         actor.sim.process_registry.all_processes.return_value = []
         actor.inventory = Mock(spec=Inventory)
+        # Holding nothing, so the stock discount on output value is 1.0
+        # unless a test sets a stock explicitly.
+        actor.inventory.get_quantity.return_value = 0
         return actor
 
     @staticmethod
@@ -956,6 +976,272 @@ class TestDepthAwareOutputValuation:
         assert capped == pytest.approx(GOVERNMENT_WAGE * 1.5)
 
 
+class TestNetbackOutputValuation:
+    """A thinly traded output is worth what a downstream consumer could pay.
+
+    Tiers 2-4 of _output_unit_value price a good off its own thin book,
+    which is circular for a raw material nobody has bought yet: the ore is
+    cheap because no refiner exists, and no miner enters because the ore is
+    cheap. See _netback_unit_value.
+    """
+
+    @pytest.fixture
+    def brain(self):
+        return IndustrialistBrain()
+
+    @staticmethod
+    def _commodity(cid):
+        return CommodityDefinition(id=cid, name=cid, transportable=True, description="")
+
+    @staticmethod
+    def _process(process_id, inputs, outputs):
+        process = Mock(spec=ProcessDefinition)
+        process.id = process_id
+        process.inputs = inputs
+        process.outputs = outputs
+        process.upkeep = {}
+        process.tools_required = []
+        process.facilities_required = []
+        process.resource_attribute = None
+        return process
+
+    @staticmethod
+    def _actor(processes):
+        actor = Mock(spec=Actor)
+        actor.name = "TestIndustrialist"
+        actor.actor_type = ActorType.REGULAR
+        actor.money = 100
+        actor.planet = Mock()
+        actor.sim = Mock()
+        _wire_producer_index(actor.sim)
+        actor.sim.process_registry.all_processes.return_value = processes
+        actor.inventory = Mock(spec=Inventory)
+        actor.inventory.get_quantity.return_value = 0
+        actor.inventory.has_quantity.return_value = True
+        return actor
+
+    @staticmethod
+    def _bidder():
+        bidder = Mock()
+        bidder.name = "Bidder"
+        bidder.money = 1_000_000
+        bidder.reserved_money = 0
+        bidder.active_orders = {}
+        return bidder
+
+    def _ore_chain(self, refined_bid):
+        """mine_ore (4 ore per run) then refine (2 ore -> 1 refined).
+
+        ``refined`` is liquid at ``refined_bid``, ``ore`` has never traded.
+        """
+        ore = self._commodity("rare_earth_ore")
+        refined = self._commodity("rare_earth")
+        mine = self._process("mine_ore", {}, {ore: 4})
+        refine = self._process("refine_ore", {ore: 2}, {refined: 1})
+        actor = self._actor([mine, refine])
+
+        market = Market()
+        market.place_buy_order(self._bidder(), refined, 1, refined_bid)
+        # Heavy turnover, so the refiner's output is valued at the top bid.
+        market.price_history[refined] = [refined_bid] * 30
+        market.volume_history[refined] = [50] * 30
+        return actor, market, ore, refined
+
+    def test_thin_ore_is_valued_at_the_refiners_netback(self, brain):
+        """The refiner's margin, not the ore's own empty book, sets the value.
+
+        One run of refine costs a turn of labor (10) plus 2 ore at the ore's
+        own imputed make cost of 10/4 = 2.5. Substituting the ore out leaves
+        10 of other costs, so the netback is (20 - 10) / (2 * 1.2).
+        """
+        actor, market, ore, _refined = self._ore_chain(refined_bid=20)
+
+        value = brain._output_unit_value(actor, market, ore, 1.0, {})
+        tier_only = brain._thin_book_unit_value(actor, market, ore, 3, {})
+
+        assert value == pytest.approx(10.0 / 2.4)
+        # The book-only tier prices the ore at 1.5x its make cost.
+        assert tier_only == pytest.approx(2.5 * 1.5)
+        assert value > tier_only
+
+    def test_netback_is_capped_at_a_multiple_of_make_cost(self, brain):
+        """A rich downstream margin cannot value ore at any price at all."""
+        actor, market, ore, _refined = self._ore_chain(refined_bid=100)
+
+        value = brain._output_unit_value(actor, market, ore, 1.0, {})
+
+        # Uncapped the netback would be (100 - 10) / 2.4 = 37.5.
+        assert value == pytest.approx(2.5 * NETBACK_VALUE_CAP)
+
+    def test_netback_pulls_a_miner_into_a_good_nobody_buys(self, brain):
+        """The whole point: the mining recipe now scores above zero."""
+        actor, market, _ore, _refined = self._ore_chain(refined_bid=100)
+        mine = actor.sim.process_registry.all_processes.return_value[0]
+
+        score = brain._calculate_recipe_score(actor, market, mine)
+
+        # 4 ore at the capped netback of 7.5, less a turn of labor.
+        assert score == pytest.approx(4 * 7.5 - GOVERNMENT_WAGE)
+
+    def test_a_cycle_in_the_recipe_graph_terminates(self, brain):
+        """x to y to x is walked once and then cut by the visiting set."""
+        x = self._commodity("x")
+        y = self._commodity("y")
+        make_x = self._process("make_x", {}, {x: 1})
+        x_to_y = self._process("x_to_y", {x: 1}, {y: 1})
+        y_to_x = self._process("y_to_x", {y: 1}, {x: 1})
+        actor = self._actor([make_x, x_to_y, y_to_x])
+        market = Market()
+
+        value = brain._output_unit_value(actor, market, x, 1.0, {})
+
+        assert math.isfinite(value)
+        assert value > 0
+
+    def test_netback_is_memoized_per_actor_turn(self, brain):
+        """A second valuation in the same turn does not rewalk the graph."""
+        actor, market, ore, _refined = self._ore_chain(refined_bid=100)
+        cache = BrainCache()
+
+        first = brain._netback_unit_value(actor, market, ore, {}, cache, frozenset(), 0)
+        cache.netback_value[ore.id] = 999.0
+        second = brain._netback_unit_value(
+            actor, market, ore, {}, cache, frozenset(), 0
+        )
+
+        assert first == pytest.approx(2.5 * NETBACK_VALUE_CAP)
+        assert second == pytest.approx(999.0)
+
+
+class TestStockAwareOutputValue:
+    """Output value is discounted by the producer's own unsold stock."""
+
+    @pytest.fixture
+    def brain(self):
+        return IndustrialistBrain()
+
+    @staticmethod
+    def _commodity(cid):
+        return CommodityDefinition(id=cid, name=cid, transportable=True, description="")
+
+    @staticmethod
+    def _process(output_commodity):
+        process = Mock(spec=ProcessDefinition)
+        process.id = "make_output"
+        process.inputs = {}
+        process.outputs = {output_commodity: 1}
+        process.upkeep = {}
+        process.tools_required = []
+        process.facilities_required = []
+        process.resource_attribute = None
+        return process
+
+    @staticmethod
+    def _actor(stock):
+        actor = Mock(spec=Actor)
+        actor.name = "TestIndustrialist"
+        actor.actor_type = ActorType.REGULAR
+        actor.money = 100
+        actor.planet = Mock()
+        actor.sim = Mock()
+        _wire_producer_index(actor.sim)
+        actor.sim.process_registry.all_processes.return_value = []
+        actor.inventory = Mock(spec=Inventory)
+        actor.inventory.get_quantity.return_value = stock
+        return actor
+
+    @staticmethod
+    def _market(commodity):
+        """A book that absorbs 20 units at 20, so a run is worth 20."""
+        market = Market()
+        bidder = Mock()
+        bidder.name = "Bidder"
+        bidder.money = 1_000_000
+        bidder.reserved_money = 0
+        bidder.active_orders = {}
+        market.place_buy_order(bidder, commodity, 20, 20)
+        return market
+
+    def test_zero_stock_is_undiscounted(self, brain):
+        """The first entrant into a good nobody makes yet is unaffected."""
+        medicine = self._commodity("medicine")
+        actor = self._actor(stock=0)
+
+        score = brain._calculate_recipe_score(
+            actor, self._market(medicine), self._process(medicine)
+        )
+
+        assert score == pytest.approx(20.0 - GOVERNMENT_WAGE)
+
+    def test_a_large_unsold_stock_scores_below_an_empty_one(self, brain):
+        """With no turnover the reference stock is 30 units, so 100 bites."""
+        medicine = self._commodity("medicine")
+        market = self._market(medicine)
+        process = self._process(medicine)
+
+        empty = brain._calculate_recipe_score(self._actor(0), market, process)
+        piled = brain._calculate_recipe_score(
+            self._actor(100), market, process, require_entry_margin=False
+        )
+
+        assert piled < empty
+        # 20 / (1 + 100/30) = 4.615, less a turn of labor.
+        assert piled == pytest.approx(20.0 / (1 + 100 / 30) - GOVERNMENT_WAGE)
+
+    def test_a_piled_up_producer_fails_the_exit_check(self, brain):
+        """The exit check shares the valuation, so the stock brings exit on."""
+        medicine = self._commodity("medicine")
+        market = self._market(medicine)
+        process = self._process(medicine)
+
+        raw = brain._calculate_recipe_score(
+            self._actor(100), market, process, require_entry_margin=False
+        )
+
+        assert raw < 0
+
+    def test_market_turnover_raises_the_reference_stock(self, brain):
+        """A stock the market turns over every few turns is not a pile."""
+        medicine = self._commodity("medicine")
+        market = self._market(medicine)
+        market.price_history[medicine] = [20] * 30
+        market.volume_history[medicine] = [40] * 30
+        process = self._process(medicine)
+
+        # Turnover of 40 a turn makes the reference 1200 units, so 100 is a
+        # rounding error against it; the good is also liquid, so the top bid
+        # of 20 is used directly.
+        score = brain._calculate_recipe_score(self._actor(100), market, process)
+
+        assert score == pytest.approx(20.0 / (1 + 100 / 1200) - GOVERNMENT_WAGE)
+
+    def test_the_reserved_upkeep_unit_is_not_unsold_stock(self, brain):
+        """The one upkeep unit the chosen recipe keeps back is never offered."""
+        machinery = self._commodity("heavy_machinery")
+        market = self._market(machinery)
+        make_machinery = self._process(machinery)
+        actor = self._actor(stock=1)
+
+        # No chosen recipe: the single unit is stock like any other.
+        without_upkeep = brain._calculate_recipe_score(
+            actor, market, make_machinery, require_entry_margin=False
+        )
+
+        # The chosen recipe draws machinery as upkeep, so one unit is held
+        # back rather than offered, and the discount is 1.0.
+        farm = self._process(self._commodity("biomass"))
+        farm.id = "farm_biomass"
+        farm.upkeep = {machinery: 0.01}
+        actor.sim.process_registry.get_process.return_value = farm
+        brain.chosen_recipe_id = farm.id
+        with_upkeep = brain._calculate_recipe_score(
+            actor, market, make_machinery, require_entry_margin=False
+        )
+
+        assert without_upkeep == pytest.approx(20.0 / (1 + 1 / 30) - GOVERNMENT_WAGE)
+        assert with_upkeep == pytest.approx(20.0 - GOVERNMENT_WAGE)
+
+
 class TestBidDepthPricing:
     """Market.get_bid_price_at_depth walks the book instead of the top of it."""
 
@@ -1032,6 +1318,9 @@ class TestStuckRecipeAbandonment:
         actor.sim.current_turn = 100
         _wire_producer_index(actor.sim)
         actor.inventory = Mock(spec=Inventory)
+        # Holding nothing, so the stock discount on output value is 1.0
+        # unless a test sets a stock explicitly.
+        actor.inventory.get_quantity.return_value = 0
         actor.inventory.get_quantity.side_effect = lambda c: quantities.get(c.id, 0)
         actor.inventory.has_quantity.side_effect = (
             lambda c, q=1: quantities.get(c.id, 0) >= q
@@ -1199,6 +1488,9 @@ class TestIndustrialistLiquidation:
         actor.sim.commodity_registry.all_commodities.return_value = list(commodities)
         actor.sim.commodity_registry.get_commodity.return_value = None
         actor.inventory = Mock(spec=Inventory)
+        # Holding nothing, so the stock discount on output value is 1.0
+        # unless a test sets a stock explicitly.
+        actor.inventory.get_quantity.return_value = 0
         actor.inventory.get_quantity.side_effect = lambda c: holdings.get(c.id, 0)
         actor.inventory.get_available_quantity.side_effect = lambda c: holdings.get(
             c.id, 0
@@ -1366,6 +1658,9 @@ class TestNetbackInputBids:
         actor.drives = []
         _wire_producer_index(actor.sim)
         actor.inventory = Mock(spec=Inventory)
+        # Holding nothing, so the stock discount on output value is 1.0
+        # unless a test sets a stock explicitly.
+        actor.inventory.get_quantity.return_value = 0
         actor.inventory.get_quantity.return_value = 0
         actor.inventory.get_available_quantity.return_value = 0
         actor.inventory.has_quantity.return_value = False

@@ -94,6 +94,7 @@ class ProcessRegistry:
         # callers must treat them as read-only.
         self._all_cache: Optional[List[ProcessDefinition]] = None
         self._producers_index: Optional[Dict[str, List[ProcessDefinition]]] = None
+        self._consumers_index: Optional[Dict[str, List[ProcessDefinition]]] = None
 
     def load_from_file(self, filepath: str | Path) -> None:
         """Load process definitions from a YAML file."""
@@ -179,6 +180,7 @@ class ProcessRegistry:
                 self._processes[process_def.id] = process_def
             self._all_cache = None
             self._producers_index = None
+            self._consumers_index = None
         except Exception as e:
             print(f"Error loading processes from {filepath}: {e}")
 
@@ -211,3 +213,22 @@ class ProcessRegistry:
                     index.setdefault(output.id, []).append(process)
             self._producers_index = index
         return self._producers_index.get(commodity.id, [])
+
+    def get_processes_consuming(
+        self, commodity: CommodityDefinition
+    ) -> List[ProcessDefinition]:
+        """Processes that take the given commodity as an input.
+
+        The mirror of ``get_processes_producing``, backed by its own index
+        built once per registry load. Tools and facilities are not inputs and
+        are not indexed here: they are amortized, not consumed per run.
+        The returned list is shared with the index; callers must not mutate
+        it.
+        """
+        if self._consumers_index is None:
+            index: Dict[str, List[ProcessDefinition]] = {}
+            for process in self._processes.values():
+                for input_commodity in process.inputs:
+                    index.setdefault(input_commodity.id, []).append(process)
+            self._consumers_index = index
+        return self._consumers_index.get(commodity.id, [])
