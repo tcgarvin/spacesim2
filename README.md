@@ -1,5 +1,8 @@
 # SpaceSim2
 
+> **Archived.** This project moved to [tcgarvin/spacesim](https://github.com/tcgarvin/spacesim), which holds its
+> full history with the same commit SHAs. The package there is named `spacesim`.
+
 A turn-based economic simulation of interplanetary trade with actors,
 markets, and ships.
 
